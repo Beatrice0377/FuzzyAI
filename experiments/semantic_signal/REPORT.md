@@ -18,6 +18,14 @@ This is mechanism validation. Nothing here is calibrated, nothing here is a
 correctness measure, and no threshold is applied anywhere. No probe is
 auto-rejected and no record carries a validity verdict.
 
+Overall conclusion: single next-token binary scoring is model- and
+formulation-dependent. It is not a provider-independent or model-independent
+semantic primitive: the same prompt formulation and the same labels produced
+usable signal on some models and none on others. Newer small models tested here
+did show sufficient semantic sensitivity under specific formulations to justify
+further investigation of multi-class decisions. That justifies a next round; it
+does not constitute a quality claim about any model or about FuzzyAI.
+
 ## 2. Case set
 
 `cases.json`, `case_set_version` `semantic-signal-v1`, frozen before any model
@@ -68,7 +76,10 @@ with status `ok`; no probe was rejected.
 
 `verbalizer_mass` is the full-vocabulary probability mass on the two declared
 candidate tokens. It is what separates a scoring-position failure from a
-semantic failure.
+semantic failure. "Low-mass" below means `verbalizer_mass < 0.5`. That figure is
+an experimental analysis cutoff chosen to group this report's own results: it is
+not a FuzzyAI threshold, not an API contract, and nothing in the runtime applies
+it, exposes a validity verdict, or rejects a probe because of it.
 
 | model | doctrine | low-mass probes | mass_min |
 |---|---|---|---|
@@ -295,6 +306,11 @@ model can hold three competing candidate tokens, are open.
 7. Ladder monotonicity and aggregate ladder shape differ. A model can look
    ordered in the 8-ladder mean while most individual ladders are not, so a
    single summary number would have hidden the noise.
+
+Not established by this round: accuracy, calibration, real-world correctness,
+prompt-injection safety, cross-domain robustness, large-model behaviour,
+cloud-model behaviour, and multi-class behaviour. Section 10 records a named
+configuration passing the choice-readiness gate, not the mechanism passing.
 
 ## 12. Limitations
 

@@ -263,8 +263,11 @@ them generalises to other models, revisions, prompts, or tasks.
   injection probes, four hand-written themes (delivery, refund, subscription,
   software); no ground truth and no dataset. `calibrated` is `False` and
   `predicted_correctness` is `None` in every record; no threshold was applied
-  and no probe was auto-rejected. Observed under exactly these conditions,
-  generalising to none of them:
+  and no probe was auto-rejected. `verbalizer_mass` is the full-vocabulary mass
+  on the two declared candidate tokens; "low-mass" below means
+  `verbalizer_mass < 0.5`, which is an experimental analysis cutoff used only
+  to group these results, not a FuzzyAI threshold or API contract. Observed
+  under exactly these conditions, generalising to none of them:
 
   - Scoring-position health: `LFM2.5-1.2B-Instruct` leaves the decision
     position under doctrine D3 `evidence-oriented-v1` for 462 / 720 probes
