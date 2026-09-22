@@ -21,6 +21,7 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     "revision",
     "dtype",
     "gpu",
+    "rendering_config",
     "case_id",
     "candidate_set",
     "candidate_order",
@@ -29,7 +30,7 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     "mapping",
     "resolved_token_ids",
     "probabilities",
-    "candidate_mass",
+    "scoring_label_mass",
     "top_token",
     "top_token_probability",
     "certainty",
@@ -174,7 +175,7 @@ def entry_argmax(record: Mapping[str, Any]) -> str:
 
 def mass_summary(records: Iterable[Mapping[str, Any]]) -> dict[str, float | int]:
     """Summary of the candidate-space mass observations."""
-    values = [float(record["candidate_mass"]) for record in records]
+    values = [float(record["scoring_label_mass"]) for record in records]
     if not values:
         return {"count": 0, "min": 0.0, "max": 0.0, "mean": 0.0}
     return {
@@ -191,7 +192,9 @@ def mass_by_candidate_set(
     """Candidate-space mass grouped by candidate-set name, so N=3 and N=5 can be compared."""
     grouped: dict[str, list[float]] = {}
     for record in records:
-        grouped.setdefault(str(record["candidate_set"]), []).append(float(record["candidate_mass"]))
+        grouped.setdefault(str(record["candidate_set"]), []).append(
+            float(record["scoring_label_mass"])
+        )
     out: dict[str, dict[str, float | int]] = {}
     for name in sorted(grouped):
         values = grouped[name]
@@ -249,8 +252,8 @@ def winner_changes(
                     _as_probabilities(reference["probabilities"]),
                     _as_probabilities(record["probabilities"]),
                 ),
-                "base_mass": float(reference["candidate_mass"]),
-                "perturbed_mass": float(record["candidate_mass"]),
+                "base_scoring_label_mass": float(reference["scoring_label_mass"]),
+                "perturbed_scoring_label_mass": float(record["scoring_label_mass"]),
             }
         )
     return out

@@ -160,6 +160,7 @@ def build_record(
         "revision": run_meta["revision"],
         "dtype": run_meta["dtype"],
         "gpu": run_meta["gpu"],
+        "rendering_config": run_meta["rendering_config"],
         "candidate_set": candidate_set,
         "candidate_order": candidate_order(candidates),
         "candidate_descriptions": candidate_descriptions(candidates),
@@ -171,8 +172,8 @@ def build_record(
             label: token_id for label, token_id in trace.resolved_target_token_ids
         },
         "probabilities": {name: float(value) for name, value in result.probabilities.items()},
-        "candidate_mass": diagnostics.candidate_mass,
-        "candidate_token_probabilities": list(diagnostics.candidate_token_probabilities),
+        "scoring_label_mass": diagnostics.scoring_label_mass,
+        "scoring_label_token_probabilities": list(diagnostics.scoring_label_token_probabilities),
         "top_token": diagnostics.top_token_text,
         "top_token_id": diagnostics.top_token_id,
         "top_token_probability": diagnostics.top_token_probability,
@@ -255,11 +256,31 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--tag", default="choice-signal")
     parser.add_argument(
+        "--chat-template-kwargs",
+        default=None,
+        metavar="JSON",
+        help=(
+            "JSON object forwarded verbatim to the tokenizer chat template, for example "
+            "'{\"enable_thinking\": false}'. Recorded in the artifact as rendering_config."
+        ),
+    )
+    parser.add_argument(
         "--smoke",
         action="store_true",
         help="run a single case per group to verify the harness end to end",
     )
     return parser.parse_args(argv)
+
+
+def parse_chat_template_kwargs(raw: str | None) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict):
+        raise ValueError(
+            f"--chat-template-kwargs must be a JSON object, got {type(parsed).__name__}"
+        )
+    return parsed
 
 
 def load_backend_factory(name: str | None) -> Any:
@@ -301,6 +322,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         paraphrase = {**paraphrase, "case_ids": paraphrase["case_ids"][:1]}
         irrelevant = {**irrelevant, "case_ids": irrelevant["case_ids"][:1]}
 
+    template_kwargs = parse_chat_template_kwargs(args.chat_template_kwargs)
+
     factory = load_backend_factory(args.backend_factory)
     backend = factory(
         model=args.model,
@@ -308,6 +331,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         dtype=args.dtype,
         device=args.device,
         local_files_only=args.local_files_only,
+        chat_template_kwargs=template_kwargs,
     )
     run_meta = {
         "model": args.model,
@@ -315,6 +339,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "dtype": args.dtype,
         "gpu": gpu_name(),
         "question": str(payload["question"]),
+        "rendering_config": template_kwargs if template_kwargs is not None else {},
     }
     records: list[dict[str, Any]] = []
     started = time.time()

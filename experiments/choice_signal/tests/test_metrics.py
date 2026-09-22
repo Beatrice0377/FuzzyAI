@@ -37,7 +37,7 @@ def _record(
     probabilities: dict[str, float],
     *,
     mapping: dict[str, str] | None = None,
-    candidate_mass: float = 0.5,
+    scoring_label_mass: float = 0.5,
     candidate_set: str = "three_way",
     expected_category: str | None = None,
 ) -> dict[str, Any]:
@@ -48,6 +48,7 @@ def _record(
         "revision": None,
         "dtype": "float32",
         "gpu": "none",
+        "rendering_config": {},
         "case_id": case_id,
         "candidate_set": candidate_set,
         "candidate_order": order,
@@ -58,7 +59,7 @@ def _record(
             [label, 100 + index] for index, label in enumerate("ABC"[: len(order)])
         ],
         "probabilities": probabilities,
-        "candidate_mass": candidate_mass,
+        "scoring_label_mass": scoring_label_mass,
         "top_token": "x",
         "top_token_probability": 0.2,
         "certainty": {"entropy": 0.1, "margin": 0.2},
@@ -203,8 +204,8 @@ def test_winner_changes_reports_per_case_comparison() -> None:
 
 def test_mass_summary_hand_computed() -> None:
     records = [
-        _record("c1", {"a": 1.0}, candidate_mass=0.75),
-        _record("c2", {"a": 1.0}, candidate_mass=0.25),
+        _record("c1", {"a": 1.0}, scoring_label_mass=0.75),
+        _record("c2", {"a": 1.0}, scoring_label_mass=0.25),
     ]
     summary = metrics.mass_summary(records)
     assert summary["count"] == 2
@@ -215,8 +216,8 @@ def test_mass_summary_hand_computed() -> None:
 
 def test_mass_by_candidate_set_separates_n_three_from_n_five() -> None:
     records = [
-        _record("c1", {"a": 1.0}, candidate_mass=0.75, candidate_set="three_way"),
-        _record("c2", {"a": 1.0}, candidate_mass=0.60, candidate_set="five_way"),
+        _record("c1", {"a": 1.0}, scoring_label_mass=0.75, candidate_set="three_way"),
+        _record("c2", {"a": 1.0}, scoring_label_mass=0.60, candidate_set="five_way"),
     ]
     grouped = metrics.mass_by_candidate_set(records)
     assert set(grouped) == {"five_way", "three_way"}
