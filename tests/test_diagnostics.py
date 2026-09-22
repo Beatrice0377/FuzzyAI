@@ -125,10 +125,24 @@ class TestFullVocabProbability:
             vocab_logsumexp=logsumexp(0.0, 0.0, 0.0, 0.0),
         ) == pytest.approx(0.25)
 
-    def test_inconsistent_normalizer_is_clamped_not_raised(self) -> None:
-        # A backend reporting a logit above its own normalizer is inconsistent;
-        # clamping keeps a rounding-level slip from failing an inference.
-        assert full_vocab_probability(logit=1.0, vocab_logsumexp=0.0) == 1.0
+    def test_rounding_level_overshoot_is_clamped(self) -> None:
+        assert full_vocab_probability(logit=1e-12, vocab_logsumexp=0.0) == 1.0
+
+    def test_measured_float32_overshoot_is_clamped(self) -> None:
+        # A real bfloat16 run produced this exact overshoot; an absolute 1e-9
+        # bound rejected it and lost 62 probe records across two models.
+        assert (
+            full_vocab_probability(
+                logit=3.0,
+                vocab_logsumexp=3.0 - 1.8553912184415822e-07,
+            )
+            == 1.0
+        )
+
+    def test_materially_inconsistent_normalizer_is_rejected(self) -> None:
+        assert math.exp(1.0) > 1.0 + 1e-9
+        with pytest.raises(InvalidProbabilityError, match="inconsistent"):
+            full_vocab_probability(logit=1.0, vocab_logsumexp=0.0)
 
     def test_tail_token_is_effectively_zero(self) -> None:
         assert full_vocab_probability(logit=-1000.0, vocab_logsumexp=0.0) == pytest.approx(0.0)

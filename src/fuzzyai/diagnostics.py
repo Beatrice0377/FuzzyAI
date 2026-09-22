@@ -40,6 +40,14 @@ _REQUIRED_METADATA_KEYS: tuple[str, ...] = (
 #: absolute tolerance rather than exactly.
 _ORDERING_TOLERANCE = 1e-6
 
+#: Largest ratio between a positive ``logit - logsumexp`` overshoot and the
+#: magnitude of its operands still treated as floating-point rounding rather
+#: than a materially inconsistent normalizer. A float32 logsumexp over a large
+#: vocabulary carries rounding error proportional to its own magnitude, so an
+#: absolute bound rejects legitimate results: a measured run produced an
+#: overshoot of 1.86e-07 that an absolute 1e-9 bound wrongly rejected.
+_RELATIVE_OVERSHOOT_TOLERANCE = 1e-6
+
 
 def _logaddexp(a: float, b: float) -> float:
     """``log(exp(a) + exp(b))``, computed without overflow.
@@ -53,16 +61,25 @@ def _logaddexp(a: float, b: float) -> float:
     return a + math.log1p(math.exp(b - a))
 
 
-def _probability_from_log_ratio(log_delta: float) -> float:
-    """``exp(log_delta)`` clamped into ``[0, 1]`` without ever overflowing.
+def _probability_from_log_ratio(log_delta: float, *, magnitude: float) -> float:
+    """``exp(log_delta)`` for a raw log-probability, without ever overflowing.
 
-    ``log_delta`` is a raw log-probability (``logit - logsumexp``), so it is
-    ``<= 0`` for a truthful backend. A backend that reports an inconsistent
-    ``vocab_logsumexp`` would hand us a positive value; clamping rather than
-    raising keeps a rounding-level inconsistency from failing an inference.
+    ``log_delta`` is ``logit - logsumexp``, which is ``<= 0`` for any backend
+    whose normalizer covers its own logits. A small positive value is treated as
+    floating-point overshoot and clamped to ``1.0``. A larger positive value
+    means the normalizer is inconsistent with the logit and would otherwise be
+    masked as total confidence, so it is rejected. The overshoot bound scales
+    with ``magnitude`` because that is how floating-point error behaves.
     """
     if log_delta >= 0.0:
-        return 1.0
+        tolerance = _RELATIVE_OVERSHOOT_TOLERANCE * max(1.0, abs(magnitude))
+        if log_delta <= tolerance:
+            return 1.0
+        raise InvalidProbabilityError(
+            "vocab_logsumexp is inconsistent with the reported logit: "
+            f"logit - logsumexp = {log_delta!r}, so the implied probability "
+            "exceeds 1; a normalizer must cover every logit it normalizes"
+        )
     return math.exp(log_delta)
 
 
@@ -78,13 +95,14 @@ def verbalizer_mass(*, logit_true: float, logit_false: float, vocab_logsumexp: f
             logit_true=logit_true,
             logit_false=logit_false,
             vocab_logsumexp=vocab_logsumexp,
-        )
+        ),
+        magnitude=vocab_logsumexp,
     )
 
 
 def full_vocab_probability(*, logit: float, vocab_logsumexp: float) -> float:
     """``P(next token is this token)`` under full-vocabulary normalization."""
-    return _probability_from_log_ratio(logit - vocab_logsumexp)
+    return _probability_from_log_ratio(logit - vocab_logsumexp, magnitude=vocab_logsumexp)
 
 
 def _validated_probability(value: object, *, name: str) -> float:

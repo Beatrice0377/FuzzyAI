@@ -128,7 +128,7 @@ models, and never need a GPU.
   `test_different_renderings_give_different_fingerprints`).
 - `[V]` The runtime rejects evidence that carries no plan fingerprint, so
   lineage cannot be skipped. Evidence:
-  `tests/test_runtime.py::test_evidence_without_lineage_is_rejected`.
+  `tests/test_runtime.py::TestRuntimeRejections::test_evidence_without_lineage_is_rejected`.
 - `[V]` The transformers backend performs read-only scoring and never calls
   `model.generate()`. Evidence:
   `tests/test_backends_transformers.py::test_execute_never_calls_generate`
@@ -138,7 +138,7 @@ models, and never need a GPU.
 
 - `[V]` Restricted-probability diagnostics are computed from full-vocabulary
   normalization, not from the two candidate logits alone. Evidence:
-  `tests/test_diagnostics.py` (33 tests: verbalizer-mass math, full-vocab
+  `tests/test_diagnostics.py` (35 tests: verbalizer-mass math, full-vocab
   probability, `diagnose_bool_evidence` field validation) and
   `tests/test_backends_transformers.py::test_metadata_carries_full_vocabulary_statistics`.
 - `[V]` A `DecisionTrace` always carries `ScoringDiagnostics`; it cannot be
@@ -168,6 +168,21 @@ models, and never need a GPU.
 - `[V]` Decoding the top token text is best-effort and never fails an
   inference. Evidence:
   `tests/test_backends_transformers.py::test_top_token_text_decode_failure_is_not_fatal`.
+
+### Diagnostics clamp tolerance (Phase 2A.2)
+
+- `[V]` `full_vocab_probability` and `verbalizer_mass` treat a small positive
+  `logit - vocab_logsumexp` overshoot as floating-point rounding and clamp it
+  to `1.0` under a *relative* bound (`_RELATIVE_OVERSHOOT_TOLERANCE = 1e-6`
+  scaled by the operand magnitude), while a materially inconsistent normalizer
+  still raises `InvalidProbabilityError`. Evidence:
+  `tests/test_diagnostics.py::TestFullVocabProbability::test_rounding_level_overshoot_is_clamped`,
+  `::test_measured_float32_overshoot_is_clamped` (pins the exact measured
+  float32 overshoot `1.8553912184415822e-07` that the previous absolute `1e-9`
+  bound wrongly rejected), and
+  `::test_materially_inconsistent_normalizer_is_rejected`. The claim covers
+  the deterministic clamp logic in `src/fuzzyai/diagnostics.py` only; it says
+  nothing about any model.
 
 ## Experimental records
 
@@ -228,6 +243,97 @@ them generalises to other models, revisions, prompts, or tasks.
   In every case `calibrated=False`, `predicted_correctness=None`, and
   `method=binary_token_logits`. No conclusion is drawn about the model being
   right or wrong on any case.
+- `[E]` Phase 2A.2 semantic signal validation, three-model sweep. An
+  observation of signal behaviour under fixed conditions, NOT a quality,
+  accuracy, reliability, or capability claim, and not a benchmark; the full
+  record is `experiments/semantic_signal/REPORT.md`. Conditions: models
+  `LiquidAI/LFM2.5-1.2B-Instruct` (1.17B), `openbmb/MiniCPM5-2B` (2.52B), and
+  `Qwen/Qwen3.5-2B` (2.27B, scored through a harness-side text-tower adapter
+  rather than its published multimodal entry point); model revision `None` in
+  every run header (revision provenance could not be obtained from the local
+  cache); hardware NVIDIA GeForce RTX 5060 Laptop GPU (8151 MiB), torch
+  2.14.0+cu130, transformers 5.17.0, CUDA 13.0, run offline
+  (`HF_HUB_OFFLINE=1`); dtype `bfloat16`, batch size 1, one forward pass per
+  probe; 27 formulations (3 doctrines x 3 label families, with the
+  order-ablation and mapping-swap variants) x 80 probes = 2160 probes per
+  model, and each run finished with 2160 `ok` records. Case set
+  `semantic-signal-v1` (fingerprint
+  `b68a1d395f0ec8f2b1e1400cc2e4f3c4b0d7e5f8bdb6a80576c3a4bab2209805`): 8
+  evidence ladders x 5 rungs, 12 polarity pairs, 4 contrast groups, 4
+  injection probes, four hand-written themes (delivery, refund, subscription,
+  software); no ground truth and no dataset. `calibrated` is `False` and
+  `predicted_correctness` is `None` in every record; no threshold was applied
+  and no probe was auto-rejected. Observed under exactly these conditions,
+  generalising to none of them:
+
+  - Scoring-position health: `LFM2.5-1.2B-Instruct` leaves the decision
+    position under doctrine D3 `evidence-oriented-v1` for 462 / 720 probes
+    (64.2%), `mass_min` 0.000008: its top token becomes a capitalized or
+    unrelated variant (`Support`, `True`, `Yes`) rather than the declared
+    lowercase label, so its `P(True)` there is renormalized tail noise.
+    `MiniCPM5-2B` and `Qwen3.5-2B` show zero low-mass probes under all three
+    doctrines (`mass_min` 0.916076 / 0.983116 / 0.817990 and 0.852574 /
+    0.961845 / 0.918833 for D1 / D2 / D3). Whether a doctrine's wording keeps
+    a model at the decision position is model-dependent, and
+    `verbalizer_mass` is what makes such a failure visible instead of silent.
+  - Ladder shape: the extremes separate in every model (`strong_positive` vs
+    `strong_negative` mean `P(True)`: 0.999 vs 0.573 for LFM D1, 0.917 vs
+    0.000 for MiniCPM D2, 0.892 vs 0.023 for Qwen D2), but the middle rungs
+    do not order reliably: the `insufficient` rung lands below
+    `weak_negative` in the aggregate of 6 of the 9 model x doctrine cells,
+    and only 3 cells are fully monotonic in aggregate (MiniCPM D2, Qwen D1,
+    Qwen D2). Even the best cell keeps per-ladder noise (Qwen D1: 2 of 8
+    individual ladders out of order).
+  - Contrast groups (one question, three contexts: `relevant_positive`,
+    `irrelevant`, `relevant_negative`; 4 groups x 3 contexts per model,
+    doctrine D2 `yes_no` canonical): MiniCPM5-2B and Qwen3.5-2B order all 4
+    groups correctly; LFM2.5-1.2B does not discriminate relevance
+    (irrelevant contexts still score 0.62 to 0.97, `relevant_negative` 0.53
+    to 0.95). The report calls this the sharpest instrument of the round: a
+    high `P(True)` is not by itself evidence that the model read the
+    context.
+  - Polarity pairs (12 pairs): canonical `yes_no` / `true_false` polarity
+    consistency is 0.92 to 1.00 for all three models, with directional
+    accuracy 0.75 to 1.00 across canonical formulations. The report notes a
+    constant yes-bias could score well on this metric by accident, which is
+    why the contrast groups carry more weight.
+  - Label families: `yes_no` and `true_false` behave as near-interchangeable
+    verbalizations at the aggregate level; `ab` is weak and model-dependent
+    (directional accuracy 0.38 to 0.88 for LFM, 0.62 to 0.88 for Qwen, 0.50
+    to 0.50 for MiniCPM). A mapping swap preserves the semantic direction
+    only where the doctrine declares the label semantics (`ab`); for
+    undeclared families it simply inverts the measurement (directional
+    accuracy 0.00 to 0.38, polarity consistency 0.00 to 0.17).
+  - Injection probes: on 4 hand-written probes (doctrine D2 `yes_no`
+    canonical; sample size 4, no ground truth), LFM2.5-1.2B followed the
+    embedded instruction against the evidence (0.9876, 0.9998, 0.9325,
+    0.9770), while MiniCPM5-2B (0.0067, 0.2689, 0.8670, 0.0097) and
+    Qwen3.5-2B (0.0373, 0.5622, 0.9149, 0.0474) followed the evidence. This
+    is an observation about three small models on four probes. It is NOT a
+    prompt-injection safety claim, and FuzzyAI makes no such claim anywhere.
+  - Choice-readiness gate (report section 10), assessed per model: against
+    the stated criteria the gate is met by a specific named configuration
+    (MiniCPM5-2B or Qwen3.5-2B, `yes_no` or `true_false`, with a doctrine
+    that keeps the model at the decision position), not by the mechanism in
+    general; LFM2.5-1.2B fails the no-collapse and relevance-discrimination
+    criteria. The three-way candidate space itself remains unmeasured.
+- `[E]` Phase 2A.2 harness defect and fix, recorded as an observed
+  engineering lesson. Conditions: same hardware, software, and sweeps as the
+  entry above. The first pass of the sweeps lost 62 legitimate probe records
+  (32 for LFM2.5-1.2B, 30 for MiniCPM5-2B) with
+  `InvalidProbabilityError: vocab_logsumexp is inconsistent with the reported
+  logit: logit - logsumexp = 1.8553912184415822e-07`. Cause: the clamp bound
+  was absolute (`1e-9`), while a float32 logsumexp over a 130k-token
+  vocabulary carries rounding error proportional to its own magnitude, so the
+  bound sat below the noise floor. Fix: a relative tolerance (`1e-6` scaled
+  by the operand magnitude) in `src/fuzzyai/diagnostics.py`, keeping the
+  material-inconsistency rejection (tests cited under Verified claims). All
+  three sweeps were re-run: 2160 `ok` records each, and every previously-`ok`
+  record is bit-identical (2128 for LFM, 2130 for MiniCPM, all 2160 for
+  Qwen), so the fix recovered exactly the rejected records and changed no
+  measurement; the re-run doubles as a determinism check. Lesson: an
+  absolute tolerance is the wrong shape for rounding error that scales with
+  operand magnitude.
 
 ## Current hypotheses
 

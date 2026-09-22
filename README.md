@@ -149,6 +149,18 @@ prompt-injection safety.
 `ChoiceDecision` has no runtime path: it remains a Phase 1 data model, and
 compiling one raises `UnsupportedDecisionError`.
 
+Phase 2A.2 used this slice's diagnostics in a semantic signal validation
+experiment: does the binary scoring position carry a semantic signal at all,
+and which part of the measurement comes from the model, the doctrine, and the
+label family? It probed three local causal LMs under fixed conditions (one
+forward pass per probe, no ground truth) and recorded what it observed. The
+record lives in
+[experiments/semantic_signal/REPORT.md](experiments/semantic_signal/REPORT.md):
+an experiment record, not a capability claim and not a benchmark. One
+concrete outcome of the round was a diagnostics fix: the overshoot clamp in
+`src/fuzzyai/diagnostics.py` is now a relative tolerance (see
+[docs/claims.md](docs/claims.md)).
+
 ## Planned API (not implemented)
 
 The convenience surface below is still the **planned API**. There is no
@@ -231,9 +243,15 @@ Choice inference, calibration, and abstention remain future work.
 Performance, quality, calibration, and provider-support claims are tracked by
 evidence status in [docs/claims.md](docs/claims.md). The project makes no
 benchmark, performance, or model-support claims today: the Bool path runs
-against a local Hugging Face causal LM, but no model has been evaluated.
-Hypotheses and roadmap items are labelled as such there, rather than presented
-as capabilities.
+against a local Hugging Face causal LM, but no model has been evaluated
+against ground truth. Phase 2A.2 ran a semantic signal validation experiment
+over the binary scoring position against three local Hugging Face causal LMs;
+its record lives in
+[experiments/semantic_signal/REPORT.md](experiments/semantic_signal/REPORT.md)
+and documents observed signal behaviour under the conditions it states. That
+is an experiment record, not a capability claim and not a benchmark.
+Hypotheses and roadmap items are labelled as such in the claims register,
+rather than presented as capabilities.
 
 ## Development
 

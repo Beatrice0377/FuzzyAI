@@ -79,6 +79,8 @@ decision 的 context 只会被渲染进 user prompt 作为证据（evidence）�
 
 `ChoiceDecision` 没有运行时路径：它仍是 Phase 1 的数据模型，编译它会抛出 `UnsupportedDecisionError`。
 
+Phase 2A.2 用这条切片自带的诊断做了一次语义信号验证实验（semantic signal validation）：二值打分位置到底携不携带语义信号，测量结果里哪些部分来自模型、哪些来自 doctrine 与 label family。它在固定条件下探测了三个本地 causal LLM（每条 probe 一次前向传播，没有 ground truth），并如实记录观察到的现象。实验记录位于 [experiments/semantic_signal/REPORT.md](experiments/semantic_signal/REPORT.md)：那是一份实验记录，不是能力声明，也不是 benchmark。这一轮产出的一项具体修复是诊断侧的：`src/fuzzyai/diagnostics.py` 中的上界钳制（overshoot clamp）改成了相对容差（relative tolerance），见 [docs/claims.md](docs/claims.md)。
+
 ## Planned API（尚未实现）
 
 下面的便捷接口仍是 **planned API（尚未实现）**。不存在 `ai.bool` 或 `ai.choice` 入口；当前可用的调用是上文所示的 `ai.evaluate(BoolDecision(...))`。
@@ -142,7 +144,7 @@ Choice 推理、校准与弃权仍是未来工作。
 
 ## 证据与主张（Evidence and claims）
 
-性能（performance）、质量、校准（calibration）与 provider 支持相关的声明，统一按证据状态（evidence status）记录在 [docs/claims.md](docs/claims.md) 中。本项目目前不做任何 benchmark、性能或模型支持声明：Bool 路径可以对着本地 Hugging Face causal LM 运行，但没有任何模型被评估过。假设（hypotheses）与路线图条目在登记册中均被如实标注，不作为已实现的能力呈现。
+性能（performance）、质量、校准（calibration）与 provider 支持相关的声明，统一按证据状态（evidence status）记录在 [docs/claims.md](docs/claims.md) 中。本项目目前不做任何 benchmark、性能或模型支持声明：Bool 路径可以对着本地 Hugging Face causal LM 运行，但没有任何模型对着 ground truth 被评估过。Phase 2A.2 针对二值打分位置运行了一次语义信号验证实验（semantic signal validation），探测了三个本地 Hugging Face causal LM；其记录位于 [experiments/semantic_signal/REPORT.md](experiments/semantic_signal/REPORT.md)，是一份记录既定条件下所观察到的信号行为的实验记录，不是能力声明，也不是 benchmark。假设（hypotheses）与路线图条目在主张登记册（claims register）中均被如实标注，不作为已实现的能力呈现。
 
 ## 开发
 

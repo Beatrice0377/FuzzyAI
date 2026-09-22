@@ -6,12 +6,16 @@ or disappear when evidence says they should; the binding rules live in the
 [design constitution](./design-constitution.md), not here.
 
 Phase 1 (core contracts, fingerprints, result semantics) and the Phase 2A
-Bool vertical slice are implemented: see the constitution for exact scope.
-Nothing else below is implemented.
+Bool vertical slice, including the Phase 2A.1 scoring-validity diagnostics,
+are implemented: see the constitution for exact scope. Phase 2A.2 is a
+completed validation experiment, not a feature. Nothing else below is
+implemented.
 
 ## Phase 2: first real inference path
 
-Phase 2A delivered the Bool path end-to-end; the Choice path is still open.
+Phase 2A delivered the Bool path end-to-end, Phase 2A.1 added the
+scoring-validity diagnostics, and Phase 2A.2 ran the semantic signal
+validation experiment; the Choice path (Phase 2B) is the next unstarted step.
 
 - Transformers local backend. Delivered (Phase 2A): logits-only
   `TransformersBackend` behind the optional `transformers` extra.
@@ -28,7 +32,25 @@ Phase 2A delivered the Bool path end-to-end; the Choice path is still open.
   environment and rendering configuration the plan actually ran under. No
   threshold and no auto-rejection is implemented; see `ScoringValidityPolicy`
   under Phase 5.
-- Choice categorical-logit scoring. Pending.
+- Semantic signal validation. Completed (Phase 2A.2): a three-model
+  mechanism-validation experiment on the binary scoring position (27
+  formulations x 80 probes = 2160 probes per model, one forward pass each,
+  `bfloat16`, batch size 1; record in
+  `experiments/semantic_signal/REPORT.md`). It is an experiment record, not a
+  capability claim and not a benchmark. Observed under those conditions:
+  `verbalizer_mass` separates scoring-position failures from semantic
+  failures (one of the three models left the decision position for 462 / 720
+  probes under one doctrine while the other two stayed healthy), the
+  contrast groups ordered correctly for MiniCPM5-2B and Qwen3.5-2B but not
+  for LFM2.5-1.2B, the `insufficient` ladder rung is the systematic weak
+  point (below `weak_negative` in 6 of 9 model x doctrine cells), and label
+  families are not interchangeable without declared semantics. The
+  Choice-readiness gate was assessed per model: met by a specific named
+  configuration (MiniCPM5-2B or Qwen3.5-2B with `yes_no` / `true_false` under
+  a decision-position-keeping doctrine), NOT met by the mechanism in general;
+  the three-way candidate space itself remains unmeasured.
+- Choice categorical-logit scoring (Phase 2B). Pending; this is the next
+  unstarted step.
 
 ## Phase 3: cloud backends and experiments
 
