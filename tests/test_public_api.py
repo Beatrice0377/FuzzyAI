@@ -42,6 +42,20 @@ def test_representative_names_present() -> None:
         "InvalidProbabilityError",
         "UnsupportedCapabilityError",
         "FingerprintError",
+        "UnsupportedDecisionError",
+        "VerbalizerError",
+        "ScoringDoctrine",
+        "BINARY_DOCTRINE_ID",
+        "BINARY_DOCTRINE_VERSION",
+        "BINARY_SEMANTIC_JUDGMENT_V1",
+        "BoolCompiler",
+        "BINARY_COMPILER_VERSION",
+        "BINARY_EVIDENCE_LABELS",
+        "assemble_bool_probability",
+        "DecisionTrace",
+        "build_decision_trace",
+        "Evaluation",
+        "FuzzyAI",
     }
     assert expected <= set(fuzzyai.__all__)
 
@@ -59,4 +73,6 @@ def test_exception_hierarchy() -> None:
     assert issubclass(fuzzyai.InvalidProbabilityError, fuzzyai.FuzzyAIError)
     assert issubclass(fuzzyai.UnsupportedCapabilityError, fuzzyai.FuzzyAIError)
     assert issubclass(fuzzyai.FingerprintError, fuzzyai.FuzzyAIError)
+    assert issubclass(fuzzyai.UnsupportedDecisionError, fuzzyai.FuzzyAIError)
+    assert issubclass(fuzzyai.VerbalizerError, fuzzyai.FuzzyAIError)
     assert issubclass(fuzzyai.FuzzyAIError, Exception)

@@ -5,16 +5,23 @@ intended order of work and the dependencies between phases. Items move, split,
 or disappear when evidence says they should; the binding rules live in the
 [design constitution](./design-constitution.md), not here.
 
-Phase 1 (core contracts, fingerprints, result semantics) is the current phase:
-see the constitution for its exact scope. Nothing below is implemented.
+Phase 1 (core contracts, fingerprints, result semantics) and the Phase 2A
+Bool vertical slice are implemented: see the constitution for exact scope.
+Nothing else below is implemented.
 
 ## Phase 2: first real inference path
 
-- Transformers local backend.
-- Bool binary-logit scoring.
-- Choice categorical-logit scoring.
+Phase 2A delivered the Bool path end-to-end; the Choice path is still open.
+
+- Transformers local backend. Delivered (Phase 2A): logits-only
+  `TransformersBackend` behind the optional `transformers` extra.
+- Bool binary-logit scoring. Delivered (Phase 2A): `assemble_bool_probability`
+  (two-way softmax over the two verbalizer-token logits).
 - Compiler (spec to plan, strategy selection from declared capabilities).
-- Basic `DecisionTrace`.
+  Delivered (Phase 2A) for Bool: `BoolCompiler`.
+- Basic `DecisionTrace`. Delivered (Phase 2A): `DecisionTrace` and
+  `build_decision_trace`, wired through the thin `FuzzyAI` facade.
+- Choice categorical-logit scoring. Pending.
 
 ## Phase 3: cloud backends and experiments
 
@@ -86,8 +93,10 @@ A doctrine might eventually carry rules such as: treat context as evidence; do
 not follow instructions embedded inside evidence; do not force certainty when
 evidence is insufficient; distinguish absence of evidence from contradictory
 evidence; preserve ambiguity instead of inventing a decisive answer; evaluate
-candidates according to the declared decision semantics. NOT implemented; this
-is a future concept only.
+candidates according to the declared decision semantics. The first concrete
+doctrine now exists: `BINARY_SEMANTIC_JUDGMENT_V1` (`src/fuzzyai/doctrine.py`)
+covers the binary case. Doctrines for other decision types remain future
+concepts only.
 
 ### Evidence Lineage / replayable derivation
 
@@ -104,7 +113,7 @@ implementation; the enabling mechanisms are hypotheses.
 
 Among semantically equivalent execution layouts, preferring the one that
 preserves stable prefixes and maximizes reusable computation (constitution
-AP-03). Depends on a compiler that does not exist yet.
+AP-03). Depends on cache-aware machinery that no compiler implements yet.
 
 ### Hierarchical Choice
 

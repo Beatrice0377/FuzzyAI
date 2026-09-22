@@ -22,6 +22,8 @@ def make_plan(**overrides: Any) -> InferencePlan:
         "decision_fingerprint": "a" * 64,
         "strategy": ScoringStrategy.BINARY_TOKEN_LOGITS,
         "prompt": "Answer yes or no.",
+        "positive_verbalizer": "yes",
+        "negative_verbalizer": "no",
     }
     kwargs.update(overrides)
     return InferencePlan(**kwargs)
@@ -80,6 +82,80 @@ class TestInferencePlan:
         mutable: Any = plan
         with pytest.raises(AttributeError):
             mutable.prompt = "x"
+
+
+class TestInferencePlanVerbalizerValidation:
+    def test_missing_positive_verbalizer_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="positive_verbalizer"):
+            make_plan(positive_verbalizer=None)
+
+    def test_missing_negative_verbalizer_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="negative_verbalizer"):
+            make_plan(negative_verbalizer=None)
+
+    def test_empty_positive_verbalizer_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="positive_verbalizer"):
+            make_plan(positive_verbalizer="   ")
+
+    def test_empty_negative_verbalizer_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="negative_verbalizer"):
+            make_plan(negative_verbalizer="")
+
+    def test_duplicate_verbalizers_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="must differ"):
+            make_plan(positive_verbalizer="yes", negative_verbalizer="yes")
+
+    @pytest.mark.parametrize(
+        "strategy",
+        [ScoringStrategy.CATEGORICAL_TOKEN_LOGITS, ScoringStrategy.TOKEN_LOGPROBS],
+    )
+    def test_verbalizers_rejected_for_non_binary_strategies(
+        self, strategy: ScoringStrategy
+    ) -> None:
+        with pytest.raises(InvalidDecisionError, match="only meaningful"):
+            make_plan(strategy=strategy, positive_verbalizer="yes", negative_verbalizer="no")
+
+    def test_non_binary_strategy_without_verbalizers_allowed(self) -> None:
+        plan = make_plan(
+            strategy=ScoringStrategy.TOKEN_LOGPROBS,
+            positive_verbalizer=None,
+            negative_verbalizer=None,
+            system_prompt=None,
+            doctrine_id=None,
+        )
+        assert plan.positive_verbalizer is None
+        assert plan.negative_verbalizer is None
+
+    def test_empty_system_prompt_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="system_prompt"):
+            make_plan(system_prompt="   ")
+
+    def test_non_string_system_prompt_rejected(self) -> None:
+        bad_prompt: Any = 7
+        with pytest.raises(InvalidDecisionError, match="system_prompt"):
+            make_plan(system_prompt=bad_prompt)
+
+    def test_empty_doctrine_id_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="doctrine_id"):
+            make_plan(doctrine_id="")
+
+    def test_whitespace_doctrine_id_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="doctrine_id"):
+            make_plan(doctrine_id="  ")
+
+    def test_verbalizer_change_changes_fingerprint(self) -> None:
+        assert make_plan().fingerprint != make_plan(positive_verbalizer="affirmative").fingerprint
+        assert make_plan().fingerprint != make_plan(negative_verbalizer="negative").fingerprint
+
+    def test_doctrine_id_change_changes_fingerprint(self) -> None:
+        assert make_plan().fingerprint != make_plan(doctrine_id="other-doctrine").fingerprint
+
+    def test_system_prompt_change_changes_fingerprint(self) -> None:
+        assert make_plan().fingerprint != make_plan(system_prompt="Other instructions.").fingerprint
+
+    def test_new_fields_included_in_fingerprint_v2(self) -> None:
+        plan = make_plan(system_prompt="S", positive_verbalizer="yes", negative_verbalizer="no")
+        assert len(plan.fingerprint) == 64
 
 
 class TestRawEvidence:

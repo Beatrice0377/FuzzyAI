@@ -37,6 +37,10 @@ class InferencePlan:
     prompt: str
     targets: tuple[str, ...] = ()
     required_capabilities: BackendCapabilities = field(default_factory=BackendCapabilities.none)
+    system_prompt: str | None = None
+    positive_verbalizer: str | None = None
+    negative_verbalizer: str | None = None
+    doctrine_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.decision_fingerprint, str) or not self.decision_fingerprint:
@@ -67,18 +71,65 @@ class InferencePlan:
                 "required_capabilities must be a BackendCapabilities, got "
                 f"{type(self.required_capabilities).__name__}"
             )
+        if self.system_prompt is not None and (
+            not isinstance(self.system_prompt, str) or not self.system_prompt.strip()
+        ):
+            raise InvalidDecisionError(
+                f"system_prompt must be None or a non-empty string, got {self.system_prompt!r}"
+            )
+        if self.doctrine_id is not None and (
+            not isinstance(self.doctrine_id, str) or not self.doctrine_id.strip()
+        ):
+            raise InvalidDecisionError(
+                f"doctrine_id must be None or a non-empty string, got {self.doctrine_id!r}"
+            )
+        if self.strategy is ScoringStrategy.BINARY_TOKEN_LOGITS:
+            if (
+                not isinstance(self.positive_verbalizer, str)
+                or not self.positive_verbalizer.strip()
+            ):
+                raise InvalidDecisionError(
+                    "positive_verbalizer must be a non-empty string for the "
+                    f"{ScoringStrategy.BINARY_TOKEN_LOGITS.value} strategy, "
+                    f"got {self.positive_verbalizer!r}"
+                )
+            if (
+                not isinstance(self.negative_verbalizer, str)
+                or not self.negative_verbalizer.strip()
+            ):
+                raise InvalidDecisionError(
+                    "negative_verbalizer must be a non-empty string for the "
+                    f"{ScoringStrategy.BINARY_TOKEN_LOGITS.value} strategy, "
+                    f"got {self.negative_verbalizer!r}"
+                )
+            if self.positive_verbalizer == self.negative_verbalizer:
+                raise InvalidDecisionError(
+                    "positive_verbalizer and negative_verbalizer must differ, got "
+                    f"{self.positive_verbalizer!r} for both"
+                )
+        elif self.positive_verbalizer is not None or self.negative_verbalizer is not None:
+            raise InvalidDecisionError(
+                "verbalizers are only meaningful for the "
+                f"{ScoringStrategy.BINARY_TOKEN_LOGITS.value} strategy, got "
+                f"positive_verbalizer={self.positive_verbalizer!r}, "
+                f"negative_verbalizer={self.negative_verbalizer!r}"
+            )
 
     @property
     def fingerprint(self) -> str:
         """Stable SHA-256 fingerprint of this plan's semantic content."""
         return fingerprint(
             {
-                "v": 1,
+                "v": 2,
                 "kind": "inference_plan",
                 "decision_fingerprint": self.decision_fingerprint,
                 "strategy": str(self.strategy),
                 "prompt": self.prompt,
+                "system_prompt": self.system_prompt,
                 "targets": list(self.targets),
+                "positive_verbalizer": self.positive_verbalizer,
+                "negative_verbalizer": self.negative_verbalizer,
+                "doctrine_id": self.doctrine_id,
                 "required_capabilities": asdict(self.required_capabilities),
             }
         )

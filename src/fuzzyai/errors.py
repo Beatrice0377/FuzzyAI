@@ -24,3 +24,11 @@ class UnsupportedCapabilityError(FuzzyAIError):
 
 class FingerprintError(FuzzyAIError):
     """A value is not deterministically serializable (JSON-incompatible)."""
+
+
+class UnsupportedDecisionError(FuzzyAIError):
+    """A compiler or runtime does not support this decision type."""
+
+
+class VerbalizerError(FuzzyAIError):
+    """A verbalizer cannot be resolved to exactly one distinct scoring token."""
