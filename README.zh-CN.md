@@ -61,6 +61,10 @@ DecisionSpec  --(Compiler, future)-->  InferencePlan  -->  Backend (Protocol)  -
                                                                                   DecisionResult
 ```
 
+## 证据与主张（Evidence and claims）
+
+性能（performance）、质量、校准（calibration）与 provider 支持相关的声明，统一按证据状态（evidence status）记录在 [docs/claims.md](docs/claims.md) 中。本项目目前不做任何 benchmark、性能或模型支持声明。假设（hypotheses）与路线图条目在登记册中均被如实标注，不作为已实现的能力呈现。
+
 ## 开发
 
 本项目自身的开发命令（需要 [uv](https://docs.astral.sh/uv/)）：
@@ -76,6 +80,7 @@ uv run mypy src
 
 - [docs/design-constitution.md](docs/design-constitution.md)：具有约束力的设计约束、术语表与规范性不变量。提出任何方案之前请先阅读。
 - [docs/roadmap.md](docs/roadmap.md)：预期的阶段划分。不是时间表，也不是承诺。
+- [docs/claims.md](docs/claims.md)：每一项能力主张的证据状态（[V] 已验证、[E] 实验性、[H] 假设、[R] 路线图）。
 
 ## 非目标（Non-goals）
 

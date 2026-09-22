@@ -178,17 +178,190 @@ numbers.
 
 ---
 
-## 4. Architecture and Layer Boundaries
+## 4. Architecture Principles
+
+The invariants in section 3 are frozen, testable contracts of the Phase 1 code:
+each one has a passing test or a runtime enforcement point. The Architecture
+Principles below are different in kind. They are long-lived design rules that
+future work must obey, and several of them are NOT yet testable in Phase 1 and
+have no code enforcement. Nothing in this section should be read as a claim
+that any principle is already verified; an AP number cited by a future design
+or test means "this rule governs the design", not "this rule is currently
+enforced".
+
+### AP-01 Model-driven semantic judgment; deterministic system mechanics.
+
+The model may own semantic judgment, the expression of semantic ambiguity, and
+the interpretation of semantic evidence. The program must own probability
+semantics, scoring strategy selection, capability negotiation, calibration,
+fallback rules, policy, abstention, routing, versioning, and replay. Model-driven
+does NOT mean model-controlled.
+
+The model must never decide on its own:
+
+- whether its output is calibrated,
+- the probability semantics of its output,
+- which scoring strategy to use,
+- whether to fall back to another provider,
+- business abstention decisions.
+
+The responsibility chain:
+
+```
+Model              -> semantic judgment
+Compiler           -> inference mechanics
+Backend            -> execution
+Probability layer  -> semantics
+Calibration        -> empirical mapping
+Policy             -> action
+```
+
+The abstention boundary deserves its own statement. The model must not reason
+"because certainty is low, I will abstain". If "should we abstain" is itself
+modelled, it must be an explicit separate `DecisionSpec` whose output is only
+another semantic input, and the abstention decision is still executed by the
+policy, in the program.
+
+### AP-02 Derived decisions should preserve sufficient provenance for audit and replay.
+
+Decision lineage is not the same thing as an observability log. An ordinary log
+may carry only the model, the latency, and the probability and still be useful.
+A lineage exists to support replay, audit, debugging, regression testing,
+calibration validation, and scoring-strategy comparison, so it must record the
+derivation dependencies of a decision. The intended future lineage graph:
+
+```
+DecisionSpec
+  -> Scoring Doctrine version
+  -> Compiler version
+  -> InferencePlan
+  -> Rendered model input
+  -> Backend / model / model revision
+  -> RawEvidence
+  -> Probability transformation
+  -> Calibration profile
+  -> DecisionResult
+  -> Policy outcome (if a policy layer is used)
+```
+
+A future `DecisionTrace` must not be merely a telemetry record; it should
+evolve into a replayable derivation record. This round does NOT freeze the
+`DecisionTrace` schema. A probability transformation must not become an
+unexplainable black box sitting between `RawEvidence` and a `DecisionResult`:
+the transformation applied must itself be part of the lineage. How much raw
+detail to persist (full provider payloads, prompts, logits) is a storage and
+privacy policy question, so the future Trace Retention Modes (conceptually
+`minimal`, `replayable`, `full`) are recorded here as a design space, not as
+an implementation.
+
+### AP-03 When semantics are identical, prefer incremental and cache-preserving execution layouts.
+
+The long-term scenario shape is `context(t0) + new evidence -> re-evaluate`:
+conversations, incident streams, agent trajectories, monitoring events, and
+fraud event streams all accumulate evidence against a shared context rather
+than restarting from zero. Future building blocks that may make this practical
+include context ancestry, fingerprints, KV cache, prefix cache, and previous
+inference state.
+
+The same principle has a cache-preserving compilation half: when several
+execution layouts are semantically equivalent, a future compiler may prefer the
+layout that preserves stable prefixes and maximizes reusable computation, and
+may weigh shared-prefix length, number of model passes, batchability, cache
+locality, provider caching characteristics, estimated token cost, and estimated
+latency. None of this is implemented in Phase 1.1.
+
+### AP-04 Optimization may not silently change probability semantics.
+
+The trade-off order in the later section of this document puts semantic
+correctness above performance optimization, and this principle applies that
+ordering at optimization boundaries: a cache or cost optimization must never
+alter decision semantics. If an optimization would change probability semantics,
+it is not an optimization; it must be an explicit, versioned, lineage-recorded
+change. No optimizer exists in this round.
+
+### AP-05 Public capability/performance/quality claims require explicit evidence status.
+
+Every capability, performance, quality, calibration, or provider-support claim
+about this project must carry an explicit evidence status in
+[`./claims.md`](./claims.md). The four statuses:
+
+- `[V] VERIFIED`: backed by reproducible evidence in the repository.
+- `[E] EXPERIMENTAL`: observed in experiments, not yet a stable guarantee.
+- `[H] HYPOTHESIS`: a design expectation, awaiting evaluation.
+- `[R] ROADMAP`: planned work, not a capability.
+
+A roadmap item is never a capability claim.
+
+### AP-06 Provider/model changes that affect probability semantics are provenance-relevant changes.
+
+Changing the model, the model revision, the scoring doctrine version, the
+compiler version, or the calibration profile can move probability semantics.
+Each of those changes is therefore provenance-relevant and must be recorded in
+the decision lineage. In particular, a calibration profile must not be bound
+merely to a model name; it must be versioned against the artifacts that
+actually affect probability semantics. The concrete schemas for these version
+identifiers are not frozen in this round.
+
+### AP-07 Not every semantic decision deserves the same inference cost.
+
+A low-risk classification and a high-risk interpretation may warrant different
+inference fidelity. Possible future shapes include a single-pass cheap
+decision, multiple evidence probes, larger-model escalation, ensembles, and
+sampling. The caution is part of the principle: higher computational cost does
+NOT automatically imply higher semantic quality, and any quality tier must be
+supported by evaluation rather than assumed. This is the "selective fidelity"
+principle.
+
+---
+
+## 5. Architecture and Layer Boundaries
 
 The layering below is the proven design. It is **not yet wired end-to-end**; the
-Compiler and all real backends are future work.
+Compiler, the `ProbabilityAssembler`, Calibration, and all real backends are
+future work.
 
 ```
-DecisionSpec  --(Compiler, future)-->  InferencePlan  -->  Backend (Protocol)  -->  RawEvidence
-                                                                                        |
-                                                          (future scoring/calibration)  v
-                                                                                  DecisionResult
+DecisionSpec
+    -> Compiler                 (future)
+    -> InferencePlan
+    -> Backend                  (Protocol)
+    -> RawEvidence
+    -> ProbabilityAssembler     (future)
+    -> DecisionResult
+    -> Calibration              (future)
+    -> Policy                   (out of scope by design)
 ```
+
+`ProbabilityAssembler` is the single name for the layer that turns `RawEvidence`
+into an uncalibrated decision probability distribution. An earlier draft called
+this layer `Scoring / calibration`, which was too broad: it merged two layers
+with different obligations. They are separate layers now.
+
+### ProbabilityAssembler
+
+```
+RawEvidence
+    -> uncalibrated decision probability distribution
+```
+
+It does NOT:
+
+- perform model inference;
+- decide business policy;
+- perform empirical calibration;
+- claim that its probability is a correctness probability.
+
+### Calibration
+
+```
+uncalibrated probability/evidence
+    + ground-truth-derived calibration profile
+    -> empirically meaningful calibrated information
+```
+
+Calibration is the only layer permitted to attach empirical correctness meaning
+(INV-04), and it stays future work: it needs ground-truth data that Phase 1 does
+not have. `Probability != predicted correctness` holds at every layer.
 
 | Layer | Phase 1 status | Responsibility | Must not know about |
 |---|---|---|---|
@@ -197,7 +370,8 @@ DecisionSpec  --(Compiler, future)-->  InferencePlan  -->  Backend (Protocol)  -
 | `InferencePlan` | abstraction only | Provider-independent description of the inference to run, including `ScoringStrategy`. Fingerprintable. | Any provider-specific knob (INV-17). |
 | `Backend` (Protocol) | protocol only | Declare `capabilities` explicitly; `execute(plan)` and return raw output. | Decisions, results, certainty (INV-16). |
 | `RawEvidence` | abstraction only | Carry raw model output (`EvidenceKind`) before any conversion; optional `dict[str, JSONValue]` metadata. | Probability semantics (INV-18). |
-| Scoring / calibration | future | Convert `RawEvidence` into a `DecisionResult`; calibration only after Phase 3+ evidence exists. | Policy decisions. |
+| `ProbabilityAssembler` | future | Turn `RawEvidence` into an uncalibrated decision probability distribution. | Model inference, business policy, empirical calibration, and any claim that probability is a correctness probability. |
+| Calibration | future | Map uncalibrated probability/evidence plus a ground-truth-derived calibration profile onto empirically meaningful calibrated information (INV-04). | Model inference, business policy. |
 | `DecisionResult` (`BoolResult`, `ChoiceResult`, `Certainty`) | implemented | Report the probability distribution, certainty, `predicted_correctness=None`, `calibrated=False`. | What to do about the answer. |
 | Policy | out of scope by design | Map a result plus risk tolerance onto `accept` / `abstain` / `review` / `escalate`. | (Consumes results; owns abstention.) |
 
@@ -238,7 +412,7 @@ telemetry, or web UI.
 
 ---
 
-## 5. Policy vs Model Boundary
+## 6. Policy vs Model Boundary
 
 The model layer describes uncertainty. The policy layer acts on it.
 
@@ -260,7 +434,7 @@ Consequences:
 
 ---
 
-## 6. Design Trade-off Priority Order
+## 7. Design Trade-off Priority Order
 
 When two goals conflict, this order decides. It is not a suggestion.
 
@@ -283,7 +457,7 @@ semantic correctness > interface clarity > testability > future extensibility > 
 
 ---
 
-## 7. Open Questions Deferred to Later Phases
+## 8. Open Questions Deferred to Later Phases
 
 Recorded as open. None of these has a Phase 1 answer, and Phase 1 must not
 smuggle one in.
@@ -309,3 +483,15 @@ smuggle one in.
 - Fingerprint schema versioning: what happens to stored fingerprints when the
   canonical form of a Phase 1 type changes.
 - The shape of abstention and risk-coverage evaluation in Phase 5.
+- How the scoring doctrine is versioned and fingerprinted, and which of those
+  identifiers enters the lineage.
+- How a compiler version or fingerprint is recorded and stabilised across
+  releases.
+- How a calibration profile is versioned against the artifacts that actually
+  affect probability semantics, rather than a bare model name.
+- Which trace retention mode(s) exist, and what each mode must persist for a
+  decision to be replayable.
+- What incremental decision state, if any, must be part of lineage versus what
+  can be recomputed from fingerprints.
+- Whether AP-03 and AP-04 will eventually need testable invariants of their
+  own.

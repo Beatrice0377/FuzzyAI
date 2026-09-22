@@ -75,6 +75,13 @@ DecisionSpec  --(Compiler, future)-->  InferencePlan  -->  Backend (Protocol)  -
                                                                                   DecisionResult
 ```
 
+## Evidence and claims
+
+Performance, quality, calibration, and provider-support claims are tracked by
+evidence status in [docs/claims.md](docs/claims.md). The project makes no
+benchmark, performance, or model-support claims today. Hypotheses and roadmap
+items are labelled as such there, rather than presented as capabilities.
+
 ## Development
 
 The project's own dev commands (requires [uv](https://docs.astral.sh/uv/)):
@@ -93,6 +100,7 @@ uv run mypy src
   anything.
 - [docs/roadmap.md](docs/roadmap.md): intended phases. Not a schedule, not a
   commitment.
+- [docs/claims.md](docs/claims.md): the evidence status of every capability claim ([V] verified, [E] experimental, [H] hypothesis, [R] roadmap).
 
 ## Non-goals
 
