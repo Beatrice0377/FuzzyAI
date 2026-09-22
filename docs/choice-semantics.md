@@ -151,15 +151,18 @@ entries instead of two, minus the same vocabulary log-sum-exp.
 | | Bool | Choice |
 |---|---|---|
 | outcome space | `{False, True}` | `{c_1, ..., c_N}` |
-| scoring labels | two verbalizers | N labels, possibly from a label pool |
+| scoring labels | two verbalizers | N labels from a versioned label scheme |
 | restricted distribution | two-way softmax | N-way softmax |
 | candidate-space diagnostic | `verbalizer_mass` | `candidate_mass` |
 | result carrier | `BoolResult.probability_true` | `ChoiceResult.probabilities` |
 
-The Bool path is the `N = 2` case of the same construction. That is the whole
-justification for treating this as a generalisation rather than a new mechanism.
-It is also why the Bool path's failure modes should be assumed to recur here
-until an experiment says otherwise.
+Direct categorical Choice at `N = 2` reduces mathematically to the same
+restricted-normalization and candidate-space-mass equations used by Bool
+binary-token scoring. This is a **mathematical degeneration, not a type
+identity**: it does not mean `BoolDecision` and `ChoiceDecision` should be
+merged, nor that their compiler contracts should be unified. It is, however, the
+reason the Bool path's failure modes should be assumed to recur here until an
+experiment says otherwise.
 
 ### 4.4 What the number is not
 
@@ -205,6 +208,79 @@ Why the separation is required, not merely tidy:
    change when the candidates change, and not when the execution labels change.
    That is only expressible if the two are distinct (section 7).
 
+### 5.1 Who chooses the representation, and who validates it
+
+A first draft of this design asked the compiler to select, from a label pool,
+labels that resolve to exactly one token "under the current tokenizer and render
+context", while also declaring the compiler and plan to be provider-independent.
+Those two requirements are contradictory: single-token validity is only
+decidable by running a concrete tokenizer over a concrete rendered continuation.
+The boundary is therefore frozen as:
+
+> **Compiler chooses the scoring representation. Backend validates whether that
+> representation is executable under the concrete model, tokenizer, and
+> rendering environment.**
+
+In split form:
+
+```text
+ChoiceDecision
+  -> ChoiceCompiler
+  -> semantic candidate <-> scoring-label string mapping
+  -> InferencePlan
+  -> TransformersBackend
+  -> render the actual model input
+  -> resolve each scoring label in the actual continuation context
+  -> validate single-token and pairwise-distinct token ids
+  -> execute
+```
+
+The compiler must not access:
+
+```text
+tokenizer
+model
+chat template
+token ids
+CUDA
+backend-specific rendering
+```
+
+The compiler decides, from the `ChoiceDecision`, the doctrine, the versioned
+label scheme, and the declared backend capabilities:
+
+```text
+semantic candidate order
+semantic candidate descriptions
+scoring label strings
+candidate <-> scoring-label mapping
+required capabilities
+prompt and doctrine structure
+```
+
+The compiler must not know:
+
+```text
+whether "A" is token id 123
+whether "A" splits into two tokens under some tokenizer
+whether a leading space changes the tokenization
+```
+
+The backend, in the actual rendered continuation, validates that each scoring
+label is exactly one token and that the token ids are pairwise distinct. If any
+label is not one token, resolves to nothing, or collides with another, execution
+fails explicitly. It must not silently swap a label, jump to another pool,
+truncate, take the first token, sum multi-token logits, fall back to
+one-vs-rest, or fall back to generation.
+
+For Phase 2B: **an invalid representation is an explicit failure.**
+
+No tokenizer-aware resolver is introduced this round. There will be no
+`ScoringLabelResolver`, `ModelAwareCompiler`, `TokenizerAwareCompiler`, or label
+search engine. If experiment later shows that a fixed label scheme is not
+compatible enough, that is the time to design an explicit, recorded resolver
+artifact, not now.
+
 ## 6. Candidate-label mapping contract
 
 Proposed shape (conceptual, not implemented):
@@ -215,8 +291,12 @@ CandidateLabelMapping:
     candidate_name: str
     candidate_description: str | None
     scoring_label: str
-    scoring_token_id: int
 ```
+
+The mapping is deliberately provider-independent, so it carries no
+`scoring_token_id`. A token id does not exist until a concrete tokenizer renders
+a concrete input, so it belongs to execution provenance rather than to the
+compiled plan (section 7).
 
 It must carry, at minimum:
 
@@ -234,12 +314,14 @@ Invariants it should satisfy:
 - entries in `ChoiceDecision` candidate order, and the candidate names equal
   `choice_names` exactly (order preservation);
 - every scoring label non-empty and unique within the mapping;
-- every scoring token id a distinct integer;
-- each scoring label resolves to exactly one token in the *actual* rendered
-  continuation, not merely via a bare `tokenizer.encode(label)`;
-- the mapping is a deterministic function of the label pool version, `N`, the
-  tokenizer, and the render configuration;
+- the mapping is a deterministic function of the `ChoiceDecision`, the label
+  scheme version, and `N` alone, with no tokenizer input;
 - the mapping is recorded in the plan and enters the plan fingerprint.
+
+Token-level properties are validated by the backend at execution time rather
+than asserted by the mapping: each scoring label resolves to exactly one token
+in the *actual* rendered continuation (not merely via a bare
+`tokenizer.encode(label)`), and the resolved token ids are pairwise distinct.
 
 ## 7. Identity and lineage rules
 
@@ -271,6 +353,11 @@ What the mapping must enter:
 | `DecisionTrace` | **yes** | without it, stored logits cannot be read back |
 | execution fingerprint | indirectly, via the plan | plus the resolved token ids |
 
+`InferencePlan` must not store resolved token ids even for execution
+convenience. A plan is a compile-time artifact and a resolved id is an execution
+artifact. Resolved ids belong in backend evidence metadata, in diagnostics, in
+the trace, and in the execution fingerprint.
+
 Proposed invariant for the implementation round:
 
 > The same `ChoiceDecision` compiled with two different candidate-to-label
@@ -299,7 +386,7 @@ Not:
 semantics.** The mapping is applied inside the probability layer, and nothing
 downstream of it exposes label text. A result keyed by `A`/`B`/`C` would be
 uninterpretable without side information, and would silently make the public
-contract depend on the label pool.
+contract depend on the label scheme.
 
 ### 8.2 `value` and tie-breaking
 
@@ -438,13 +525,18 @@ open-set detector.
 still normalize if a caller passes overlapping candidates; only the semantics
 are wrong. The runtime cannot detect this and must not pretend to.
 
-### 10.5 Near-duplicate candidates
+### 10.5 Taxonomy overlap
 
-If two candidates are near-duplicates (`billing` and `payment issue`), the model
-may split its mass between them, depressing both. A Choice probability is not an
-intrinsic per-candidate probability; it is relative to a taxonomy and its
-granularity. Automatic semantic de-duplication is an ontology problem and is out
-of scope.
+If two candidates overlap (`billing` and `payment issue`), the model may split
+its mass between them, depressing both. This is **not** a robustness property
+that a model should pass. It is a **taxonomy-overlap sensitivity**: a
+characterisation of how a bad or overlapping taxonomy distorts the restricted
+distribution. Such a taxonomy may already violate the caller's obligation to
+declare mutually exclusive candidates.
+
+The observation worth recording is that a Choice probability is not an intrinsic
+per-candidate probability; it is relative to a taxonomy and its granularity.
+Automatic semantic de-duplication is an ontology problem and is out of scope.
 
 ### 10.6 Label token prior
 
@@ -557,18 +649,24 @@ Component notes:
 - **`InferencePlan`** already has `targets: tuple[str, ...]`, unused by the Bool
   path, and it is the natural carrier for the ordered scoring labels. The
   candidate-label mapping needs to be expressible in the plan as well, since it
-  is semantics-bearing; the plan fingerprint must cover it.
+  is semantics-bearing; it should be a structured, readable field (for example a
+  `candidate_mapping` tuple), never an opaque JSON blob, and the plan fingerprint
+  must cover it. `mapping[i].scoring_label` must equal `targets[i]`.
 - **`RawEvidence`** stays in scoring space:
 
   ```text
   kind   = LOGITS
   labels = ("A", "B", "C")
   values = (l_A, l_B, l_C)
-  metadata: vocab_logsumexp, top_token_id, top_token_logit, ...
+  metadata: vocab_logsumexp, top_token_id, top_token_logit,
+            resolved_target_token_ids, ...
   ```
 
   The backend must not know about semantic candidates. The assembly step is what
-  applies the mapping.
+  applies the mapping. The evidence labels must match the plan's declared target
+  order *exactly*: matching only the label set and reordering internally is
+  forbidden, because label order, logit order, and the candidate mapping
+  together form the provenance. Any order mismatch fails explicitly.
 - **`ChoiceProbabilityAssembler`** is pure: validate the evidence labels against
   the mapping, validate the mapping, validate finite logits, compute the
   restricted N-way softmax, compute `candidate_mass`, apply the mapping to
@@ -579,14 +677,18 @@ Component notes:
   different `N` only as a concentration measure, not as a like-for-like
   comparison; this is worth recording, not worth redesigning now.
 
-The label pool: the compiler may maintain a versioned, ordered pool
-(`pool v1 = ("A", "B", "C", ...)`) and select the first `N` labels that all
-validate as single distinct tokens in the actual continuation. The mapping is
-then deterministic given the pool version, `N`, the tokenizer, and the render
-configuration, and it is recorded. Silent re-mapping of a semantic candidate is
-never allowed; a plan-construction failure is. Because the pool's usability is
-tokenizer-dependent, the pool must be treated as scoring representation and must
-enter the compiler version, the plan, the fingerprint, and the trace.
+The label scheme: the compiler maintains a versioned, ordered scheme
+(`categorical-labels-v1 = ("A", "B", "C", ...)`) and assigns the first `N`
+labels to the candidates in candidate order. The mapping is therefore
+deterministic from the `ChoiceDecision`, the scheme version, and `N` alone, with
+no tokenizer input, and it is recorded in the plan. The scheme version enters
+the compiler version, the plan, the fingerprint, and the trace.
+
+Whether those labels are executable is not the compiler's question. The backend
+resolves them against the real continuation and fails explicitly if any label is
+not exactly one token or if two labels collide (section 5.1). The compiler never
+skips a label and never re-assigns one, because that would let execution
+silently alter plan semantics.
 
 ## 15. Proposed experiment matrix
 
@@ -645,7 +747,7 @@ irrelevant addition    add "account deletion" to a 3-way set; observe whether
                        the winner and ranking survive and how mass moves
 description paraphrase rewrite "Payment and billing issues" as "Problems
                        involving charges, invoices, or payments"
-near-duplicate         add "payment issue" next to "billing"; observe mass split
+taxonomy overlap       add "payment issue" next to "billing"; observe mass split
 ```
 
 ### 15.5 What counts as a result
@@ -663,8 +765,11 @@ then):
 1. the restricted distribution is an N-way softmax over the declared scoring
    logits, computed stably;
 2. `candidate_mass` is computed from full-vocabulary normalisation;
-3. the mapping is complete and order-preserving over the candidates;
-4. scoring labels are unique and their token ids are distinct;
+3. the mapping is complete and order-preserving over the candidates, and each
+   `mapping[i].scoring_label` equals `targets[i]`;
+4. scoring labels are unique within the mapping, and the backend resolves each
+   to exactly one token with pairwise-distinct ids, failing explicitly
+   otherwise;
 5. semantic probabilities sum to one;
 6. `ChoiceResult` never exposes scoring labels;
 7. the mapping enters the plan fingerprint;
@@ -672,7 +777,11 @@ then):
    different plan fingerprints;
 9. tie-breaking uses semantic candidate order, never label order;
 10. `candidate_mass` lives in diagnostics, never in `ChoiceResult`;
-11. scoring a Choice decision adds no extra forward pass.
+11. scoring a Choice decision adds no extra forward pass;
+12. `RawEvidence` labels match the plan's declared target labels exactly, in
+    order, with no internal reordering;
+13. an unexecutable scoring representation fails explicitly, and no strategy,
+    label, or pool fallback occurs.
 
 To remain experimental robustness hypotheses, with no threshold attached:
 
@@ -680,10 +789,13 @@ To remain experimental robustness hypotheses, with no threshold attached:
 label permutation robustness
 candidate addition robustness
 description paraphrase robustness
-near-duplicate stability
 obvious-category directional behaviour
 candidate-set sensitivity
 ```
+
+Taxonomy overlap is deliberately not in that list. It characterises a bad
+taxonomy rather than testing a model, so it is reported as a failure mode
+(section 10.5), not as a property a model is expected to satisfy.
 
 These become part of the semantic unit test suite only once data exists to say
 what a defensible bound is. No numeric gate may be set before measurement.
@@ -714,15 +826,17 @@ any change to the Bool path
 2. Whether the closed-set obligations (exclusive, single-label, closed) should
    become an explicit documented obligation on the caller in the constitution,
    rather than a note in this document.
-3. Whether the compiler's label pool should be fixed, or chosen per decision
-   from a larger pool, and how a pool change should be versioned and announced.
+3. Whether a future round should let the compiler select labels using
+   tokenizer knowledge, as an explicit recorded resolver artifact, given that
+   this round freezes declaration-only compilation.
 4. Whether `verbalizer_mass` should be renamed to `candidate_mass` for the Bool
    path, or retained as an `N = 2` alias.
 5. Whether normalised entropy is a defensible cross-`N` comparison, or whether
    `N` must always be reported alongside it.
 6. Whether per-candidate full-vocabulary probabilities belong in the standard
    trace or only in a fuller retention mode.
-7. What the correct treatment is when only some labels of a pool validate for a
-   given tokenizer, and whether partial pools should be permitted.
+7. What the correct treatment is when a label in the fixed scheme does not
+   resolve to a single token for a given tokenizer, beyond today's explicit
+   failure.
 8. Whether a future open-set strategy should be a Bool guard, an explicit
    `other` candidate, or a genuinely different scoring strategy.
