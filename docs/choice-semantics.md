@@ -3,7 +3,9 @@
 Design and exploration record for Phase 2B.
 
 Status: **direct categorical Choice is implemented and experimentally
-exercised (Phase 2B). Every other strategy discussed here remains design only.**
+exercised (Phase 2B), and its representation sensitivity has been replicated on
+a second model family (Phase 2B.1). Every other strategy discussed here remains
+design only.**
 Enforcement today covers exactly one path: direct categorical, closed-set,
 single-label, single-token scoring labels, small N. Read this together with
 `design-constitution.md` (probability semantics, INV-19 to INV-22, AP-08) and
@@ -24,7 +26,7 @@ Frozen as runtime invariants, each with a test or an enforcement point:
   than reordered (INV-22);
 - the compiler declares the representation and the backend validates
   executability (AP-08);
-- INV-19 was widened to cover `candidate_mass` for the categorical path, with
+- INV-19 was widened to cover `scoring_label_mass` for the categorical path, with
   no new number because it is the same rule over a wider candidate set;
 - the Choice tie-break resolves on semantic candidate order, which Phase 1
   already covered for results and therefore also needs no new number.
@@ -36,15 +38,64 @@ Left as experimental robustness hypotheses, never promoted to invariants:
 - description paraphrase stability.
 
 Measured outcome, recorded in full in `experiments/choice_signal/REPORT.md`:
-the semantic winner was stable across all six label permutations at N=3 (90/90)
-and across five permutations at N=5 (75/75), while the distribution SHAPE moved
-(mean total variation 0.0334 and 0.0277, worst case 0.3082). Adding an absent
-candidate and paraphrasing a description left the winner unchanged. With a
-candidate set that omitted the true topic the model still answered in-set at
-0.677 to 0.893 with `candidate_mass` near 0.99, so the round confirms that the
-direct categorical path has no open-set guarantee and that `candidate_mass`
-measures candidate-space occupancy rather than candidate-set correctness. No
-pass threshold was set anywhere.
+on `Qwen/Qwen3.5-2B` the semantic winner was stable across all six label
+permutations at N=3 (90/90) and across five permutations at N=5 (75/75), while
+the distribution SHAPE moved (mean total variation 0.0334 and 0.0277, worst case
+0.3082). The Phase 2B.1 replication on `openbmb/MiniCPM5-2B` preserved the winner
+in 85/90 and 74/75 and moved the shape by mean total variation 0.0514 and 0.0381
+with a worst case of 0.4672 and 0.5746. Adding an absent candidate and
+paraphrasing a description left the winner changed in almost no case on either
+model. With a candidate set that omitted the true topic both models still
+answered in-set with `scoring_label_mass` near 1.0, so the direct categorical
+path has no open-set guarantee and `scoring_label_mass` measures protocol
+adherence rather than semantic coverage or candidate-set correctness. No pass
+threshold was set anywhere.
+
+### The uncalibrated Choice distribution is conditional on the scoring representation
+
+The semantic candidate set is not the only thing a Choice probability is
+conditional on:
+
+> The full uncalibrated Choice distribution is conditional not only on the
+> semantic candidate set, but also on the concrete scoring representation.
+
+This follows from the mathematics in section 6 and it is now measured rather
+than only derived. The conditioning itself is definitional rather than an
+empirical claim; how large the effect is, and whether it is stable, remains an
+experimental hypothesis and not an invariant (section 16). Holding the
+`ChoiceDecision` fixed and changing only which
+scoring label each candidate is bound to moved the distribution by up to 0.31
+total variation on `Qwen/Qwen3.5-2B` and 0.57 on `openbmb/MiniCPM5-2B`, on two
+model families. The correct reading is not that probabilities are meaningless. It
+is that a probability has **plan-relative semantics**:
+
+```text
+same decision
+different scoring representation
+= different plan
+= different uncalibrated distribution
+```
+
+FuzzyAI's job is to record that difference, not to hide it, and never to treat
+numbers produced under different plans as automatically comparable.
+
+### Layer boundary: single-run diagnostics versus cross-run metrics
+
+Total variation, label permutation drift and description paraphrase drift compare
+two executions, so they are not properties of a single inference and do not live
+in the runtime:
+
+- single run, inside the runtime: `scoring_label_mass`,
+  `scoring_label_token_probabilities`, the top token and its probability, the
+  restricted semantic distribution, `certainty`, the candidate mapping. These are
+  fields of `ChoiceScoringDiagnostics`, `ChoiceResult` and `DecisionTrace`.
+- across runs, in the experiment and evaluation layer:
+  `TV(P, Q) = 0.5 * sum_i |P_i - Q_i|`, argmax preservation, rank preservation,
+  probability drift. These live in `experiments/choice_signal/metrics.py`.
+
+There is deliberately no `trace.tv_drift` and no
+`diagnostics.permutation_stability`, and no threshold is attached to any drift
+metric anywhere in the project.
 
 The question this document exists to answer:
 
@@ -71,7 +122,7 @@ In scope:
 - the separation between a semantic candidate and the scoring label used to
   read a logit for it;
 - the candidate-to-label mapping, and where it must be recorded;
-- `candidate_mass` as the N-way generalisation of `verbalizer_mass`;
+- `scoring_label_mass` as the N-way generalisation of `verbalizer_mass`;
 - the failure modes that follow from the probability being conditioned on a
   declared candidate set;
 - a proposed implementation contract and experiment matrix for the next round.
@@ -104,7 +155,7 @@ semantic candidate given that the model's next token is one of the declared
 scoring labels. It is the quantity `ChoiceResult.probabilities` is intended to
 carry.
 
-**Candidate mass.** The full-vocabulary probability mass that the next token
+**Scoring label mass.** The full-vocabulary probability mass that the next token
 lands on the union of the declared scoring labels. It is the N-way
 generalisation of `verbalizer_mass`, and it is a diagnostic, not part of the
 decision distribution.
@@ -167,21 +218,21 @@ P(c_i) = exp(l_i - m) / sum_j exp(l_j - m)
 which is stable for arbitrarily large or small logits, exactly as the Bool path
 already is.
 
-### 4.2 Candidate mass
+### 4.2 Scoring label mass
 
 ```text
-candidate_mass = sum_j exp(l_j) / sum_{v in V} exp(l_v)
+scoring_label_mass = sum_j exp(l_j) / sum_{v in V} exp(l_v)
 ```
 
 where `V` is the full vocabulary. In log space, using the full-vocabulary
 log-sum-exp the backend already computes for the Bool path:
 
 ```text
-log_candidate_mass = logsumexp(l_1, ..., l_N) - logsumexp(V)
-candidate_mass     = exp(log_candidate_mass)
+log_scoring_label_mass = logsumexp(l_1, ..., l_N) - logsumexp(V)
+scoring_label_mass     = exp(log_scoring_label_mass)
 ```
 
-`candidate_mass` reduces exactly to `verbalizer_mass` when `N = 2`. The existing
+`scoring_label_mass` reduces exactly to `verbalizer_mass` when `N = 2`. The existing
 diagnostics module already computes the pieces: a candidate log-sum-exp over N
 entries instead of two, minus the same vocabulary log-sum-exp.
 
@@ -192,7 +243,7 @@ entries instead of two, minus the same vocabulary log-sum-exp.
 | outcome space | `{False, True}` | `{c_1, ..., c_N}` |
 | scoring labels | two verbalizers | N labels from a versioned label scheme |
 | restricted distribution | two-way softmax | N-way softmax |
-| candidate-space diagnostic | `verbalizer_mass` | `candidate_mass` |
+| candidate-space diagnostic | `verbalizer_mass` | `scoring_label_mass` |
 | result carrier | `BoolResult.probability_true` | `ChoiceResult.probabilities` |
 
 Direct categorical Choice at `N = 2` reduces mathematically to the same
@@ -215,7 +266,7 @@ experiment says otherwise.
 - comparable across two different candidate sets, even when the same candidate
   appears in both (section 10.2);
 - evidence that the model was about to emit any candidate token at all (that is
-  what `candidate_mass` is for).
+  what `scoring_label_mass` is for).
 
 ## 5. Candidate and label separation
 
@@ -447,9 +498,9 @@ belonging to the key set, and `value` being an argmax of the distribution.
 
 ## 9. Diagnostics
 
-### 9.1 `candidate_mass`
+### 9.1 `scoring_label_mass`
 
-`candidate_mass` answers one question: **did the model's next-token
+`scoring_label_mass` answers one question: **did the model's next-token
 distribution actually put mass on the tokens we declared as the candidate
 space?**
 
@@ -458,19 +509,19 @@ candidate set was the right one; whether the candidates are exhaustive; whether
 the decision is correct.
 
 The Phase 2A.1 finding generalises directly. A high restricted probability with
-a near-zero `candidate_mass` is renormalized tail noise, and the number must not
+a near-zero `scoring_label_mass` is renormalized tail noise, and the number must not
 be read as inclination.
 
-### 9.2 `candidate_mass` is not certainty
+### 9.2 `scoring_label_mass` is not certainty
 
 These two are orthogonal and the distinction should be stated in the
 implementation docs with both examples:
 
 ```text
-candidate_mass = 0.99, distribution = [0.34, 0.33, 0.33]
+scoring_label_mass = 0.99, distribution = [0.34, 0.33, 0.33]
   the model is firmly in the candidate space, and undecided inside it
 
-candidate_mass = 0.001, distribution = [0.99, 0.005, 0.005]
+scoring_label_mass = 0.001, distribution = [0.99, 0.005, 0.005]
   the restricted distribution looks very peaked, and the model is almost
   certainly not about to emit any declared candidate token; the 0.99 is
   renormalized tail noise
@@ -479,21 +530,21 @@ candidate_mass = 0.001, distribution = [0.99, 0.005, 0.005]
 Certainty (`entropy`, `margin`) describes only concentration of the restricted
 distribution. It says nothing about whether that distribution is grounded.
 
-### 9.3 Why `candidate_mass` does not generalise across `N`
+### 9.3 Why `scoring_label_mass` does not generalise across `N`
 
 ```text
-candidate_mass = 0.9
+scoring_label_mass = 0.9
 ```
 
 does not mean the same thing at `N = 2` and at `N = 20`. A larger label set has
 more opportunities to accumulate mass by accident, and the labels themselves
 carry different priors. Therefore:
 
-> No universal runtime threshold of the form `candidate_mass > 0.5 => valid`
+> No universal runtime threshold of the form `scoring_label_mass > 0.5 => valid`
 > may be introduced.
 
 This is the same conclusion Phase 2A.1 reached for `verbalizer_mass`, and it
-holds more strongly here. Whether `candidate count`, `candidate mass`, the
+holds more strongly here. Whether `candidate count`, `scoring label mass`, the
 outside top token, and entropy can be combined into a defensible policy is a
 research question recorded in section 18, not a Phase 2B deliverable.
 
@@ -503,7 +554,7 @@ Minimal proposal, staying close to the existing `ScoringDiagnostics`:
 
 ```text
 ChoiceScoringDiagnostics:
-    candidate_mass: float
+    scoring_label_mass: float
     candidate_full_vocab_probabilities: tuple[float, ...]
     top_token_id: int
     top_token_probability: float
@@ -518,20 +569,20 @@ Notes:
   `ChoiceResult`. Storing both is not two sources of truth, because they are
   different quantities. They are cheap to compute from the row already in hand.
 - `top_token_id` / `top_token_probability` are retained because a high
-  `candidate_mass` does **not** guarantee the top token is a candidate: with
-  `A = 0.2`, `B = 0.2`, `C = 0.2` and an outsider at `0.3`, `candidate_mass` is
+  `scoring_label_mass` does **not** guarantee the top token is a candidate: with
+  `A = 0.2`, `B = 0.2`, `C = 0.2` and an outsider at `0.3`, `scoring_label_mass` is
   `0.6` while the top token is outside the candidate set. The diagnostic pair is
   what makes that visible.
-- `candidate_mass` is the N-way form of `verbalizer_mass`. Whether the Bool
+- `scoring_label_mass` is the N-way form of `verbalizer_mass`. Whether the Bool
   spelling is kept as an `N = 2` alias or renamed is an implementation-round
-  decision; the general concept name should be `candidate_mass`.
+  decision; the general concept name should be `scoring_label_mass`.
 
 ## 10. Failure modes
 
 ### 10.1 Scoring-position failure
 
 The model is not at the decision position (its next token is a reasoning tag, a
-role token, or a word continuation). `candidate_mass` approaches zero while the
+role token, or a word continuation). `scoring_label_mass` approaches zero while the
 restricted distribution stays plausible-looking. Observed in Phase 2A.2: LFM2.5
 under the evidence-oriented doctrine left the decision position on 462 of 720
 probes. Assume this recurs, and assume it is model- and doctrine-dependent.
@@ -552,10 +603,10 @@ therefore be part of what a result is relative to.
 ### 10.3 Non-exhaustive candidate sets
 
 If the true answer is outside the set, the restricted softmax still returns a
-normalized distribution and still names a winner. `candidate_mass` may reveal
-part of the problem, but a high `candidate_mass` does not prove the taxonomy was
+normalized distribution and still names a winner. `scoring_label_mass` may reveal
+part of the problem, but a high `scoring_label_mass` does not prove the taxonomy was
 exhaustive. The restricted softmax is structurally incapable of returning
-"none of these". This is why `candidate_mass` must not be presented as an
+"none of these". This is why `scoring_label_mass` must not be presented as an
 open-set detector.
 
 ### 10.4 Non-exclusive candidates
@@ -708,7 +759,7 @@ Component notes:
   together form the provenance. Any order mismatch fails explicitly.
 - **`ChoiceProbabilityAssembler`** is pure: validate the evidence labels against
   the mapping, validate the mapping, validate finite logits, compute the
-  restricted N-way softmax, compute `candidate_mass`, apply the mapping to
+  restricted N-way softmax, compute `scoring_label_mass`, apply the mapping to
   produce semantic probabilities, compute certainty, choose the semantic argmax
   with candidate-order tie-breaking, and return an uncalibrated `ChoiceResult`.
 - **Certainty** carries over unchanged: normalised entropy over N outcomes,
@@ -743,7 +794,7 @@ billing, shipping, technical
 ```
 
 For each category, several synthetic contexts that obviously belong to it.
-Record: semantic argmax, `candidate_mass`, restricted distribution, certainty.
+Record: semantic argmax, `scoring_label_mass`, restricted distribution, certainty.
 
 ### 15.2 Five-way
 
@@ -751,7 +802,7 @@ Record: semantic argmax, `candidate_mass`, restricted distribution, certainty.
 billing, shipping, returns, technical, account
 ```
 
-Purpose: observe what `N` does to `candidate_mass`, permutation drift, entropy,
+Purpose: observe what `N` does to `scoring_label_mass`, permutation drift, entropy,
 and ranking. Not an accuracy target.
 
 ### 15.3 Label permutation
@@ -798,12 +849,12 @@ the drift is.
 
 ## 16. Frozen invariants vs robustness hypotheses
 
-To be frozen as runtime invariants after the implementation round (and only
-then):
+Frozen as runtime invariants in Phase 2B, each with a test or an enforcement
+point:
 
 1. the restricted distribution is an N-way softmax over the declared scoring
    logits, computed stably;
-2. `candidate_mass` is computed from full-vocabulary normalisation;
+2. `scoring_label_mass` is computed from full-vocabulary normalisation;
 3. the mapping is complete and order-preserving over the candidates, and each
    `mapping[i].scoring_label` equals `targets[i]`;
 4. scoring labels are unique within the mapping, and the backend resolves each
@@ -815,7 +866,7 @@ then):
 8. two different label assignments give the same decision fingerprint and
    different plan fingerprints;
 9. tie-breaking uses semantic candidate order, never label order;
-10. `candidate_mass` lives in diagnostics, never in `ChoiceResult`;
+10. `scoring_label_mass` lives in diagnostics, never in `ChoiceResult`;
 11. scoring a Choice decision adds no extra forward pass;
 12. `RawEvidence` labels match the plan's declared target labels exactly, in
     order, with no internal reordering;
@@ -838,6 +889,11 @@ taxonomy rather than testing a model, so it is reported as a failure mode
 
 These become part of the semantic unit test suite only once data exists to say
 what a defensible bound is. No numeric gate may be set before measurement.
+Phase 2B.1 measured three of them on two model families (section 15 and
+`experiments/choice_signal/REPORT.md`): semantic winner preservation was near
+total on both, while distribution shape moved by up to 0.31 and 0.57 total
+variation. That is enough to establish that the effect is real and cross-model,
+and not enough to set any bound, so these stay hypotheses.
 
 ## 17. Non-goals
 
@@ -859,7 +915,7 @@ any change to the Bool path
 
 ## 18. Open questions
 
-1. Whether `candidate count`, `candidate mass`, outside-top-token probability,
+1. Whether `candidate count`, `scoring label mass`, outside-top-token probability,
    and restricted entropy can be combined into a defensible scoring-validity
    policy, and at which layer that policy belongs.
 2. Whether the closed-set obligations (exclusive, single-label, closed) should
@@ -868,8 +924,14 @@ any change to the Bool path
 3. Whether a future round should let the compiler select labels using
    tokenizer knowledge, as an explicit recorded resolver artifact, given that
    this round freezes declaration-only compilation.
-4. Whether `verbalizer_mass` should be renamed to `candidate_mass` for the Bool
-   path, or retained as an `N = 2` alias.
+4. Settled in Phase 2B.1: `verbalizer_mass` is kept for the Bool path rather than
+   renamed, because it already forms an independent public vocabulary and
+   `verbalizer` names a scoring representation unambiguously, and renaming would
+   be API churn for no semantic gain. `verbalizer_mass` and `scoring_label_mass`
+   are the same candidate-label-set mass equation under their respective binary
+   and categorical scoring representations. Open remainder: how a future shared
+   internal helper should be named so the relationship is obvious without
+   introducing a public `Bool` alias for `scoring_label_mass`.
 5. Whether normalised entropy is a defensible cross-`N` comparison, or whether
    `N` must always be reported alongside it.
 6. Whether per-candidate full-vocabulary probabilities belong in the standard
@@ -879,3 +941,14 @@ any change to the Bool path
    failure.
 8. Whether a future open-set strategy should be a Bool guard, an explicit
    `other` candidate, or a genuinely different scoring strategy.
+9. Calibration binding: a future `CalibrationProfile` must bind to
+   probability-semantics-relevant scoring representation identity (model and
+   revision, decision family, scoring strategy, doctrine, compiler version,
+   scoring representation or plan family) rather than to task identity, because a
+   distribution measured under one representation does not transfer to another.
+   It should not bind to a single plan fingerprint, which would be too
+   fine-grained. How a plan family or formulation fingerprint is defined is open,
+   and Phase 2B.1 records this implication without implementing calibration.
+10. Whether representation sensitivity should be re-tested on more model
+    families, larger N, and non-synthetic cases, given that Phase 2B.1 found the
+    pattern on two families. No threshold may be set before such data exists.

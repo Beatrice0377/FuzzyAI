@@ -1,9 +1,10 @@
 """Scoring diagnostics: where a model's next-token probability mass actually went.
 
 A restricted candidate probability answers "which candidate would the model
-prefer, if it had to choose between them". It does NOT answer "was the model
-actually choosing between them". :class:`ScoringDiagnostics` carries the second
-kind of information.
+prefer, if it had to choose between the declared candidates". It does NOT
+answer "was the model actually emitting any of the declared scoring tokens at
+all". :class:`ScoringDiagnostics` and :class:`ChoiceScoringDiagnostics` carry
+the second kind of information.
 
 These values are derived from raw evidence. They are NOT decision
 probabilities, NOT calibrated probabilities, and NOT a validity verdict: this
@@ -165,14 +166,14 @@ class ScoringDiagnostics:
             )
         # Structural facts of any full-vocabulary distribution: the argmax is
         # at least as probable as any other single token, and the mass assigned
-        # to the two candidates is at least each candidate's own probability.
-        largest_candidate = max(positive, negative)
-        if top < largest_candidate - _ORDERING_TOLERANCE:
+        # to the two verbalizer tokens is at least each one's own probability.
+        largest_verbalizer = max(positive, negative)
+        if top < largest_verbalizer - _ORDERING_TOLERANCE:
             raise InvalidProbabilityError(
                 "top_token_probability must be >= every other token probability: got "
                 f"top_token_probability={top!r} but positive={positive!r}, negative={negative!r}"
             )
-        if mass < largest_candidate - _ORDERING_TOLERANCE:
+        if mass < largest_verbalizer - _ORDERING_TOLERANCE:
             raise InvalidProbabilityError(
                 "verbalizer_mass must be >= each verbalizer token probability: got "
                 f"verbalizer_mass={mass!r} but positive={positive!r}, negative={negative!r}"
@@ -277,25 +278,35 @@ def _logsumexp(values: Sequence[float]) -> float:
     return maximum + math.log(total)
 
 
-def log_candidate_mass(candidate_logits: Sequence[float], *, vocab_logsumexp: float) -> float:
-    """``log P(next token is any candidate)`` under full-vocabulary normalization.
+def log_scoring_label_mass(
+    scoring_label_logits: Sequence[float], *, vocab_logsumexp: float
+) -> float:
+    """``log P(next token is one of the declared scoring-label tokens)``.
 
-    ``candidate_logits`` are the raw logits of the candidate scoring tokens in
-    target order; ``vocab_logsumexp`` is the full-vocabulary normalizer
-    reported by the backend for the same forward pass.
+    ``scoring_label_logits`` are the raw logits of the scoring-label tokens in
+    declared target order; ``vocab_logsumexp`` is the full-vocabulary
+    normalizer reported by the backend for the same forward pass.
     """
-    return _logsumexp(candidate_logits) - vocab_logsumexp
+    return _logsumexp(scoring_label_logits) - vocab_logsumexp
 
 
-def candidate_mass(candidate_logits: Sequence[float], *, vocab_logsumexp: float) -> float:
-    """``P(next token is any candidate)`` under full-vocabulary normalization.
+def scoring_label_mass(scoring_label_logits: Sequence[float], *, vocab_logsumexp: float) -> float:
+    """``P(next token is one of the declared scoring-label tokens)``.
+
+    Full-vocabulary normalization: the scoring-label logits are normalized
+    against the whole vocabulary, not against each other. This measures how
+    much raw next-token probability mass lands on the scoring labels the plan
+    declared, so it indicates whether the model is following the scoring
+    protocol. It does NOT indicate whether the semantic candidate set is
+    correct, exhaustive, or contains the true answer.
 
     Reduces to the binary :func:`verbalizer_mass` when there are exactly two
-    candidates. Like every value in this module it is a diagnostic, never a
-    decision probability and never a validity verdict.
+    scoring labels: the same candidate-label-set mass equation under a
+    different scoring representation. Like every value in this module it is a
+    diagnostic, never a decision probability and never a validity verdict.
     """
     return _probability_from_log_ratio(
-        log_candidate_mass(candidate_logits, vocab_logsumexp=vocab_logsumexp),
+        log_scoring_label_mass(scoring_label_logits, vocab_logsumexp=vocab_logsumexp),
         magnitude=vocab_logsumexp,
     )
 
@@ -311,30 +322,30 @@ class ChoiceScoringDiagnostics:
     exist yet.
     """
 
-    candidate_mass: float
-    candidate_token_probabilities: tuple[float, ...]
+    scoring_label_mass: float
+    scoring_label_token_probabilities: tuple[float, ...]
     top_token_id: int
     top_token_probability: float
     top_token_text: str | None = None
 
     def __post_init__(self) -> None:
-        mass = _validated_probability(self.candidate_mass, name="candidate_mass")
-        if not isinstance(self.candidate_token_probabilities, tuple):
+        mass = _validated_probability(self.scoring_label_mass, name="scoring_label_mass")
+        if not isinstance(self.scoring_label_token_probabilities, tuple):
             raise InvalidProbabilityError(
-                "candidate_token_probabilities must be a tuple of floats, got "
-                f"{type(self.candidate_token_probabilities).__name__}"
+                "scoring_label_token_probabilities must be a tuple of floats, got "
+                f"{type(self.scoring_label_token_probabilities).__name__}"
             )
-        if not self.candidate_token_probabilities:
+        if not self.scoring_label_token_probabilities:
             raise InvalidProbabilityError(
-                "candidate_token_probabilities must be non-empty, got an empty tuple"
+                "scoring_label_token_probabilities must be non-empty, got an empty tuple"
             )
         probabilities = tuple(
-            _validated_probability(value, name=f"candidate_token_probabilities[{index}]")
-            for index, value in enumerate(self.candidate_token_probabilities)
+            _validated_probability(value, name=f"scoring_label_token_probabilities[{index}]")
+            for index, value in enumerate(self.scoring_label_token_probabilities)
         )
         top = _validated_probability(self.top_token_probability, name="top_token_probability")
-        object.__setattr__(self, "candidate_mass", mass)
-        object.__setattr__(self, "candidate_token_probabilities", probabilities)
+        object.__setattr__(self, "scoring_label_mass", mass)
+        object.__setattr__(self, "scoring_label_token_probabilities", probabilities)
         object.__setattr__(self, "top_token_probability", top)
         if isinstance(self.top_token_id, bool) or not isinstance(self.top_token_id, int):
             raise InvalidDecisionError(
@@ -349,20 +360,20 @@ class ChoiceScoringDiagnostics:
                 f"{type(self.top_token_text).__name__} ({self.top_token_text!r})"
             )
         # Structural facts of any full-vocabulary distribution: the argmax is
-        # at least as probable as any candidate token, and the mass assigned
-        # to the candidates is at least each candidate's own probability.
-        largest_candidate = max(probabilities)
-        if top < largest_candidate - _ORDERING_TOLERANCE:
+        # at least as probable as any scoring-label token, and the mass
+        # assigned to the scoring labels is at least each one's own probability.
+        largest_label = max(probabilities)
+        if top < largest_label - _ORDERING_TOLERANCE:
             raise InvalidProbabilityError(
-                "top_token_probability must be >= every candidate token probability: got "
-                f"top_token_probability={top!r} but largest candidate probability is "
-                f"{largest_candidate!r}"
+                "top_token_probability must be >= every scoring-label token probability: got "
+                f"top_token_probability={top!r} but largest scoring-label probability is "
+                f"{largest_label!r}"
             )
-        if mass < largest_candidate - _ORDERING_TOLERANCE:
+        if mass < largest_label - _ORDERING_TOLERANCE:
             raise InvalidProbabilityError(
-                "candidate_mass must be >= each candidate token probability: got "
-                f"candidate_mass={mass!r} but largest candidate probability is "
-                f"{largest_candidate!r}"
+                "scoring_label_mass must be >= each scoring-label token probability: got "
+                f"scoring_label_mass={mass!r} but largest scoring-label probability is "
+                f"{largest_label!r}"
             )
 
 
@@ -421,12 +432,14 @@ def diagnose_choice_evidence(
             f"evidence metadata key {TOP_TOKEN_TEXT_KEY!r} must be None or a string, "
             f"got {type(top_token_text).__name__} ({top_token_text!r})"
         )
-    candidate_logits = evidence.values
+    scoring_label_logits = evidence.values
     return ChoiceScoringDiagnostics(
-        candidate_mass=candidate_mass(candidate_logits, vocab_logsumexp=vocab_logsumexp),
-        candidate_token_probabilities=tuple(
+        scoring_label_mass=scoring_label_mass(
+            scoring_label_logits, vocab_logsumexp=vocab_logsumexp
+        ),
+        scoring_label_token_probabilities=tuple(
             full_vocab_probability(logit=logit, vocab_logsumexp=vocab_logsumexp)
-            for logit in candidate_logits
+            for logit in scoring_label_logits
         ),
         top_token_id=top_token_id,
         top_token_probability=full_vocab_probability(

@@ -15,15 +15,16 @@ from fuzzyai import (
     ChoiceCompiler,
     ChoiceDecision,
     ChoiceResult,
+    ChoiceScoringDiagnostics,
     EvidenceKind,
     InferencePlan,
     InvalidDecisionError,
     RawEvidence,
     ScoringStrategy,
     assemble_choice_probability,
-    candidate_mass,
     normalized_entropy,
     probability_margin,
+    scoring_label_mass,
 )
 
 CAPS = BackendCapabilities(categorical_token_logits=True)
@@ -228,13 +229,28 @@ class TestDiagnosticsReturned:
         # 1/6 and the three candidates hold 3/6 = 0.5 of the mass.
         metadata = {"vocab_logsumexp": math.log(6.0), "top_token_id": 7, "top_token_logit": 0.0}
         result, diagnostics = assemble((0.0, 0.0, 0.0), metadata=metadata)
-        assert diagnostics.candidate_mass == pytest.approx(0.5)
-        for probability in diagnostics.candidate_token_probabilities:
+        assert diagnostics.scoring_label_mass == pytest.approx(0.5)
+        for probability in diagnostics.scoring_label_token_probabilities:
             assert probability == pytest.approx(1.0 / 6.0)
         assert diagnostics.top_token_id == 7
         assert diagnostics.top_token_probability == pytest.approx(1.0 / 6.0)
         assert result.certainty.entropy == pytest.approx(1.0)
         assert result.certainty.margin == pytest.approx(0.0)
+
+    def test_renamed_fields_present_old_candidate_fields_gone(self) -> None:
+        # Phase 2B.1 renamed candidate_mass -> scoring_label_mass and
+        # candidate_token_probabilities -> scoring_label_token_probabilities:
+        # the old attribute names must not survive on the diagnostics object.
+        diagnostics = ChoiceScoringDiagnostics(
+            scoring_label_mass=0.75,
+            scoring_label_token_probabilities=(0.25, 0.25, 0.25),
+            top_token_id=3,
+            top_token_probability=0.25,
+        )
+        assert not hasattr(diagnostics, "candidate_mass")
+        assert not hasattr(diagnostics, "candidate_token_probabilities")
+        assert diagnostics.scoring_label_mass == 0.75
+        assert diagnostics.scoring_label_token_probabilities == (0.25, 0.25, 0.25)
 
 
 class TestCertaintyAndDefaults:
@@ -267,19 +283,25 @@ class TestCertaintyAndDefaults:
         assert stamped.trace_id == "trace-1"
 
 
-class TestCandidateMassMath:
-    """candidate_mass is a full-vocabulary quantity, not a candidate-set one."""
+class TestScoringLabelMassMath:
+    """scoring_label_mass is a full-vocabulary quantity, not a candidate-set one."""
 
     def test_three_candidates_of_four_uniform_tokens(self) -> None:
-        assert candidate_mass((0.0, 0.0, 0.0), vocab_logsumexp=math.log(4.0)) == pytest.approx(0.75)
+        assert scoring_label_mass((0.0, 0.0, 0.0), vocab_logsumexp=math.log(4.0)) == pytest.approx(
+            0.75
+        )
 
     def test_three_candidates_of_five_uniform_tokens(self) -> None:
-        assert candidate_mass((0.0, 0.0, 0.0), vocab_logsumexp=math.log(5.0)) == pytest.approx(0.6)
+        assert scoring_label_mass((0.0, 0.0, 0.0), vocab_logsumexp=math.log(5.0)) == pytest.approx(
+            0.6
+        )
 
     def test_mass_falls_as_the_vocabulary_grows(self) -> None:
-        four = candidate_mass((0.0, 0.0, 0.0), vocab_logsumexp=math.log(4.0))
-        five = candidate_mass((0.0, 0.0, 0.0), vocab_logsumexp=math.log(5.0))
+        four = scoring_label_mass((0.0, 0.0, 0.0), vocab_logsumexp=math.log(4.0))
+        five = scoring_label_mass((0.0, 0.0, 0.0), vocab_logsumexp=math.log(5.0))
         assert four > five
 
     def test_all_logits_equal_to_the_vocabulary_is_full_mass(self) -> None:
-        assert candidate_mass((0.0, 0.0, 0.0), vocab_logsumexp=math.log(3.0)) == pytest.approx(1.0)
+        assert scoring_label_mass((0.0, 0.0, 0.0), vocab_logsumexp=math.log(3.0)) == pytest.approx(
+            1.0
+        )

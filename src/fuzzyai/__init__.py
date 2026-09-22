@@ -24,9 +24,9 @@ from fuzzyai.diagnostics import (
     BINARY_EVIDENCE_LABELS,
     ChoiceScoringDiagnostics,
     ScoringDiagnostics,
-    candidate_mass,
     diagnose_bool_evidence,
     diagnose_choice_evidence,
+    scoring_label_mass,
 )
 from fuzzyai.doctrine import (
     BINARY_DOCTRINE_ID,
@@ -114,11 +114,11 @@ __all__ = [
     "assemble_bool_probability",
     "assemble_choice_probability",
     "build_decision_trace",
-    "candidate_mass",
     "canonical_json",
     "diagnose_bool_evidence",
     "diagnose_choice_evidence",
     "fingerprint",
     "normalized_entropy",
     "probability_margin",
+    "scoring_label_mass",
 ]

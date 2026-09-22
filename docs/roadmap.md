@@ -75,6 +75,19 @@ stays behind the `Backend` boundary.
 - Temperature scaling.
 - Calibration profile.
 
+Constraint recorded by Phase 2B and replicated by Phase 2B.1 (do not implement it
+here): a future `CalibrationProfile` must bind to probability-semantics-relevant
+scoring representation identity, not merely to task or model identity. Two
+executions that hold the `ChoiceDecision` fixed but use a different scoring
+representation produce different uncalibrated distributions (measured: up to 0.31
+total variation on `Qwen/Qwen3.5-2B` and 0.57 on `openbmb/MiniCPM5-2B`), so a
+calibration fit to one representation does not transfer to another. At minimum
+the binding should cover the model and revision, the decision family, the scoring
+strategy, the doctrine, the compiler version, and the scoring representation or
+plan family. It should NOT be bound to a single plan fingerprint, which would be
+too fine-grained and would break on any irrelevant plan change. How a "plan
+family" or "formulation fingerprint" is defined is a Phase 4 design question.
+
 ## Phase 5: policy layer
 
 - Abstention policy (`accept` / `abstain` / `review` / `escalate`).

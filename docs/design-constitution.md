@@ -49,6 +49,17 @@ terminology drift.
 The decision distribution produced by **some scoring strategy**. A probability
 is always relative to the strategy and evidence that generated it.
 
+A full uncalibrated decision distribution is conditional not only on the semantic
+question and the declared candidate set, but also on the concrete scoring
+representation, meaning which scoring label each candidate is bound to. Holding a
+`ChoiceDecision` completely fixed and changing only that binding moved the
+distribution by up to 0.31 and 0.57 total variation on two model families
+(Phase 2B and Phase 2B.1, `experiments/choice_signal/REPORT.md`). A probability
+therefore has plan-relative semantics: the same decision compiled into a
+different scoring representation is a different plan, and its numbers are not
+automatically comparable with the original. FuzzyAI records that difference
+rather than hiding it.
+
 **What it is NOT:** a probability is not automatically a real-world correctness
 rate. `0.9` does not mean "90% likely to be right" unless and until calibration
 has established that mapping.
@@ -188,9 +199,15 @@ numbers.
   Enforcement: `DecisionTrace.scoring_diagnostics` is a required field, and the
   mass is derived from full-vocabulary normalization rather than from the
   candidate logits alone. The categorical path generalises the same rule with
-  `ChoiceScoringDiagnostics.candidate_mass`, so a direct categorical Choice
+  `ChoiceScoringDiagnostics.scoring_label_mass`, so a direct categorical Choice
   result may not be traced without it. That is the same rule over a wider
-  candidate set, so it does not get a new invariant number.
+  candidate set, so it does not get a new invariant number. `verbalizer_mass`
+  (binary) and `scoring_label_mass` (categorical) are the same
+  candidate-label-set mass equation under their respective scoring
+  representations, and the categorical form reduces to the binary form at two
+  scoring labels. Both measure how much of the raw next-token distribution landed
+  on the declared scoring representation; neither measures whether the semantic
+  candidate set is correct, exhaustive, or contains the true answer.
 - **INV-20 (semantic candidate identity is not scoring-label identity).** A
   `ChoiceResult` is keyed by semantic candidate names and never by scoring
   labels, and no public result surface exposes a scoring label as a candidate.

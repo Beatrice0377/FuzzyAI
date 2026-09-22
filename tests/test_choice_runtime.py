@@ -152,7 +152,7 @@ class TestChoiceEndToEnd:
         assert trace.model == "fake-model"
         assert trace.input_token_count == 42
         assert isinstance(trace.scoring_diagnostics, ChoiceScoringDiagnostics)
-        assert trace.scoring_diagnostics.candidate_mass == pytest.approx(5.0 / 6.0)
+        assert trace.scoring_diagnostics.scoring_label_mass == pytest.approx(5.0 / 6.0)
 
     def test_exactly_one_forward_pass(self) -> None:
         backend = CountingBackend()

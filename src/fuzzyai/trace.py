@@ -156,8 +156,10 @@ def _diagnostics_to_dict(
     if isinstance(diagnostics, ChoiceScoringDiagnostics):
         return {
             "kind": "choice",
-            "candidate_mass": diagnostics.candidate_mass,
-            "candidate_token_probabilities": list(diagnostics.candidate_token_probabilities),
+            "scoring_label_mass": diagnostics.scoring_label_mass,
+            "scoring_label_token_probabilities": list(
+                diagnostics.scoring_label_token_probabilities
+            ),
             "top_token_id": diagnostics.top_token_id,
             "top_token_probability": diagnostics.top_token_probability,
             "top_token_text": diagnostics.top_token_text,

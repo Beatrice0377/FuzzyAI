@@ -207,11 +207,11 @@ models, and never need a GPU.
   `tests/test_choice_assembler.py::TestOrderedEvidenceEnforcement::test_permuted_labels_rejected_even_with_legal_pairs`,
   `tests/test_choice_trace.py::TestDiagnoseChoiceEvidenceGuards::test_permuted_labels_rejected`,
   and `tests/test_choice_runtime.py::TestChoiceEndToEnd::test_evidence_labels_are_execution_labels_not_semantics`.
-- `[V]` `candidate_mass` is a full-vocabulary quantity: three candidate logits in
+- `[V]` `scoring_label_mass` is a full-vocabulary quantity: three candidate logits in
   a uniform four-token vocabulary give `0.75` and in a uniform five-token
   vocabulary give `0.6`, and mass falls as the vocabulary grows with the
   candidate set held fixed. Evidence:
-  `tests/test_choice_assembler.py::TestCandidateMassMath`.
+  `tests/test_choice_assembler.py::TestScoringLabelMassMath`.
 - `[V]` The compiler never touches a tokenizer, and the backend resolves and
   validates scoring labels in the real rendered continuation, rejecting a
   multi-token label or colliding label ids before any forward pass. Evidence:
@@ -238,6 +238,15 @@ models, and never need a GPU.
   `UnsupportedCapabilityError` and no fallback strategy. Evidence:
   `tests/test_choice_runtime.py::TestChoiceDispatchRejections::test_missing_capability_rejected_before_execution`
   and `tests/test_choice_compiler.py::TestCompileRejections::test_missing_capability_rejected`.
+- `[V]` The Choice diagnostics expose a scoring-label mass, not a semantic
+  coverage measure. The public name is `scoring_label_mass`, it is documented and
+  tested as `P(next token is one of the declared scoring-label tokens)` under
+  full-vocabulary normalization, and the pre-2B.1 public names `candidate_mass`
+  and `candidate_token_probabilities` no longer exist in any form: there is no
+  alias and no deprecation shim. Evidence:
+  `tests/test_public_api.py::test_renamed_scoring_label_names_present`,
+  `tests/test_public_api.py::test_old_candidate_mass_names_gone`,
+  `tests/test_choice_assembler.py::TestDiagnosticsReturned::test_renamed_fields_present_old_candidate_fields_gone`.
 
 ## Experimental records
 
@@ -415,11 +424,11 @@ them generalises to other models, revisions, prompts, or tasks.
   variation 0.0002 to 0.0115. Evidence:
   `experiments/choice_signal/results/choice-signal-qwen35-2b.jsonl`.
 - `[E]` A direct categorical answer can be confidently in-set when the candidate
-  set omits the true topic, and `candidate_mass` does not detect it. Same model,
+  set omits the true topic, and `scoring_label_mass` does not detect it. Same model,
   dtype, GPU, doctrine and label scheme, three out-of-set probes (account
   deletion, job application, sponsorship enquiry) against a
   billing/shipping/technical set: the model still chose an in-set candidate at
-  0.677 to 0.893 while `candidate_mass` stayed near 0.99. This is why no
+  0.677 to 0.893 while `scoring_label_mass` stayed near 0.99. This is why no
   open-set guarantee is claimed for Choice. Evidence:
   `experiments/choice_signal/results/choice-signal-qwen35-2b.jsonl`.
 - `[E]` Overlapping candidate descriptions split probability between the
@@ -429,6 +438,50 @@ them generalises to other models, revisions, prompts, or tasks.
   ambiguous probes while an unambiguous control stayed at 0.998. This
   characterises a bad taxonomy, not a model defect. Evidence:
   `experiments/choice_signal/results/choice-signal-qwen35-2b.jsonl`.
+- `[E]` Representation sensitivity of the direct categorical distribution
+  replicates on a second model family. Models `Qwen/Qwen3.5-2B` and
+  `openbmb/MiniCPM5-2B`, both with revision unrecorded (local cache), dtype
+  `bfloat16`, rendering config `{"enable_thinking": false}`, on an NVIDIA GeForce
+  RTX 5060 Laptop GPU (8 GB), same fixture, doctrine
+  `categorical-semantic-judgment-v1`, label scheme `categorical-labels-v1`. At N=3
+  over all six label permutations: winner preserved 90/90 (mean total variation
+  0.0334, max 0.3082) for Qwen3.5-2B and 85/90 (mean 0.0514, max 0.4672) for
+  MiniCPM5-2B. At N=5 over five permutations: 75/75 (mean 0.0277, max 0.2937) and
+  74/75 (mean 0.0381, max 0.5746). So the winner is largely stable on both while
+  the full uncalibrated distribution is representation-sensitive on both.
+  Evidence: `experiments/choice_signal/results/choice-signal-qwen35-2b.jsonl`,
+  `experiments/choice_signal/results/choice-signal-minicpm5-2b.jsonl`,
+  `experiments/choice_signal/REPORT.md`. Observed under exactly these conditions,
+  generalising to none of them.
+- `[E]` Out-of-set confidence with an undetectably high `scoring_label_mass`
+  replicates on the second family. `openbmb/MiniCPM5-2B`, same conditions, three
+  out-of-set probes (account deletion, job application, sponsorship enquiry)
+  against a billing/shipping/technical set: the model chose an in-set candidate
+  at 0.678 to 0.754 while `scoring_label_mass` stayed between 0.9957 and 0.9968.
+  This matches the Qwen3.5-2B observation and supports the reading that
+  `scoring_label_mass` diagnoses protocol adherence, not semantic coverage.
+  Evidence: `experiments/choice_signal/results/choice-signal-minicpm5-2b.jsonl`.
+- `[E]` `scoring_label_mass` detects a model that never occupied the scoring
+  position. `openbmb/MiniCPM5-2B` with no rendering flag passed (the backend
+  default, effectively `{}`) put probability 1.0000 (rounded; minimum 0.999998)
+  on `<think>` in 193/193 records and drove
+  `scoring_label_mass` down to between 4.31e-17 and 7.13e-12 (median 2.65e-14),
+  while the restricted three-way softmax still returned normalised-looking
+  numbers. With `{"enable_thinking": false}` the same fixture returned masses
+  between 0.9649 and 1.0000. The first artifact is retained as evidence that
+  without the mass diagnostic this would have been misreported as extreme
+  representation instability. Evidence:
+  `experiments/choice_signal/results/choice-signal-minicpm5-2b-thinking-on.jsonl`.
+- `[E]` The 2B.1 rename was value-preserving. The `Qwen/Qwen3.5-2B` artifact was
+  re-run under the renamed code and compared against the migrated pre-rename
+  copy (`compare_pre_rename` in the analysis script, which reads the committed
+  artifact via `git show`): across 177 distinct `(case_id, permutation)` pairs, 0
+  probability dicts, 0 `scoring_label_mass` values, 0 resolved token id maps and 0
+  plan fingerprints differed. The execution fingerprint did differ on all 193
+  records, because `rendering_config` is now recorded and applied; that is a
+  provenance change, not a value change. Evidence:
+  `experiments/choice_signal/results/choice-signal-qwen35-2b.jsonl`,
+  `experiments/choice_signal/cross_model.py`.
 
 ## Current hypotheses
 

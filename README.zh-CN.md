@@ -144,7 +144,7 @@ Phase 2B direct categorical Choice 路径：
 
 - `ChoiceCompiler` 与 doctrine `CATEGORICAL_SEMANTIC_JUDGMENT_V1`，配合带版本的 `categorical-labels-v1` 标签方案（label scheme）
 - `CandidateLabelMapping`（语义候选 → 打分标签，刻意不携带 token id，使 plan 保持 provider-independent）
-- `assemble_choice_probability`（候选 logits 上的 N-way softmax）与 `ChoiceScoringDiagnostics`（`candidate_mass`、top token、每个候选的 token 概率）
+- `assemble_choice_probability`（候选 logits 上的 N-way softmax）与 `ChoiceScoringDiagnostics`（`scoring_label_mass`、top token、每个候选的 token 概率）
 - `TransformersBackend` 中的 N 路打分标签解析与校验
 - `ChoiceResult` 以语义候选名称为键，平局按语义候选顺序裁决
 
@@ -156,13 +156,13 @@ ChoiceDecision --(ChoiceCompiler)--> InferencePlan --(TransformersBackend)--> Ra
                                              ChoiceResult + DecisionTrace (via FuzzyAI)
 ```
 
-该路径是实验性的。它是 closed-set 的，假定调用方提供互斥候选，只支持 single-label 决策，要求每个打分标签恰好是一个 token，仅在较小 N 上做过研究，并且是**未校准**的（`predicted_correctness` 始终为 `None`）。它没有任何 open-set 保证：当候选集遗漏了真实主题时，模型仍会在集合内作答，而 `candidate_mass` 检测不到这一点。
+该路径是实验性的。它是 closed-set 的，假定调用方提供互斥候选，只支持 single-label 决策，要求每个打分标签恰好是一个 token，仅在较小 N 上做过研究，并且是**未校准**的（`predicted_correctness` 始终为 `None`）。它没有任何 open-set 保证：当候选集遗漏了真实主题时，模型仍会在集合内作答，而 `scoring_label_mass` 检测不到这一点。
 
 其他 Choice 策略（one-vs-rest、sampling、multi-token 打分标签）、校准与弃权仍是未来工作。
 
 ## 证据与主张（Evidence and claims）
 
-性能（performance）、质量、校准（calibration）与 provider 支持相关的声明，统一按证据状态（evidence status）记录在 [docs/claims.md](docs/claims.md) 中。本项目目前不做任何 benchmark、性能或模型支持声明：Bool 路径可以对着本地 Hugging Face causal LM 运行，但没有任何模型对着 ground truth 被评估过。Phase 2A.2 针对二值打分位置运行了一次语义信号验证实验（semantic signal validation），探测了三个本地 Hugging Face causal LM；其记录位于 [experiments/semantic_signal/REPORT.md](experiments/semantic_signal/REPORT.md)，是一份记录既定条件下所观察到的信号行为的实验记录，不是能力声明，也不是 benchmark。假设（hypotheses）与路线图条目在主张登记册（claims register）中均被如实标注，不作为已实现的能力呈现。Phase 2B 针对 direct categorical Choice 运行了一次实验，覆盖标签排列（label permutation）、无关候选新增、description 改写、分类体系重叠（taxonomy overlap）与 out-of-set 探测，只使用一个本地模型；其记录位于 [experiments/choice_signal/REPORT.md](experiments/choice_signal/REPORT.md)。
+性能（performance）、质量、校准（calibration）与 provider 支持相关的声明，统一按证据状态（evidence status）记录在 [docs/claims.md](docs/claims.md) 中。本项目目前不做任何 benchmark、性能或模型支持声明：Bool 路径可以对着本地 Hugging Face causal LM 运行，但没有任何模型对着 ground truth 被评估过。Phase 2A.2 针对二值打分位置运行了一次语义信号验证实验（semantic signal validation），探测了三个本地 Hugging Face causal LM；其记录位于 [experiments/semantic_signal/REPORT.md](experiments/semantic_signal/REPORT.md)，是一份记录既定条件下所观察到的信号行为的实验记录，不是能力声明，也不是 benchmark。假设（hypotheses）与路线图条目在主张登记册（claims register）中均被如实标注，不作为已实现的能力呈现。Phase 2B 针对 direct categorical Choice 运行了一次实验，覆盖标签排列（label permutation）、无关候选新增、description 改写、分类体系重叠（taxonomy overlap）与 out-of-set 探测，使用一个本地模型；Phase 2B.1 在完全相同的冻结 case set 上把该实验复现到第二个 model family；其记录位于 [experiments/choice_signal/REPORT.md](experiments/choice_signal/REPORT.md)。
 
 ## 开发
 

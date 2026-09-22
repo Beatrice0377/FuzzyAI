@@ -244,7 +244,7 @@ The Phase 2B direct categorical Choice path:
 - `CandidateLabelMapping` (semantic candidate to scoring label, deliberately
   carrying no token id, so the plan stays provider-independent)
 - `assemble_choice_probability` (N-way softmax over the candidate logits) plus
-  `ChoiceScoringDiagnostics` (`candidate_mass`, top token, per-candidate token
+  `ChoiceScoringDiagnostics` (`scoring_label_mass`, top token, per-candidate token
   probabilities)
 - N-way scoring-label resolution and validation in `TransformersBackend`
 - `ChoiceResult` keyed by semantic candidate names, with ties resolved on
@@ -263,7 +263,7 @@ mutually exclusive candidates, supports single-label decisions only, requires
 every scoring label to be exactly one token, has been studied only at small N,
 and is **uncalibrated** (`predicted_correctness` is always `None`). It has no
 open-set guarantee: when the candidate set omits the true topic, the model still
-answers in-set and `candidate_mass` does not detect it.
+answers in-set and `scoring_label_mass` does not detect it.
 
 Other Choice strategies (one-vs-rest, sampling, multi-token scoring labels),
 calibration, and abstention remain future work.
@@ -282,7 +282,8 @@ and documents observed signal behaviour under the conditions it states. That
 is an experiment record, not a capability claim and not a benchmark.
 Phase 2B ran a direct categorical Choice experiment over label permutations,
 irrelevant candidate addition, description paraphrase, taxonomy overlap, and
-out-of-set probes against one local model; its record lives in
+out-of-set probes against a local model, and Phase 2B.1 replicated it on a second
+model family under the same frozen case set; the record lives in
 [experiments/choice_signal/REPORT.md](experiments/choice_signal/REPORT.md).
 Hypotheses and roadmap items are labelled as such in the claims register,
 rather than presented as capabilities.

@@ -120,7 +120,7 @@ class TestCategoricalTraceFields:
         trace = build_trace()
         assert isinstance(trace.scoring_diagnostics, ChoiceScoringDiagnostics)
         assert not isinstance(trace.scoring_diagnostics, ScoringDiagnostics)
-        assert trace.scoring_diagnostics.candidate_mass == pytest.approx(5.0 / 6.0)
+        assert trace.scoring_diagnostics.scoring_label_mass == pytest.approx(5.0 / 6.0)
 
     def test_candidate_mapping_mirrors_plan(self) -> None:
         plan = make_plan()
@@ -238,7 +238,7 @@ class TestCategoricalTraceDict:
         ]
         assert payload["resolved_target_token_ids"] == [["A", 11], ["B", 22], ["C", 33]]
         assert payload["scoring_diagnostics"]["kind"] == "choice"
-        assert payload["scoring_diagnostics"]["candidate_mass"] == pytest.approx(5.0 / 6.0)
+        assert payload["scoring_diagnostics"]["scoring_label_mass"] == pytest.approx(5.0 / 6.0)
 
 
 class TestCertaintyNotRebuilt:

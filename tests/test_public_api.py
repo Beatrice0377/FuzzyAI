@@ -77,10 +77,26 @@ def test_representative_names_present() -> None:
         "CategoricalScoringDoctrine",
         "ScoringLabelError",
         "assemble_choice_probability",
-        "candidate_mass",
+        "scoring_label_mass",
         "diagnose_choice_evidence",
     }
     assert expected <= set(fuzzyai.__all__)
+
+
+def test_renamed_scoring_label_names_present() -> None:
+    assert "scoring_label_mass" in fuzzyai.__all__
+    assert callable(fuzzyai.scoring_label_mass)
+
+
+def test_old_candidate_mass_names_gone() -> None:
+    # Phase 2B.1 renamed candidate_mass -> scoring_label_mass and
+    # candidate_token_probabilities -> scoring_label_token_probabilities:
+    # the old names measure protocol adherence, not candidate coverage, and
+    # must not linger on the public surface in any form.
+    assert "candidate_mass" not in fuzzyai.__all__
+    assert "candidate_token_probabilities" not in fuzzyai.__all__
+    assert not hasattr(fuzzyai, "candidate_mass")
+    assert not hasattr(fuzzyai, "candidate_token_probabilities")
 
 
 def test_no_internal_helpers_exported() -> None:
