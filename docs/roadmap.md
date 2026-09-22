@@ -50,7 +50,7 @@ validation experiment; the Choice path (Phase 2B) is the next unstarted step.
   a decision-position-keeping doctrine), NOT met by the mechanism in general;
   the three-way candidate space itself remains unmeasured.
 - Choice categorical-logit scoring (Phase 2B). Pending; this is the next
-  unstarted step.
+  unstarted step. Design recorded in `docs/choice-semantics.md`.
 
 ## Phase 3: cloud backends and experiments
 
