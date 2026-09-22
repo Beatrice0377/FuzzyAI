@@ -432,6 +432,10 @@ the actually rendered input, and the resolved token ids.
 **Trace id** is per-execution identity. Two executions of the same plan produce
 one execution fingerprint and two trace ids.
 
+These four identities answer provenance questions; which probabilities may be
+treated as the same kind of object is a separate design, see
+`probability-semantics-identity.md`.
+
 What the mapping must enter:
 
 | identity | mapping enters? | why |

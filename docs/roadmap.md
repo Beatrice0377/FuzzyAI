@@ -68,6 +68,10 @@ stays behind the `Backend` boundary.
 
 ## Phase 4: evaluation and calibration
 
+Calibration identity depends on probability-semantics formulation and source
+identity, not on task or model identity alone; see
+`docs/probability-semantics-identity.md`.
+
 - Evaluation harness.
 - Brier score.
 - Log loss.
@@ -85,8 +89,9 @@ calibration fit to one representation does not transfer to another. At minimum
 the binding should cover the model and revision, the decision family, the scoring
 strategy, the doctrine, the compiler version, and the scoring representation or
 plan family. It should NOT be bound to a single plan fingerprint, which would be
-too fine-grained and would break on any irrelevant plan change. How a "plan
-family" or "formulation fingerprint" is defined is a Phase 4 design question.
+too fine-grained and would break on any irrelevant plan change. The formulation
+identity and family definitions are designed in
+`docs/probability-semantics-identity.md` (Phase 2C-Design).
 
 ## Phase 5: policy layer
 
