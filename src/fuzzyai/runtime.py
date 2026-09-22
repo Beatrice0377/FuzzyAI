@@ -3,6 +3,10 @@
 The runtime orchestrates the existing pieces — compiler, backend, assembler,
 trace builder — in a fixed order. It re-implements none of them and adds no
 fallbacks: any unsupported decision or missing capability propagates as-is.
+
+Dispatch is explicit on the decision type: :class:`BoolDecision` takes the
+binary path, :class:`ChoiceDecision` takes the categorical path, and anything
+else is rejected.
 """
 
 import uuid
@@ -10,14 +14,18 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
 
-from fuzzyai.assembler import assemble_bool_probability
+from fuzzyai.assembler import assemble_bool_probability, assemble_choice_probability
 from fuzzyai.backends.base import Backend
-from fuzzyai.compiler import BoolCompiler
+from fuzzyai.compiler import BoolCompiler, ChoiceCompiler
 from fuzzyai.decisions import BoolDecision, ChoiceDecision
-from fuzzyai.diagnostics import diagnose_bool_evidence
-from fuzzyai.errors import InvalidDecisionError
+from fuzzyai.diagnostics import (
+    ChoiceScoringDiagnostics,
+    ScoringDiagnostics,
+    diagnose_bool_evidence,
+)
+from fuzzyai.errors import InvalidDecisionError, UnsupportedDecisionError
 from fuzzyai.plans import InferencePlan, RawEvidence
-from fuzzyai.results import BoolResult
+from fuzzyai.results import BoolResult, ChoiceResult
 from fuzzyai.trace import DecisionTrace, build_decision_trace
 
 
@@ -25,7 +33,7 @@ from fuzzyai.trace import DecisionTrace, build_decision_trace
 class Evaluation:
     """One evaluated decision: its result plus the full provenance trace."""
 
-    result: BoolResult
+    result: BoolResult | ChoiceResult
     trace: DecisionTrace
 
 
@@ -37,10 +45,12 @@ class FuzzyAI:
         *,
         backend: Backend,
         compiler: BoolCompiler | None = None,
+        choice_compiler: ChoiceCompiler | None = None,
         capture_rendered_input: bool = False,
     ) -> None:
         self._backend = backend
         self._compiler = compiler if compiler is not None else BoolCompiler()
+        self._choice_compiler = choice_compiler if choice_compiler is not None else ChoiceCompiler()
         self._capture_rendered_input = capture_rendered_input
 
     @property
@@ -52,10 +62,14 @@ class FuzzyAI:
         return self._compiler
 
     @property
+    def choice_compiler(self) -> ChoiceCompiler:
+        return self._choice_compiler
+
+    @property
     def capture_rendered_input(self) -> bool:
         return self._capture_rendered_input
 
-    def evaluate(self, decision: BoolDecision | ChoiceDecision) -> BoolResult:
+    def evaluate(self, decision: BoolDecision | ChoiceDecision) -> BoolResult | ChoiceResult:
         """Evaluate ``decision`` and return only its result."""
         return self.evaluate_with_trace(decision).result
 
@@ -65,7 +79,8 @@ class FuzzyAI:
         The exact order:
 
         1. Generate a fresh ``trace_id = str(uuid.uuid4())``.
-        2. Compile the decision into a plan (compiler checks capabilities).
+        2. Dispatch on the decision type and compile it into a plan (the
+           compiler checks capabilities).
         3. Execute the plan on the backend, measuring latency.
         4. Check evidence/plan lineage: evidence that does not carry the
            executed plan's fingerprint — either a DIFFERENT fingerprint or
@@ -76,8 +91,8 @@ class FuzzyAI:
         7. Return the :class:`Evaluation`.
 
         Raises:
-            UnsupportedDecisionError: if the compiler does not support the
-                decision type.
+            UnsupportedDecisionError: if the decision type is neither
+                :class:`BoolDecision` nor :class:`ChoiceDecision`.
             UnsupportedCapabilityError: if the backend lacks a required
                 capability.
             InvalidDecisionError: if the evidence does not carry the plan's
@@ -85,8 +100,16 @@ class FuzzyAI:
         """
         # 1. Fresh trace id, never derived from any fingerprint.
         trace_id = str(uuid.uuid4())
-        # 2. Compile (may raise UnsupportedDecisionError / UnsupportedCapabilityError).
-        plan: InferencePlan = self._compiler.compile(decision, self._backend.capabilities)
+        # 2. Explicit type dispatch; no hasattr, no duck typing.
+        if isinstance(decision, BoolDecision):
+            plan: InferencePlan = self._compiler.compile(decision, self._backend.capabilities)
+        elif isinstance(decision, ChoiceDecision):
+            plan = self._choice_compiler.compile(decision, self._backend.capabilities)
+        else:
+            raise UnsupportedDecisionError(
+                f"FuzzyAI supports only BoolDecision and ChoiceDecision, "
+                f"got {type(decision).__name__}"
+            )
         # 3. Execute and measure latency.
         t0 = perf_counter()
         evidence: RawEvidence = self._backend.execute(plan)
@@ -107,8 +130,17 @@ class FuzzyAI:
         # 5. Assemble the result and the scoring diagnostics, stamped with
         #    the trace id. The diagnostics are derived from evidence the
         #    backend already produced — no extra model work, no verdict.
-        result = assemble_bool_probability(evidence, trace_id=trace_id)
-        diagnostics = diagnose_bool_evidence(evidence)
+        if plan.strategy.value == "binary_token_logits":
+            result: BoolResult | ChoiceResult = assemble_bool_probability(
+                evidence, trace_id=trace_id
+            )
+            diagnostics: ScoringDiagnostics | ChoiceScoringDiagnostics = diagnose_bool_evidence(
+                evidence
+            )
+        else:
+            result, diagnostics = assemble_choice_probability(
+                evidence, plan=plan, trace_id=trace_id
+            )
         # 6. Build the trace.
         timestamp = datetime.now(UTC).isoformat()
         trace = build_decision_trace(

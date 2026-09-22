@@ -12,6 +12,7 @@ from typing import Any
 
 from fuzzyai.backends.verbalizers import (
     VerbalizerTokens,
+    _as_id_list,
     render_input_text,
     resolve_verbalizers,
 )
@@ -21,8 +22,9 @@ from fuzzyai.diagnostics import (
     TOP_TOKEN_LOGIT_KEY,
     TOP_TOKEN_TEXT_KEY,
     VOCAB_LOGSUMEXP_KEY,
+    full_vocab_probability,
 )
-from fuzzyai.errors import UnsupportedCapabilityError
+from fuzzyai.errors import ScoringLabelError, UnsupportedCapabilityError
 from fuzzyai.fingerprint import JSONValue, canonical_json
 from fuzzyai.plans import EvidenceKind, InferencePlan, RawEvidence, ScoringStrategy
 
@@ -104,8 +106,8 @@ class TransformersBackend:
 
     @property
     def capabilities(self) -> BackendCapabilities:
-        """Honest capability declaration: binary token logits only."""
-        return BackendCapabilities(binary_token_logits=True)
+        """Honest capability declaration: binary and categorical token logits."""
+        return BackendCapabilities(binary_token_logits=True, categorical_token_logits=True)
 
     def _plan_verbalizers(self, plan: InferencePlan) -> VerbalizerTokens:
         """Resolve (and cache) the plan's verbalizers against the rendered prefix."""
@@ -145,14 +147,156 @@ class TransformersBackend:
         self._verbalizer_cache[key] = resolved
         return resolved
 
-    def execute(self, plan: InferencePlan) -> RawEvidence:
-        """Score the plan's verbalizer tokens at the last input position."""
-        if plan.strategy is not ScoringStrategy.BINARY_TOKEN_LOGITS:
-            raise UnsupportedCapabilityError(
-                f"TransformersBackend supports only the "
-                f"{ScoringStrategy.BINARY_TOKEN_LOGITS.value} strategy, got "
-                f"{plan.strategy.value}"
+    def _plan_target_token_ids(self, plan: InferencePlan) -> list[tuple[str, int]]:
+        """Resolve every categorical scoring label to one continuation token.
+
+        The rendered prefix is the SAME text the forward pass will see. Each
+        label must add EXACTLY ONE token to that prefix (checked against the
+        concatenated text, so BPE boundary effects are part of the validation)
+        and all resolved token ids must be pairwise DISTINCT. Any violation
+        raises :class:`ScoringLabelError` naming the offending label; there is
+        no fallback, no skipping, and no re-mapping. This runs entirely before
+        the forward pass, so an invalid label never costs a model call.
+        """
+        if plan.system_prompt is None:
+            raise ScoringLabelError(
+                "plan lacks the system prompt required by the "
+                f"{ScoringStrategy.CATEGORICAL_TOKEN_LOGITS.value} strategy"
             )
+        prefix_text = render_input_text(
+            self._tokenizer,
+            system_prompt=plan.system_prompt,
+            user_prompt=plan.prompt,
+            template_kwargs=self._chat_template_kwargs,
+        )
+        prefix_ids = _as_id_list(self._tokenizer(prefix_text, add_special_tokens=False).input_ids)
+        resolved: list[tuple[str, int]] = []
+        seen: dict[int, str] = {}
+        for label in plan.targets:
+            full_ids = _as_id_list(
+                self._tokenizer(prefix_text + label, add_special_tokens=False).input_ids
+            )
+            validated_ids: list[int] = []
+            for token_id in full_ids:
+                if isinstance(token_id, bool) or not isinstance(token_id, int):
+                    raise ScoringLabelError(
+                        f"scoring label {label!r} tokenized to a non-int token id "
+                        f"({type(token_id).__name__}); the "
+                        f"{ScoringStrategy.CATEGORICAL_TOKEN_LOGITS.value} strategy "
+                        "requires a single scoring token per label"
+                    )
+                validated_ids.append(token_id)
+            added = len(validated_ids) - len(prefix_ids)
+            if added != 1:
+                raise ScoringLabelError(
+                    f"scoring label {label!r} produced {added} additional token(s) after the "
+                    f"rendered prefix (prefix has {len(prefix_ids)} tokens, concatenated text "
+                    f"has {len(validated_ids)}); the "
+                    f"{ScoringStrategy.CATEGORICAL_TOKEN_LOGITS.value} strategy requires a "
+                    "single scoring token per label"
+                )
+            token_id = validated_ids[-1]
+            collision = seen.get(token_id)
+            if collision is not None:
+                raise ScoringLabelError(
+                    f"scoring labels {collision!r} and {label!r} both resolve to token id "
+                    f"{token_id}; the "
+                    f"{ScoringStrategy.CATEGORICAL_TOKEN_LOGITS.value} strategy requires a "
+                    "single DISTINCT scoring token per label"
+                )
+            seen[token_id] = label
+            resolved.append((label, token_id))
+        return resolved
+
+    def _execute_categorical(self, plan: InferencePlan) -> RawEvidence:
+        """Score every categorical label token at the last input position."""
+        resolved = self._plan_target_token_ids(plan)
+        prefix_text = render_input_text(
+            self._tokenizer,
+            system_prompt=plan.system_prompt,
+            user_prompt=plan.prompt,
+            template_kwargs=self._chat_template_kwargs,
+        )
+        used_chat_template = bool(getattr(self._tokenizer, "chat_template", None))
+        encoded = self._tokenizer(prefix_text, add_special_tokens=not used_chat_template)
+        input_ids = encoded.input_ids
+        if not isinstance(input_ids, list) or not all(isinstance(t, int) for t in input_ids):
+            raise TypeError(
+                "tokenizer must return a list of int token ids for input_ids, "
+                f"got {type(input_ids).__name__}"
+            )
+        inputs = torch.tensor([input_ids], dtype=torch.long, device=self._device)
+        with torch.inference_mode():
+            logits = self._model(input_ids=inputs).logits
+        # Read ONLY the final position: the distribution over the next token.
+        # The row is converted to float32 BEFORE the normalization statistics so
+        # half-precision logits cannot distort logsumexp/argmax. These are the
+        # full-vocabulary normalization facts measured from the SAME single
+        # forward pass; the full logits vector itself is never stored.
+        row = logits[0, -1, :].to(torch.float32)
+        vocab_logsumexp = float(torch.logsumexp(row, dim=-1).item())
+        top_token_id = int(torch.argmax(row).item())
+        top_token_logit = float(row[top_token_id].item())
+        top_token_probability = full_vocab_probability(
+            logit=top_token_logit, vocab_logsumexp=vocab_logsumexp
+        )
+        # Evidence labels and values follow plan.targets order EXACTLY: never
+        # sorted by token id, never sorted by logit, never alphabetized.
+        values = tuple(float(row[token_id].item()) for _, token_id in resolved)
+        # Best-effort debug aid only: a decode failure must never fail the inference.
+        top_token_text: str | None = None
+        try:
+            decoded = self._tokenizer.decode([top_token_id])
+        except Exception:  # best-effort debug aid only; never fail inference for it
+            decoded = None
+        if isinstance(decoded, str):
+            top_token_text = decoded
+        # Tokenizer provenance, best effort and honest: fall back to the model id
+        # when the tokenizer does not expose its own identity, and never invent a
+        # commit hash we do not actually have.
+        tokenizer_id = getattr(self._tokenizer, "name_or_path", None)
+        if not isinstance(tokenizer_id, str) or not tokenizer_id:
+            tokenizer_id = self._model_id
+        tokenizer_revision: str | None = None
+        init_kwargs = getattr(self._tokenizer, "init_kwargs", None)
+        if isinstance(init_kwargs, Mapping):
+            raw_commit = init_kwargs.get("_commit_hash")
+            if isinstance(raw_commit, str) and raw_commit:
+                tokenizer_revision = raw_commit
+        if tokenizer_revision is None:
+            # The tokenizer was loaded with the same requested revision; recording
+            # the request is honest, recording a resolved commit we do not have is not.
+            tokenizer_revision = self._revision
+        model_revision = getattr(self._model.config, "_commit_hash", None) or self._revision
+        dtype_name = str(self._dtype).replace("torch.", "")
+        return RawEvidence(
+            kind=EvidenceKind.LOGITS,
+            labels=plan.targets,
+            values=values,
+            plan_fingerprint=plan.fingerprint,
+            metadata={
+                "resolved_target_token_ids": [[label, token_id] for label, token_id in resolved],
+                "model": self._model_id,
+                "model_revision": model_revision,
+                "device": self._device,
+                "rendered_input": prefix_text,
+                "input_token_count": int(logits.shape[1]),
+                TOP_TOKEN_ID_KEY: top_token_id,
+                TOP_TOKEN_LOGIT_KEY: top_token_logit,
+                "top_token_probability": top_token_probability,
+                VOCAB_LOGSUMEXP_KEY: vocab_logsumexp,
+                TOP_TOKEN_TEXT_KEY: top_token_text,
+                "backend_version": str(TRANSFORMERS_BACKEND_VERSION),
+                "tokenizer": tokenizer_id,
+                "tokenizer_revision": tokenizer_revision,
+                "runtime_version": _RUNTIME_VERSION,
+                "dtype": dtype_name,
+                "rendering_config": dict(self._chat_template_kwargs),
+            },
+        )
+
+    def _execute_binary(self, plan: InferencePlan) -> RawEvidence:
+        """Score the plan's verbalizer tokens at the last input position."""
         verbalizers = self._plan_verbalizers(plan)
         prefix_text = render_input_text(
             self._tokenizer,
@@ -234,4 +378,17 @@ class TransformersBackend:
                 "dtype": dtype_name,
                 "rendering_config": dict(self._chat_template_kwargs),
             },
+        )
+
+    def execute(self, plan: InferencePlan) -> RawEvidence:
+        """Score the plan's scoring tokens at the last input position."""
+        if plan.strategy is ScoringStrategy.BINARY_TOKEN_LOGITS:
+            return self._execute_binary(plan)
+        if plan.strategy is ScoringStrategy.CATEGORICAL_TOKEN_LOGITS:
+            return self._execute_categorical(plan)
+        raise UnsupportedCapabilityError(
+            f"TransformersBackend supports only the "
+            f"{ScoringStrategy.BINARY_TOKEN_LOGITS.value} and "
+            f"{ScoringStrategy.CATEGORICAL_TOKEN_LOGITS.value} strategies, got "
+            f"{plan.strategy.value}"
         )

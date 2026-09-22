@@ -28,7 +28,6 @@ from fuzzyai import (
     RawEvidence,
     ScoringDiagnostics,
     UnsupportedCapabilityError,
-    UnsupportedDecisionError,
     normalized_entropy,
     probability_margin,
 )
@@ -226,13 +225,17 @@ class TestRuntimeRejections:
             runtime.evaluate_with_trace(make_decision())
         assert backend.executed_plans == []
 
-    def test_choice_decision_rejected_before_execution(self) -> None:
+    def test_choice_decision_without_categorical_capability_rejected_before_execution(
+        self,
+    ) -> None:
         runtime, backend = make_runtime()
         decision = ChoiceDecision(
             "Which carrier delivered?",
             choices={"dhl": "DHL", "ups": "UPS"},
         )
-        with pytest.raises(UnsupportedDecisionError, match="ChoiceDecision"):
+        # Phase 2B dispatches ChoiceDecision to the choice path; a backend
+        # without the categorical capability fails at compile time.
+        with pytest.raises(UnsupportedCapabilityError, match="categorical_token_logits"):
             runtime.evaluate_with_trace(decision)
         assert backend.executed_plans == []
 

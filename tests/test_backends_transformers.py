@@ -209,9 +209,10 @@ def backend(monkeypatch: pytest.MonkeyPatch) -> TransformersBackend:
 
 
 def test_capabilities_are_honest(backend: TransformersBackend) -> None:
-    assert backend.capabilities == BackendCapabilities(binary_token_logits=True)
+    assert backend.capabilities == BackendCapabilities(
+        binary_token_logits=True, categorical_token_logits=True
+    )
     caps = backend.capabilities
-    assert not caps.categorical_token_logits
     assert not caps.token_logprobs
     assert not caps.batching
     assert not caps.prefix_cache

@@ -184,6 +184,61 @@ models, and never need a GPU.
   the deterministic clamp logic in `src/fuzzyai/diagnostics.py` only; it says
   nothing about any model.
 
+### Direct categorical Choice (Phase 2B)
+
+- `[V]` The N-way softmax over the declared candidate logits uses the
+  max-subtraction form, so equal logits give a uniform distribution and very
+  large or very negative offsets neither overflow nor collapse. Evidence:
+  `tests/test_choice_assembler.py::TestNWaySoftmaxMath`
+  (`test_equal_logits_are_uniform_thirds`, `test_ln2_gap_is_two_to_one_to_one`,
+  `test_very_large_equal_logits_stay_uniform`, `test_one_dominant_logit_absorbs_mass`,
+  `test_five_way_uniform`).
+- `[V]` `ChoiceResult.probabilities` are keyed by semantic candidate names and
+  never by scoring labels, under both the natural and a permuted label binding.
+  Evidence: `tests/test_choice_assembler.py::TestSemanticKeying`
+  (`test_probabilities_keyed_by_semantic_names_never_labels`,
+  `test_semantic_mapping_follows_candidate_order_not_label_order`).
+- `[V]` Choice ties resolve to the first candidate in semantic `ChoiceDecision`
+  order, never to a scoring label, under both a natural and a permuted mapping.
+  Evidence: `tests/test_choice_assembler.py::TestTieBreakFollowsSemanticOrder`.
+- `[V]` `RawEvidence` labels must equal the plan's declared `targets` exactly and
+  in order; permuted labels with otherwise legal values raise instead of being
+  reordered. Evidence:
+  `tests/test_choice_assembler.py::TestOrderedEvidenceEnforcement::test_permuted_labels_rejected_even_with_legal_pairs`,
+  `tests/test_choice_trace.py::TestDiagnoseChoiceEvidenceGuards::test_permuted_labels_rejected`,
+  and `tests/test_choice_runtime.py::TestChoiceEndToEnd::test_evidence_labels_are_execution_labels_not_semantics`.
+- `[V]` `candidate_mass` is a full-vocabulary quantity: three candidate logits in
+  a uniform four-token vocabulary give `0.75` and in a uniform five-token
+  vocabulary give `0.6`, and mass falls as the vocabulary grows with the
+  candidate set held fixed. Evidence:
+  `tests/test_choice_assembler.py::TestCandidateMassMath`.
+- `[V]` The compiler never touches a tokenizer, and the backend resolves and
+  validates scoring labels in the real rendered continuation, rejecting a
+  multi-token label or colliding label ids before any forward pass. Evidence:
+  `tests/test_backends_choice.py::test_multi_token_label_raises_before_forward`
+  and `tests/test_backends_choice.py::test_colliding_labels_raise`.
+- `[V]` One Choice evaluation performs exactly one model forward pass and never
+  calls `model.generate()`. Evidence:
+  `tests/test_choice_runtime.py::TestChoiceEndToEnd::test_exactly_one_forward_pass`
+  and `tests/test_backends_choice.py::test_metadata_carries_full_vocabulary_statistics`.
+- `[V]` Changing the candidate-to-label assignment leaves the decision
+  fingerprint unchanged and changes the plan fingerprint, and the prompt keeps
+  semantic candidate order under permutation. Evidence:
+  `tests/test_choice_compiler.py::TestMappingIdentity::test_permuted_mapping_keeps_decision_fingerprint_and_changes_plan_fingerprint`
+  and
+  `tests/test_choice_compiler.py::TestMappingIdentity::test_prompt_keeps_semantic_candidate_order_under_permutation`.
+- `[V]` A categorical `DecisionTrace` requires the resolved scoring token ids,
+  carries `probability_true = None`, and takes its execution fingerprint from
+  the resolved token ids. Evidence:
+  `tests/test_choice_trace.py::TestCategoricalTraceFields`,
+  `tests/test_choice_trace.py::TestExecutionFingerprint::test_different_resolved_token_ids_change_execution_fingerprint`,
+  and `tests/test_choice_trace.py::TestCategoricalTraceRejections::test_missing_resolved_ids_rejected`.
+- `[V]` A `ChoiceDecision` evaluated against a backend that does not declare
+  `categorical_token_logits` is rejected before execution with
+  `UnsupportedCapabilityError` and no fallback strategy. Evidence:
+  `tests/test_choice_runtime.py::TestChoiceDispatchRejections::test_missing_capability_rejected_before_execution`
+  and `tests/test_choice_compiler.py::TestCompileRejections::test_missing_capability_rejected`.
+
 ## Experimental records
 
 Single-session observations, each reported with the conditions under which it
@@ -337,6 +392,43 @@ them generalises to other models, revisions, prompts, or tasks.
   measurement; the re-run doubles as a determinism check. Lesson: an
   absolute tolerance is the wrong shape for rounding error that scales with
   operand magnitude.
+
+- `[E]` Direct categorical Choice distributions are representation-sensitive in
+  shape while the winner stays stable. Model `Qwen/Qwen3.5-2B`, revision
+  unrecorded (local cache), dtype `bfloat16`, on an NVIDIA GeForce RTX 5060
+  Laptop GPU (8 GB), for a three-candidate billing/shipping/technical fixture
+  under doctrine `categorical-semantic-judgment-v1` and label scheme
+  `categorical-labels-v1`, all six label permutations, 90 evaluations. Semantic
+  argmax preserved 90/90, mean total-variation distance 0.0334, maximum total
+  variation 0.3082. Evidence:
+  `experiments/choice_signal/results/choice-signal-qwen35-2b.jsonl`,
+  `experiments/choice_signal/REPORT.md`. Observed under exactly these
+  conditions, generalising to none of them.
+- `[E]` Adding an irrelevant candidate leaves the winner unchanged with small
+  drift. Same model, dtype, GPU, doctrine and label scheme, 6 cases, adding an
+  unnecessary `account deletion` candidate: winner preserved 6/6, total
+  variation 0.0006 to 0.0153. Evidence:
+  `experiments/choice_signal/results/choice-signal-qwen35-2b.jsonl`.
+- `[E]` Paraphrasing a candidate description leaves the winner unchanged. Same
+  model, dtype, GPU, doctrine and label scheme, 5 cases, the billing description
+  reworded with the candidate name unchanged: winner preserved 5/5, total
+  variation 0.0002 to 0.0115. Evidence:
+  `experiments/choice_signal/results/choice-signal-qwen35-2b.jsonl`.
+- `[E]` A direct categorical answer can be confidently in-set when the candidate
+  set omits the true topic, and `candidate_mass` does not detect it. Same model,
+  dtype, GPU, doctrine and label scheme, three out-of-set probes (account
+  deletion, job application, sponsorship enquiry) against a
+  billing/shipping/technical set: the model still chose an in-set candidate at
+  0.677 to 0.893 while `candidate_mass` stayed near 0.99. This is why no
+  open-set guarantee is claimed for Choice. Evidence:
+  `experiments/choice_signal/results/choice-signal-qwen35-2b.jsonl`.
+- `[E]` Overlapping candidate descriptions split probability between the
+  overlapping candidates. Same model, dtype, GPU, doctrine and label scheme, 3
+  probes against a billing/`payment issue`/shipping/technical set: the two
+  overlapping candidates held 0.943 and 0.970 of the restricted mass on the
+  ambiguous probes while an unambiguous control stayed at 0.998. This
+  characterises a bad taxonomy, not a model defect. Evidence:
+  `experiments/choice_signal/results/choice-signal-qwen35-2b.jsonl`.
 
 ## Current hypotheses
 

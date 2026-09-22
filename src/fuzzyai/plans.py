@@ -29,6 +29,48 @@ class ScoringStrategy(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class CandidateLabelMapping:
+    """One semantic candidate bound to one execution-only scoring label.
+
+    The mapping is provider-independent: it deliberately carries no token id,
+    because a token id does not exist until a concrete tokenizer renders a
+    concrete input. Token ids are execution provenance, produced by the backend,
+    and are never compiled into a plan.
+    """
+
+    candidate_index: int
+    candidate_name: str
+    candidate_description: str | None
+    scoring_label: str
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.candidate_index, bool)
+            or not isinstance(self.candidate_index, int)
+            or self.candidate_index < 0
+        ):
+            raise InvalidDecisionError(
+                "candidate_index must be a non-negative int, "
+                f"got {type(self.candidate_index).__name__} ({self.candidate_index!r})"
+            )
+        if not isinstance(self.candidate_name, str) or not self.candidate_name.strip():
+            raise InvalidDecisionError(
+                f"candidate_name must be a non-empty string, got {self.candidate_name!r}"
+            )
+        if self.candidate_description is not None and not isinstance(
+            self.candidate_description, str
+        ):
+            raise InvalidDecisionError(
+                "candidate_description must be None or str, got "
+                f"{type(self.candidate_description).__name__} ({self.candidate_description!r})"
+            )
+        if not isinstance(self.scoring_label, str) or not self.scoring_label.strip():
+            raise InvalidDecisionError(
+                f"scoring_label must be a non-empty string, got {self.scoring_label!r}"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class InferencePlan:
     """Provider-independent plan for one decision, executable by any backend."""
 
@@ -41,6 +83,8 @@ class InferencePlan:
     positive_verbalizer: str | None = None
     negative_verbalizer: str | None = None
     doctrine_id: str | None = None
+    label_scheme_id: str | None = None
+    candidate_mapping: tuple[CandidateLabelMapping, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.decision_fingerprint, str) or not self.decision_fingerprint:
@@ -114,13 +158,74 @@ class InferencePlan:
                 f"positive_verbalizer={self.positive_verbalizer!r}, "
                 f"negative_verbalizer={self.negative_verbalizer!r}"
             )
+        if self.label_scheme_id is not None and (
+            not isinstance(self.label_scheme_id, str) or not self.label_scheme_id.strip()
+        ):
+            raise InvalidDecisionError(
+                f"label_scheme_id must be None or a non-empty string, got {self.label_scheme_id!r}"
+            )
+        if not isinstance(self.candidate_mapping, tuple):
+            raise InvalidDecisionError(
+                "candidate_mapping must be a tuple of CandidateLabelMapping, got "
+                f"{type(self.candidate_mapping).__name__}"
+            )
+        for entry in self.candidate_mapping:
+            if not isinstance(entry, CandidateLabelMapping):
+                raise InvalidDecisionError(
+                    "candidate_mapping entries must be CandidateLabelMapping, got "
+                    f"{type(entry).__name__} ({entry!r})"
+                )
+        if self.strategy is ScoringStrategy.CATEGORICAL_TOKEN_LOGITS:
+            self._validate_categorical_mapping()
+        elif self.candidate_mapping:
+            raise InvalidDecisionError(
+                "candidate_mapping is only meaningful for the "
+                f"{ScoringStrategy.CATEGORICAL_TOKEN_LOGITS.value} strategy, got "
+                f"{len(self.candidate_mapping)} entries"
+            )
+
+    def _validate_categorical_mapping(self) -> None:
+        mapping = self.candidate_mapping
+        if len(self.targets) < 2:
+            raise InvalidDecisionError(
+                "the categorical strategy requires at least 2 ordered targets, got "
+                f"{self.targets!r}"
+            )
+        if not isinstance(self.label_scheme_id, str) or not self.label_scheme_id.strip():
+            raise InvalidDecisionError(
+                "label_scheme_id must be a non-empty string for the "
+                f"{ScoringStrategy.CATEGORICAL_TOKEN_LOGITS.value} strategy"
+            )
+        if len(mapping) != len(self.targets):
+            raise InvalidDecisionError(
+                "candidate_mapping must have exactly one entry per target, got "
+                f"{len(mapping)} entries for {len(self.targets)} targets"
+            )
+        indices = [entry.candidate_index for entry in mapping]
+        if indices != list(range(len(mapping))):
+            raise InvalidDecisionError(
+                f"candidate_mapping indices must be 0..{len(mapping) - 1} in order, got {indices}"
+            )
+        names = [entry.candidate_name for entry in mapping]
+        if len(set(names)) != len(names):
+            raise InvalidDecisionError(f"candidate_mapping names must be unique, got {names!r}")
+        labels = [entry.scoring_label for entry in mapping]
+        if len(set(labels)) != len(labels):
+            raise InvalidDecisionError(f"candidate_mapping labels must be unique, got {labels!r}")
+        for index, entry in enumerate(mapping):
+            if entry.scoring_label != self.targets[index]:
+                raise InvalidDecisionError(
+                    "candidate_mapping must follow target order: entry "
+                    f"{index} has scoring_label {entry.scoring_label!r} but "
+                    f"targets[{index}] is {self.targets[index]!r}"
+                )
 
     @property
     def fingerprint(self) -> str:
         """Stable SHA-256 fingerprint of this plan's semantic content."""
         return fingerprint(
             {
-                "v": 2,
+                "v": 3,
                 "kind": "inference_plan",
                 "decision_fingerprint": self.decision_fingerprint,
                 "strategy": str(self.strategy),
@@ -130,6 +235,8 @@ class InferencePlan:
                 "positive_verbalizer": self.positive_verbalizer,
                 "negative_verbalizer": self.negative_verbalizer,
                 "doctrine_id": self.doctrine_id,
+                "label_scheme_id": self.label_scheme_id,
+                "candidate_mapping": [asdict(entry) for entry in self.candidate_mapping],
                 "required_capabilities": asdict(self.required_capabilities),
             }
         )

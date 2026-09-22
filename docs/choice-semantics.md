@@ -2,10 +2,49 @@
 
 Design and exploration record for Phase 2B.
 
-Status: **design only, not implemented.** Nothing in this document is a
-capability claim, and no part of it is enforced by the runtime today. Read it
-together with `design-constitution.md` (probability semantics, invariants) and
-`claims.md` (what is actually verified).
+Status: **direct categorical Choice is implemented and experimentally
+exercised (Phase 2B). Every other strategy discussed here remains design only.**
+Enforcement today covers exactly one path: direct categorical, closed-set,
+single-label, single-token scoring labels, small N. Read this together with
+`design-constitution.md` (probability semantics, INV-19 to INV-22, AP-08) and
+`claims.md` (what is actually verified, and under which conditions). A design
+statement in this document is not a capability claim, and no part of the
+one-vs-rest, sampling, or open-set discussion is enforced by the runtime.
+
+## Phase 2B outcome
+
+What the round actually settled, and what it deliberately left open.
+
+Frozen as runtime invariants, each with a test or an enforcement point:
+
+- semantic candidate identity is not scoring-label identity (INV-20);
+- the scoring representation lives in the plan fingerprint, not the decision
+  fingerprint (INV-21);
+- evidence label order is provenance, so permuted labels are rejected rather
+  than reordered (INV-22);
+- the compiler declares the representation and the backend validates
+  executability (AP-08);
+- INV-19 was widened to cover `candidate_mass` for the categorical path, with
+  no new number because it is the same rule over a wider candidate set;
+- the Choice tie-break resolves on semantic candidate order, which Phase 1
+  already covered for results and therefore also needs no new number.
+
+Left as experimental robustness hypotheses, never promoted to invariants:
+
+- label permutation stability of the restricted distribution;
+- candidate addition stability;
+- description paraphrase stability.
+
+Measured outcome, recorded in full in `experiments/choice_signal/REPORT.md`:
+the semantic winner was stable across all six label permutations at N=3 (90/90)
+and across five permutations at N=5 (75/75), while the distribution SHAPE moved
+(mean total variation 0.0334 and 0.0277, worst case 0.3082). Adding an absent
+candidate and paraphrasing a description left the winner unchanged. With a
+candidate set that omitted the true topic the model still answered in-set at
+0.677 to 0.893 with `candidate_mass` near 0.99, so the round confirms that the
+direct categorical path has no open-set guarantee and that `candidate_mass`
+measures candidate-space occupancy rather than candidate-set correctness. No
+pass threshold was set anywhere.
 
 The question this document exists to answer:
 
@@ -624,7 +663,7 @@ ranking                      -> Rank
 continuous judgement         -> Score
 ```
 
-## 14. Proposed implementation contract for Phase 2B
+## 14. Implementation contract for Phase 2B (delivered)
 
 A minimal vertical slice, mirroring the Bool path exactly:
 
@@ -690,7 +729,7 @@ not exactly one token or if two labels collide (section 5.1). The compiler never
 skips a label and never re-assigns one, because that would let execution
 silently alter plan semantics.
 
-## 15. Proposed experiment matrix
+## 15. Experiment matrix (executed)
 
 The purpose is not an accuracy benchmark. It is to observe how the numbers move
 when the representation, the candidate set, or the wording changes.
@@ -757,7 +796,7 @@ inevitable. The properties worth measuring are the ones above: whether the
 semantic argmax survives, whether the ranking roughly survives, and how large
 the drift is.
 
-## 16. Proposed invariants vs robustness hypotheses
+## 16. Frozen invariants vs robustness hypotheses
 
 To be frozen as runtime invariants after the implementation round (and only
 then):

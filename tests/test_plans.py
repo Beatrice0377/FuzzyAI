@@ -8,6 +8,7 @@ import pytest
 from fuzzyai import (
     Backend,
     BackendCapabilities,
+    CandidateLabelMapping,
     EvidenceKind,
     InferencePlan,
     InvalidDecisionError,
@@ -262,3 +263,125 @@ class TestBackendProtocol:
         hints = typing.get_type_hints(Backend.execute)
         assert hints["plan"] is InferencePlan
         assert hints["return"] is RawEvidence
+
+
+CATEGORICAL_MAPPING = (
+    CandidateLabelMapping(0, "billing", "money", "A"),
+    CandidateLabelMapping(1, "shipping", "boxes", "B"),
+    CandidateLabelMapping(2, "returns", "warranty", "C"),
+)
+
+
+def make_categorical_plan(**overrides: Any) -> InferencePlan:
+    kwargs: dict[str, Any] = {
+        "decision_fingerprint": "b" * 64,
+        "strategy": ScoringStrategy.CATEGORICAL_TOKEN_LOGITS,
+        "prompt": "Answer with one label.",
+        "targets": ("A", "B", "C"),
+        "label_scheme_id": "categorical-labels-v1",
+        "candidate_mapping": CATEGORICAL_MAPPING,
+    }
+    kwargs.update(overrides)
+    return InferencePlan(**kwargs)
+
+
+class TestCategoricalPlanValidation:
+    def test_valid_categorical_plan(self) -> None:
+        plan = make_categorical_plan()
+        assert plan.targets == ("A", "B", "C")
+        assert plan.label_scheme_id == "categorical-labels-v1"
+        assert plan.candidate_mapping == CATEGORICAL_MAPPING
+
+    def test_single_target_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="at least 2 ordered targets"):
+            make_categorical_plan(targets=("A",))
+
+    def test_missing_label_scheme_id_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="label_scheme_id"):
+            make_categorical_plan(label_scheme_id=None)
+
+    def test_mapping_length_mismatch_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="one entry per target"):
+            make_categorical_plan(candidate_mapping=CATEGORICAL_MAPPING[:2])
+
+    def test_mapping_order_mismatch_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="indices must be 0"):
+            make_categorical_plan(
+                candidate_mapping=(
+                    CandidateLabelMapping(1, "shipping", "boxes", "B"),
+                    CandidateLabelMapping(0, "billing", "money", "A"),
+                    CandidateLabelMapping(2, "returns", "warranty", "C"),
+                )
+            )
+
+    def test_duplicate_candidate_names_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="names must be unique"):
+            make_categorical_plan(
+                candidate_mapping=(
+                    CandidateLabelMapping(0, "billing", "money", "A"),
+                    CandidateLabelMapping(1, "billing", "boxes", "B"),
+                    CandidateLabelMapping(2, "returns", "warranty", "C"),
+                )
+            )
+
+    def test_duplicate_labels_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="labels must be unique"):
+            make_categorical_plan(
+                candidate_mapping=(
+                    CandidateLabelMapping(0, "billing", "money", "A"),
+                    CandidateLabelMapping(1, "shipping", "boxes", "A"),
+                    CandidateLabelMapping(2, "returns", "warranty", "C"),
+                )
+            )
+
+    def test_label_target_mismatch_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="must follow target order"):
+            make_categorical_plan(
+                candidate_mapping=(
+                    CandidateLabelMapping(0, "billing", "money", "A"),
+                    CandidateLabelMapping(1, "shipping", "boxes", "C"),
+                    CandidateLabelMapping(2, "returns", "warranty", "B"),
+                )
+            )
+
+    def test_mapping_forbidden_for_binary_strategy(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="only meaningful"):
+            make_plan(candidate_mapping=CATEGORICAL_MAPPING)
+
+    def test_targets_included_in_fingerprint(self) -> None:
+        four_labels = (
+            CandidateLabelMapping(0, "billing", "money", "A"),
+            CandidateLabelMapping(1, "shipping", "boxes", "B"),
+            CandidateLabelMapping(2, "returns", "warranty", "C"),
+            CandidateLabelMapping(3, "accounts", "login", "D"),
+        )
+        assert (
+            make_categorical_plan().fingerprint
+            != make_categorical_plan(
+                targets=("A", "B", "C", "D"), candidate_mapping=four_labels
+            ).fingerprint
+        )
+
+    def test_mapping_included_in_fingerprint(self) -> None:
+        assert (
+            make_categorical_plan().fingerprint
+            != make_categorical_plan(
+                candidate_mapping=(
+                    CandidateLabelMapping(0, "shipping", "boxes", "A"),
+                    CandidateLabelMapping(1, "billing", "money", "B"),
+                    CandidateLabelMapping(2, "returns", "warranty", "C"),
+                )
+            ).fingerprint
+        )
+
+    def test_label_scheme_id_included_in_fingerprint(self) -> None:
+        assert (
+            make_categorical_plan().fingerprint
+            != make_categorical_plan(label_scheme_id="categorical-labels-v2").fingerprint
+        )
+
+    def test_frozen(self) -> None:
+        plan = make_categorical_plan()
+        mutable: Any = plan
+        with pytest.raises(AttributeError):
+            mutable.targets = ("B", "A", "C")

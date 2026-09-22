@@ -13,11 +13,14 @@ Measure and record now; let a future policy layer decide later.
 """
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 
-from fuzzyai.assembler import BINARY_EVIDENCE_LABELS
 from fuzzyai.errors import InvalidDecisionError, InvalidProbabilityError
-from fuzzyai.plans import EvidenceKind, RawEvidence
+from fuzzyai.plans import EvidenceKind, InferencePlan, RawEvidence, ScoringStrategy
+
+#: The two binary scoring labels, in canonical (declaration) order.
+BINARY_EVIDENCE_LABELS = ("false", "true")
 
 #: ``log(sum(exp(logit) for logit in full vocabulary))`` for the scored position.
 VOCAB_LOGSUMEXP_KEY = "vocab_logsumexp"
@@ -252,6 +255,182 @@ def diagnose_bool_evidence(evidence: RawEvidence) -> ScoringDiagnostics:
         ),
         negative_token_probability=full_vocab_probability(
             logit=logit_false, vocab_logsumexp=vocab_logsumexp
+        ),
+        top_token_text=top_token_text,
+    )
+
+
+def _logsumexp(values: Sequence[float]) -> float:
+    """``log(sum(exp(v) for v in values))``, computed without overflow.
+
+    The stable N-way form: factor out the maximum, sum ``exp`` of
+    non-positive exponents, and take the logarithm. ``math.logaddexp`` does
+    not exist in the standard library, so this generalizes the pairwise
+    ``_logaddexp`` above.
+    """
+    if not values:
+        raise InvalidProbabilityError("logsumexp requires at least one value")
+    maximum = max(values)
+    if maximum == -math.inf:
+        return -math.inf
+    total = sum(math.exp(v - maximum) for v in values)
+    return maximum + math.log(total)
+
+
+def log_candidate_mass(candidate_logits: Sequence[float], *, vocab_logsumexp: float) -> float:
+    """``log P(next token is any candidate)`` under full-vocabulary normalization.
+
+    ``candidate_logits`` are the raw logits of the candidate scoring tokens in
+    target order; ``vocab_logsumexp`` is the full-vocabulary normalizer
+    reported by the backend for the same forward pass.
+    """
+    return _logsumexp(candidate_logits) - vocab_logsumexp
+
+
+def candidate_mass(candidate_logits: Sequence[float], *, vocab_logsumexp: float) -> float:
+    """``P(next token is any candidate)`` under full-vocabulary normalization.
+
+    Reduces to the binary :func:`verbalizer_mass` when there are exactly two
+    candidates. Like every value in this module it is a diagnostic, never a
+    decision probability and never a validity verdict.
+    """
+    return _probability_from_log_ratio(
+        log_candidate_mass(candidate_logits, vocab_logsumexp=vocab_logsumexp),
+        magnitude=vocab_logsumexp,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ChoiceScoringDiagnostics:
+    """Evidence-quality facts about a categorical scoring position.
+
+    Every probability here is a FULL-VOCABULARY next-token probability in
+    target (label) order. None of them is a decision probability and none of
+    them is calibrated. The class carries no verdict: there is no ``valid``
+    flag, because deciding that requires a threshold policy that does not
+    exist yet.
+    """
+
+    candidate_mass: float
+    candidate_token_probabilities: tuple[float, ...]
+    top_token_id: int
+    top_token_probability: float
+    top_token_text: str | None = None
+
+    def __post_init__(self) -> None:
+        mass = _validated_probability(self.candidate_mass, name="candidate_mass")
+        if not isinstance(self.candidate_token_probabilities, tuple):
+            raise InvalidProbabilityError(
+                "candidate_token_probabilities must be a tuple of floats, got "
+                f"{type(self.candidate_token_probabilities).__name__}"
+            )
+        if not self.candidate_token_probabilities:
+            raise InvalidProbabilityError(
+                "candidate_token_probabilities must be non-empty, got an empty tuple"
+            )
+        probabilities = tuple(
+            _validated_probability(value, name=f"candidate_token_probabilities[{index}]")
+            for index, value in enumerate(self.candidate_token_probabilities)
+        )
+        top = _validated_probability(self.top_token_probability, name="top_token_probability")
+        object.__setattr__(self, "candidate_mass", mass)
+        object.__setattr__(self, "candidate_token_probabilities", probabilities)
+        object.__setattr__(self, "top_token_probability", top)
+        if isinstance(self.top_token_id, bool) or not isinstance(self.top_token_id, int):
+            raise InvalidDecisionError(
+                "top_token_id must be an int, got "
+                f"{type(self.top_token_id).__name__} ({self.top_token_id!r})"
+            )
+        if self.top_token_id < 0:
+            raise InvalidDecisionError(f"top_token_id must be >= 0, got {self.top_token_id!r}")
+        if self.top_token_text is not None and not isinstance(self.top_token_text, str):
+            raise InvalidDecisionError(
+                "top_token_text must be None or a string, got "
+                f"{type(self.top_token_text).__name__} ({self.top_token_text!r})"
+            )
+        # Structural facts of any full-vocabulary distribution: the argmax is
+        # at least as probable as any candidate token, and the mass assigned
+        # to the candidates is at least each candidate's own probability.
+        largest_candidate = max(probabilities)
+        if top < largest_candidate - _ORDERING_TOLERANCE:
+            raise InvalidProbabilityError(
+                "top_token_probability must be >= every candidate token probability: got "
+                f"top_token_probability={top!r} but largest candidate probability is "
+                f"{largest_candidate!r}"
+            )
+        if mass < largest_candidate - _ORDERING_TOLERANCE:
+            raise InvalidProbabilityError(
+                "candidate_mass must be >= each candidate token probability: got "
+                f"candidate_mass={mass!r} but largest candidate probability is "
+                f"{largest_candidate!r}"
+            )
+
+
+def diagnose_choice_evidence(
+    evidence: RawEvidence, *, plan: InferencePlan
+) -> ChoiceScoringDiagnostics:
+    """Derive :class:`ChoiceScoringDiagnostics` from categorical token-logit evidence.
+
+    The evidence must carry the raw normalization statistics reported by the
+    backend (``vocab_logsumexp``, ``top_token_id``, ``top_token_logit``); the
+    backend measures them from the same forward pass it already performed, so
+    this adds no model work. ``top_token_text`` is optional. The evidence
+    labels must equal ``plan.targets`` EXACTLY, in the same order: the
+    assembler and the diagnostics never reorder evidence.
+
+    Raises:
+        InvalidDecisionError: if the evidence kind is not
+            :attr:`EvidenceKind.LOGITS`, its labels do not equal
+            ``plan.targets`` in order, the plan strategy is not categorical,
+            or a required metadata key is missing or of the wrong type.
+        InvalidProbabilityError: if a required metadata value is not finite.
+    """
+    if plan.strategy is not ScoringStrategy.CATEGORICAL_TOKEN_LOGITS:
+        raise InvalidDecisionError(
+            "choice diagnostics require the "
+            f"{ScoringStrategy.CATEGORICAL_TOKEN_LOGITS.value} strategy, got "
+            f"{plan.strategy.value!r}"
+        )
+    if evidence.kind is not EvidenceKind.LOGITS:
+        raise InvalidDecisionError(
+            f"choice diagnostics require {EvidenceKind.LOGITS.value!r} evidence, "
+            f"got {evidence.kind.value!r}"
+        )
+    if evidence.labels != plan.targets:
+        raise InvalidDecisionError(
+            "choice evidence labels must equal plan.targets exactly, in the same "
+            f"order: expected {plan.targets!r}, got {evidence.labels!r}"
+        )
+    for key in _REQUIRED_METADATA_KEYS:
+        if key not in evidence.metadata:
+            raise InvalidDecisionError(
+                f"evidence metadata is missing required key {key!r}: scoring "
+                "diagnostics need the full-vocabulary normalization statistics"
+            )
+    vocab_logsumexp = _metadata_float(evidence, VOCAB_LOGSUMEXP_KEY)
+    top_token_id = evidence.metadata[TOP_TOKEN_ID_KEY]
+    if isinstance(top_token_id, bool) or not isinstance(top_token_id, int):
+        raise InvalidDecisionError(
+            f"evidence metadata key {TOP_TOKEN_ID_KEY!r} must be an int, "
+            f"got {type(top_token_id).__name__} ({top_token_id!r})"
+        )
+    top_token_logit = _metadata_float(evidence, TOP_TOKEN_LOGIT_KEY)
+    top_token_text = evidence.metadata.get(TOP_TOKEN_TEXT_KEY)
+    if top_token_text is not None and not isinstance(top_token_text, str):
+        raise InvalidDecisionError(
+            f"evidence metadata key {TOP_TOKEN_TEXT_KEY!r} must be None or a string, "
+            f"got {type(top_token_text).__name__} ({top_token_text!r})"
+        )
+    candidate_logits = evidence.values
+    return ChoiceScoringDiagnostics(
+        candidate_mass=candidate_mass(candidate_logits, vocab_logsumexp=vocab_logsumexp),
+        candidate_token_probabilities=tuple(
+            full_vocab_probability(logit=logit, vocab_logsumexp=vocab_logsumexp)
+            for logit in candidate_logits
+        ),
+        top_token_id=top_token_id,
+        top_token_probability=full_vocab_probability(
+            logit=top_token_logit, vocab_logsumexp=vocab_logsumexp
         ),
         top_token_text=top_token_text,
     )

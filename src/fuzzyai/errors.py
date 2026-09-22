@@ -30,5 +30,9 @@ class UnsupportedDecisionError(FuzzyAIError):
     """A compiler or runtime does not support this decision type."""
 
 
-class VerbalizerError(FuzzyAIError):
+class ScoringLabelError(FuzzyAIError):
+    """A scoring label cannot be resolved to exactly one distinct scoring token."""
+
+
+class VerbalizerError(ScoringLabelError):
     """A verbalizer cannot be resolved to exactly one distinct scoring token."""

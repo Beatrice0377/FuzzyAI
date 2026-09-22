@@ -14,14 +14,15 @@ snapshot, and no retention mode.
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from fuzzyai.diagnostics import ScoringDiagnostics
+from fuzzyai.diagnostics import ChoiceScoringDiagnostics, ScoringDiagnostics
 from fuzzyai.errors import InvalidDecisionError
 from fuzzyai.fingerprint import JSONValue, canonical_json, fingerprint
-from fuzzyai.plans import InferencePlan, RawEvidence
-from fuzzyai.results import BoolResult
+from fuzzyai.plans import CandidateLabelMapping, InferencePlan, RawEvidence, ScoringStrategy
+from fuzzyai.results import BoolResult, DecisionResult
 
 POSITIVE_TOKEN_ID_KEY = "positive_token_id"
 NEGATIVE_TOKEN_ID_KEY = "negative_token_id"
+RESOLVED_TARGET_TOKEN_IDS_KEY = "resolved_target_token_ids"
 MODEL_KEY = "model"
 MODEL_REVISION_KEY = "model_revision"
 INPUT_TOKEN_COUNT_KEY = "input_token_count"
@@ -33,9 +34,9 @@ RUNTIME_VERSION_KEY = "runtime_version"
 DTYPE_KEY = "dtype"
 RENDERING_CONFIG_KEY = "rendering_config"
 
-EXECUTION_FINGERPRINT_VERSION = 1
+EXECUTION_FINGERPRINT_VERSION = 2
 
-_REQUIRED_TOKEN_METADATA_KEYS: tuple[str, ...] = (
+_REQUIRED_BINARY_TOKEN_METADATA_KEYS: tuple[str, ...] = (
     POSITIVE_TOKEN_ID_KEY,
     NEGATIVE_TOKEN_ID_KEY,
 )
@@ -52,7 +53,19 @@ def _metadata_int(evidence: RawEvidence, key: str) -> int:
 
 @dataclass(frozen=True, slots=True)
 class DecisionTrace:
-    """Immutable provenance record of one evaluated decision."""
+    """Immutable provenance record of one evaluated decision.
+
+    ``scoring_diagnostics`` is a :class:`~fuzzyai.diagnostics.ScoringDiagnostics`
+    for the binary strategy or a
+    :class:`~fuzzyai.diagnostics.ChoiceScoringDiagnostics` for the categorical
+    strategy; consumers must narrow on ``trace.scoring_strategy``.
+    ``positive_token_id`` / ``negative_token_id`` are the binary scoring token
+    ids (``-1`` when unused); ``resolved_target_token_ids`` carries the
+    categorical ``(label, token_id)`` pairs in target order (empty when
+    unused). ``candidate_mapping`` mirrors the plan's mapping.
+    ``probability_true`` is the binary ``P(True)`` and ``None`` for
+    categorical decisions, which have no true/false outcome space.
+    """
 
     trace_id: str
     timestamp: str
@@ -65,11 +78,11 @@ class DecisionTrace:
     positive_token_id: int
     negative_token_id: int
     evidence: RawEvidence
-    probability_true: float
+    probability_true: float | None
     input_fingerprint: str
     backend_type: str
     latency_ms: float
-    scoring_diagnostics: ScoringDiagnostics
+    scoring_diagnostics: ScoringDiagnostics | ChoiceScoringDiagnostics
     execution_fingerprint: str
     model: str | None = None
     model_revision: str | None = None
@@ -81,6 +94,8 @@ class DecisionTrace:
     runtime_version: str | None = None
     dtype: str | None = None
     rendering_config: Mapping[str, JSONValue] = field(default_factory=dict)
+    candidate_mapping: tuple[CandidateLabelMapping, ...] = ()
+    resolved_target_token_ids: tuple[tuple[str, int], ...] = ()
 
     def to_dict(self) -> dict[str, JSONValue]:
         """A JSON-compatible plain dict of every field (evidence nested)."""
@@ -106,14 +121,7 @@ class DecisionTrace:
             "input_fingerprint": self.input_fingerprint,
             "backend_type": self.backend_type,
             "latency_ms": self.latency_ms,
-            "scoring_diagnostics": {
-                "verbalizer_mass": self.scoring_diagnostics.verbalizer_mass,
-                "top_token_id": self.scoring_diagnostics.top_token_id,
-                "top_token_probability": self.scoring_diagnostics.top_token_probability,
-                "positive_token_probability": (self.scoring_diagnostics.positive_token_probability),
-                "negative_token_probability": (self.scoring_diagnostics.negative_token_probability),
-                "top_token_text": self.scoring_diagnostics.top_token_text,
-            },
+            "scoring_diagnostics": _diagnostics_to_dict(self.scoring_diagnostics),
             "execution_fingerprint": self.execution_fingerprint,
             "model": self.model,
             "model_revision": self.model_revision,
@@ -125,8 +133,44 @@ class DecisionTrace:
             "runtime_version": self.runtime_version,
             "dtype": self.dtype,
             "rendering_config": dict(self.rendering_config),
+            "candidate_mapping": [
+                {
+                    "candidate_index": entry.candidate_index,
+                    "candidate_name": entry.candidate_name,
+                    "candidate_description": entry.candidate_description,
+                    "scoring_label": entry.scoring_label,
+                }
+                for entry in self.candidate_mapping
+            ],
+            "resolved_target_token_ids": [
+                [label, token_id] for label, token_id in self.resolved_target_token_ids
+            ],
         }
         return payload
+
+
+def _diagnostics_to_dict(
+    diagnostics: ScoringDiagnostics | ChoiceScoringDiagnostics,
+) -> dict[str, JSONValue]:
+    """A JSON dict for either diagnostics variant, tagged by kind."""
+    if isinstance(diagnostics, ChoiceScoringDiagnostics):
+        return {
+            "kind": "choice",
+            "candidate_mass": diagnostics.candidate_mass,
+            "candidate_token_probabilities": list(diagnostics.candidate_token_probabilities),
+            "top_token_id": diagnostics.top_token_id,
+            "top_token_probability": diagnostics.top_token_probability,
+            "top_token_text": diagnostics.top_token_text,
+        }
+    return {
+        "kind": "binary",
+        "verbalizer_mass": diagnostics.verbalizer_mass,
+        "top_token_id": diagnostics.top_token_id,
+        "top_token_probability": diagnostics.top_token_probability,
+        "positive_token_probability": diagnostics.positive_token_probability,
+        "negative_token_probability": diagnostics.negative_token_probability,
+        "top_token_text": diagnostics.top_token_text,
+    }
 
 
 def _metadata_str(evidence: RawEvidence, key: str) -> str | None:
@@ -172,6 +216,44 @@ def _metadata_rendering_config(evidence: RawEvidence) -> dict[str, JSONValue]:
     return config
 
 
+def _metadata_resolved_target_token_ids(
+    evidence: RawEvidence,
+) -> tuple[tuple[str, int], ...]:
+    """Resolved ``(label, token_id)`` pairs from evidence metadata.
+
+    The backend reports them as a JSON list of ``[label, token_id]`` pairs in
+    ``plan.targets`` order (e.g. ``[["A", 123], ["B", 456]]``).
+    """
+    value = evidence.metadata.get(RESOLVED_TARGET_TOKEN_IDS_KEY)
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise InvalidDecisionError(
+            f"evidence metadata key {RESOLVED_TARGET_TOKEN_IDS_KEY!r} must be a list of "
+            f"[label, token_id] pairs, got {type(value).__name__} ({value!r})"
+        )
+    resolved: list[tuple[str, int]] = []
+    for index, pair in enumerate(value):
+        if not isinstance(pair, list) or len(pair) != 2:
+            raise InvalidDecisionError(
+                f"evidence metadata key {RESOLVED_TARGET_TOKEN_IDS_KEY!r} entry {index} "
+                f"must be a [label, token_id] pair, got {pair!r}"
+            )
+        label, token_id = pair
+        if not isinstance(label, str) or not label:
+            raise InvalidDecisionError(
+                f"evidence metadata key {RESOLVED_TARGET_TOKEN_IDS_KEY!r} entry {index} "
+                f"label must be a non-empty string, got {label!r}"
+            )
+        if isinstance(token_id, bool) or not isinstance(token_id, int) or token_id < 0:
+            raise InvalidDecisionError(
+                f"evidence metadata key {RESOLVED_TARGET_TOKEN_IDS_KEY!r} entry {index} "
+                f"token_id must be a non-negative int, got {token_id!r}"
+            )
+        resolved.append((label, token_id))
+    return tuple(resolved)
+
+
 def build_decision_trace(
     *,
     trace_id: str,
@@ -179,38 +261,68 @@ def build_decision_trace(
     decision_fingerprint: str,
     plan: InferencePlan,
     evidence: RawEvidence,
-    result: BoolResult,
-    diagnostics: ScoringDiagnostics,
+    result: DecisionResult,
+    diagnostics: ScoringDiagnostics | ChoiceScoringDiagnostics,
     backend_type: str,
     latency_ms: float,
     capture_rendered_input: bool = False,
 ) -> DecisionTrace:
     """Assemble a :class:`DecisionTrace` from a plan, its evidence, and result.
 
-    Verbalizers and the doctrine id are taken from the plan; scoring token
-    ids are REQUIRED in ``evidence.metadata`` (``positive_token_id`` /
-    ``negative_token_id`` as ints). ``model``, ``model_revision``,
-    ``input_token_count``, ``backend_version``, ``tokenizer``,
-    ``tokenizer_revision``, ``runtime_version`` and ``dtype`` are optional
-    metadata. ``rendered_input`` is captured only when
+    For the binary strategy, verbalizers and the doctrine id are taken from
+    the plan and the scoring token ids are REQUIRED in ``evidence.metadata``
+    (``positive_token_id`` / ``negative_token_id`` as ints). For the
+    categorical strategy, ``resolved_target_token_ids`` is REQUIRED in
+    ``evidence.metadata`` (a JSON list of ``[label, token_id]`` pairs in
+    ``plan.targets`` order) and the verbalizers are ``"none"``. ``model``,
+    ``model_revision``, ``input_token_count``, ``backend_version``,
+    ``tokenizer``, ``tokenizer_revision``, ``runtime_version`` and ``dtype``
+    are optional metadata. ``rendered_input`` is captured only when
     ``capture_rendered_input`` is True. ``rendering_config`` is optional
     metadata that enters the execution fingerprint (it changes the real model
     input) but never the plan or its fingerprint. ``diagnostics`` is the
-    REQUIRED :class:`ScoringDiagnostics` derived from the same evidence.
+    REQUIRED scoring diagnostics derived from the same evidence, matching the
+    plan's strategy.
 
     Raises:
         InvalidDecisionError: if required metadata keys are missing or of the
-            wrong type.
+            wrong type, or the diagnostics variant does not match the plan
+            strategy.
     """
-    for key in _REQUIRED_TOKEN_METADATA_KEYS:
-        if key not in evidence.metadata:
-            raise InvalidDecisionError(f"evidence metadata is missing required key {key!r}")
-        _ = _metadata_int(evidence, key)
+    if plan.strategy is ScoringStrategy.BINARY_TOKEN_LOGITS:
+        for key in _REQUIRED_BINARY_TOKEN_METADATA_KEYS:
+            if key not in evidence.metadata:
+                raise InvalidDecisionError(f"evidence metadata is missing required key {key!r}")
+            _ = _metadata_int(evidence, key)
+        positive_token_id = _metadata_int(evidence, POSITIVE_TOKEN_ID_KEY)
+        negative_token_id = _metadata_int(evidence, NEGATIVE_TOKEN_ID_KEY)
+        resolved_target_token_ids: tuple[tuple[str, int], ...] = ()
+        if not isinstance(diagnostics, ScoringDiagnostics):
+            raise InvalidDecisionError(
+                f"binary plans require ScoringDiagnostics, got {type(diagnostics).__name__}"
+            )
+    elif plan.strategy is ScoringStrategy.CATEGORICAL_TOKEN_LOGITS:
+        if RESOLVED_TARGET_TOKEN_IDS_KEY not in evidence.metadata:
+            raise InvalidDecisionError(
+                "evidence metadata is missing required key "
+                f"{RESOLVED_TARGET_TOKEN_IDS_KEY!r}: categorical traces need the "
+                "resolved scoring token ids"
+            )
+        resolved_target_token_ids = _metadata_resolved_target_token_ids(evidence)
+        positive_token_id = -1
+        negative_token_id = -1
+        if not isinstance(diagnostics, ChoiceScoringDiagnostics):
+            raise InvalidDecisionError(
+                "categorical plans require ChoiceScoringDiagnostics, got "
+                f"{type(diagnostics).__name__}"
+            )
+    else:
+        raise InvalidDecisionError(
+            f"unsupported scoring strategy for tracing: {plan.strategy.value!r}"
+        )
     rendered_input: str | None = None
     if capture_rendered_input:
         rendered_input = _metadata_str(evidence, RENDERED_INPUT_KEY)
-    positive_token_id = _metadata_int(evidence, POSITIVE_TOKEN_ID_KEY)
-    negative_token_id = _metadata_int(evidence, NEGATIVE_TOKEN_ID_KEY)
     model = _metadata_str(evidence, MODEL_KEY)
     model_revision = _metadata_str(evidence, MODEL_REVISION_KEY)
     backend_version = _metadata_str(evidence, BACKEND_VERSION_KEY)
@@ -233,9 +345,9 @@ def build_decision_trace(
         )
     # The execution fingerprint identifies one execution configuration: the
     # plan plus everything about HOW it was executed (backend, versions,
-    # rendering config). It is derived from the already-computed
-    # ``input_fingerprint`` — the actually rendered text — never re-derived
-    # from the plan.
+    # rendering config, resolved scoring token ids). It is derived from the
+    # already-computed ``input_fingerprint`` — the actually rendered text —
+    # never re-derived from the plan.
     execution_fingerprint = fingerprint(
         {
             "v": EXECUTION_FINGERPRINT_VERSION,
@@ -253,6 +365,9 @@ def build_decision_trace(
             "input_fingerprint": input_fingerprint,
             "positive_token_id": positive_token_id,
             "negative_token_id": negative_token_id,
+            "resolved_target_token_ids": [
+                [label, token_id] for label, token_id in resolved_target_token_ids
+            ],
         }
     )
     return DecisionTrace(
@@ -271,7 +386,7 @@ def build_decision_trace(
         positive_token_id=positive_token_id,
         negative_token_id=negative_token_id,
         evidence=evidence,
-        probability_true=result.probability_true,
+        probability_true=result.probability_true if isinstance(result, BoolResult) else None,
         input_fingerprint=input_fingerprint,
         backend_type=backend_type,
         latency_ms=latency_ms,
@@ -287,4 +402,6 @@ def build_decision_trace(
         runtime_version=runtime_version,
         dtype=dtype,
         rendering_config=rendering_config,
+        candidate_mapping=plan.candidate_mapping,
+        resolved_target_token_ids=resolved_target_token_ids,
     )

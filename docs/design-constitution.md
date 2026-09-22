@@ -183,11 +183,39 @@ numbers.
   probability (for example `BoolResult.probability_true`) is conditional on the
   model's next token being one of the declared candidates. It must not be
   exposed through a `DecisionTrace` without the accompanying full-vocabulary
-  verbalizer mass, because on its own it reads as evidence that the model was
-  actually choosing among the candidates when it may not have been. Enforcement:
-  `DecisionTrace.scoring_diagnostics` is a required field, and `verbalizer_mass`
-  is derived from full-vocabulary normalization rather than from the two
-  candidate logits alone.
+  candidate-space mass, because on its own it reads as evidence that the model
+  was actually choosing among the candidates when it may not have been.
+  Enforcement: `DecisionTrace.scoring_diagnostics` is a required field, and the
+  mass is derived from full-vocabulary normalization rather than from the
+  candidate logits alone. The categorical path generalises the same rule with
+  `ChoiceScoringDiagnostics.candidate_mass`, so a direct categorical Choice
+  result may not be traced without it. That is the same rule over a wider
+  candidate set, so it does not get a new invariant number.
+- **INV-20 (semantic candidate identity is not scoring-label identity).** A
+  `ChoiceResult` is keyed by semantic candidate names and never by scoring
+  labels, and no public result surface exposes a scoring label as a candidate.
+  Enforcement: the assembler maps label-space probabilities onto the plan's
+  `candidate_mapping` names, and `tests/test_choice_assembler.py` asserts the
+  probability keys are semantic names under both a natural and a permuted
+  binding.
+- **INV-21 (the scoring representation is in the plan fingerprint, not the
+  decision fingerprint).** Changing the candidate-to-label assignment while
+  holding the `ChoiceDecision` fixed must leave the decision fingerprint
+  unchanged and must change the plan fingerprint. Enforcement:
+  `InferencePlan.fingerprint` covers `label_scheme_id` and `candidate_mapping`,
+  `tests/test_choice_compiler.py` asserts both halves of the rule, and
+  `experiments/choice_signal/REPORT.md` section 2 records six permutations of one
+  case producing one distinct decision fingerprint and six distinct plan
+  fingerprints.
+- **INV-22 (evidence label order is provenance).** `RawEvidence` labels for
+  direct categorical scoring must equal the plan's declared `targets` exactly,
+  in the same order. Matching only the label set and reordering internally is
+  forbidden, because label order, logit order, and the candidate mapping
+  together form the provenance of a result. Enforcement:
+  `assemble_choice_probability` compares `evidence.labels` against
+  `plan.targets` directly and raises, and `tests/test_choice_assembler.py`
+  asserts that permuted labels with legal-looking pairs are rejected rather than
+  reordered.
 
 ---
 
@@ -324,6 +352,23 @@ sampling. The caution is part of the principle: higher computational cost does
 NOT automatically imply higher semantic quality, and any quality tier must be
 supported by evaluation rather than assumed. This is the "selective fidelity"
 principle.
+
+### AP-08 The compiler declares the representation; the backend validates executability.
+
+Whether a scoring label resolves to one token is only decidable against a
+concrete tokenizer, chat template, and rendered continuation, so a compiler
+cannot both choose tokenization-valid labels and stay provider-independent. The
+responsibility is therefore split: the compiler chooses the scoring
+representation (candidate order, scoring label strings, the candidate-to-label
+mapping, required capabilities, prompt structure) from the decision, the
+doctrine, the versioned label scheme, and the declared capabilities, without
+access to a tokenizer, model, chat template, token id, CUDA, or backend-specific
+rendering; the backend resolves those labels in the real continuation and
+rejects an unexecutable representation explicitly. Neither side may silently
+repair the other: the compiler never skips or re-assigns a label, and the
+backend never falls back to another strategy, truncates, sums multi-token
+logits, or generates. A future tokenizer-aware resolver would be an explicit,
+recorded artifact, not an implicit behaviour.
 
 ---
 

@@ -149,7 +149,7 @@ class TestDecisionTraceFields:
         assert trace.scoring_diagnostics.top_token_id == 9642
         assert trace.execution_fingerprint == fingerprint(
             {
-                "v": 1,
+                "v": 2,
                 "kind": "execution",
                 "plan_fingerprint": plan.fingerprint,
                 "backend_type": "FakeBackend",
@@ -164,6 +164,7 @@ class TestDecisionTraceFields:
                 "input_fingerprint": trace.input_fingerprint,
                 "positive_token_id": 9642,
                 "negative_token_id": 3134,
+                "resolved_target_token_ids": [],
             }
         )
 

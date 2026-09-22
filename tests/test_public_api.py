@@ -13,7 +13,14 @@ def test_all_names_exist_on_module() -> None:
 
 
 def test_all_is_sorted_and_unique() -> None:
-    assert fuzzyai.__all__ == sorted(fuzzyai.__all__)
+    # Ruff's RUF022 enforces isort-style ordering for ``__all__``:
+    # SCREAMING_SNAKE constants, then CamelCase classes, then snake_case
+    # functions, each group lexicographic. Plain ``sorted()`` disagrees once
+    # constant and class names share no prefix, so assert the RUF022 order.
+    def ruf022_key(name: str) -> tuple[bool, bool, str]:
+        return (not name.isupper(), name.islower(), name)
+
+    assert fuzzyai.__all__ == sorted(fuzzyai.__all__, key=ruf022_key)
     assert len(fuzzyai.__all__) == len(set(fuzzyai.__all__))
 
 
@@ -58,6 +65,20 @@ def test_representative_names_present() -> None:
         "FuzzyAI",
         "ScoringDiagnostics",
         "diagnose_bool_evidence",
+        "ChoiceCompiler",
+        "ChoiceScoringDiagnostics",
+        "CATEGORICAL_COMPILER_VERSION",
+        "CATEGORICAL_DOCTRINE_ID",
+        "CATEGORICAL_DOCTRINE_VERSION",
+        "CATEGORICAL_LABELS",
+        "CATEGORICAL_LABEL_SCHEME_ID",
+        "CATEGORICAL_SEMANTIC_JUDGMENT_V1",
+        "CandidateLabelMapping",
+        "CategoricalScoringDoctrine",
+        "ScoringLabelError",
+        "assemble_choice_probability",
+        "candidate_mass",
+        "diagnose_choice_evidence",
     }
     assert expected <= set(fuzzyai.__all__)
 
@@ -86,5 +107,13 @@ def test_exception_hierarchy() -> None:
     assert issubclass(fuzzyai.UnsupportedCapabilityError, fuzzyai.FuzzyAIError)
     assert issubclass(fuzzyai.FingerprintError, fuzzyai.FuzzyAIError)
     assert issubclass(fuzzyai.UnsupportedDecisionError, fuzzyai.FuzzyAIError)
-    assert issubclass(fuzzyai.VerbalizerError, fuzzyai.FuzzyAIError)
+    assert issubclass(fuzzyai.ScoringLabelError, fuzzyai.FuzzyAIError)
+    assert issubclass(fuzzyai.VerbalizerError, fuzzyai.ScoringLabelError)
     assert issubclass(fuzzyai.FuzzyAIError, Exception)
+
+
+def test_scoring_label_error_is_verbalizer_compatible() -> None:
+    # Existing `except VerbalizerError` handlers keep working after the
+    # re-parenting, and the new categorical error is catchable through it.
+    assert isinstance(fuzzyai.VerbalizerError("v"), fuzzyai.ScoringLabelError)
+    assert isinstance(fuzzyai.ScoringLabelError("s"), fuzzyai.FuzzyAIError)

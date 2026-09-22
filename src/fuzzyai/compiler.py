@@ -1,24 +1,48 @@
-"""BoolCompiler: compiles a :class:`~fuzzyai.decisions.BoolDecision` into an
-:class:`~fuzzyai.plans.InferencePlan`.
+"""Compilers: decisions -> :class:`~fuzzyai.plans.InferencePlan`.
 
-The compiler is a pure planner. It NEVER computes probabilities, never sees
-evidence, and never touches a backend. Its only job is to turn a decision
-plus the backend's declared capabilities into a fully-specified plan.
+A compiler is a pure planner. It NEVER computes probabilities, never sees
+evidence, and never touches a backend or a tokenizer. Its only job is to turn
+a decision plus the backend's declared capabilities into a fully-specified
+plan.
+
+Two compilers exist:
+
+- :class:`BoolCompiler` compiles :class:`~fuzzyai.decisions.BoolDecision`
+  objects under the binary token-logit strategy.
+- :class:`ChoiceCompiler` compiles :class:`~fuzzyai.decisions.ChoiceDecision`
+  objects under the categorical token-logit strategy, assigning each semantic
+  candidate an execution-only scoring label from a versioned label scheme.
 """
 
 from fuzzyai.capabilities import BackendCapabilities
 from fuzzyai.decisions import BoolDecision, ChoiceDecision
-from fuzzyai.doctrine import BINARY_SEMANTIC_JUDGMENT_V1, ScoringDoctrine
+from fuzzyai.doctrine import (
+    BINARY_SEMANTIC_JUDGMENT_V1,
+    CATEGORICAL_SEMANTIC_JUDGMENT_V1,
+    CategoricalScoringDoctrine,
+    ScoringDoctrine,
+)
 from fuzzyai.errors import (
     InvalidDecisionError,
     UnsupportedCapabilityError,
     UnsupportedDecisionError,
 )
-from fuzzyai.plans import InferencePlan, ScoringStrategy
+from fuzzyai.plans import CandidateLabelMapping, InferencePlan, ScoringStrategy
 
 BINARY_COMPILER_VERSION = 1
 DEFAULT_POSITIVE_VERBALIZER = "yes"
 DEFAULT_NEGATIVE_VERBALIZER = "no"
+
+#: Versioned identifier of the ordered scoring-label scheme used by
+#: :class:`ChoiceCompiler`. Bumping the scheme changes plan fingerprints.
+CATEGORICAL_LABEL_SCHEME_ID = "categorical-labels-v1"
+
+#: The ordered scoring labels. Candidate ``i`` receives
+#: ``CATEGORICAL_LABELS[i]``; a decision with more candidates than labels
+#: cannot be compiled under this scheme.
+CATEGORICAL_LABELS: tuple[str, ...] = ("A", "B", "C", "D", "E", "F", "G", "H")
+
+CATEGORICAL_COMPILER_VERSION = 1
 
 
 class BoolCompiler:
@@ -105,9 +129,102 @@ class BoolCompiler:
         )
 
 
+class ChoiceCompiler:
+    """Compiles :class:`~fuzzyai.decisions.ChoiceDecision` objects into plans.
+
+    Each semantic candidate receives the scoring label at its candidate index
+    from :data:`CATEGORICAL_LABELS`. The compiler never consults a tokenizer,
+    a model, or a token id: whether a label resolves to exactly one token is
+    the backend's validation, not the compiler's.
+    """
+
+    def __init__(
+        self,
+        *,
+        doctrine: CategoricalScoringDoctrine = CATEGORICAL_SEMANTIC_JUDGMENT_V1,
+    ) -> None:
+        if not isinstance(doctrine, CategoricalScoringDoctrine):
+            raise InvalidDecisionError(
+                f"doctrine must be a CategoricalScoringDoctrine, got {type(doctrine).__name__}"
+            )
+        self._doctrine = doctrine
+
+    @property
+    def doctrine(self) -> CategoricalScoringDoctrine:
+        return self._doctrine
+
+    def compile(
+        self,
+        decision: BoolDecision | ChoiceDecision,
+        capabilities: BackendCapabilities,
+    ) -> InferencePlan:
+        """Compile ``decision`` into an :class:`InferencePlan`.
+
+        Raises:
+            UnsupportedDecisionError: if ``decision`` is not a
+                :class:`~fuzzyai.decisions.ChoiceDecision`.
+            UnsupportedCapabilityError: if the backend does not declare
+                ``categorical_token_logits``.
+            InvalidDecisionError: if the decision has more candidates than
+                :data:`CATEGORICAL_LABELS` provides.
+        """
+        if not isinstance(decision, ChoiceDecision):
+            raise UnsupportedDecisionError(
+                f"ChoiceCompiler supports only ChoiceDecision, got {type(decision).__name__}"
+            )
+        if not capabilities.categorical_token_logits:
+            raise UnsupportedCapabilityError(
+                "backend does not declare required capability 'categorical_token_logits' "
+                f"(declared: {capabilities.categorical_token_logits!r})"
+            )
+        choices = decision.choices
+        if len(choices) > len(CATEGORICAL_LABELS):
+            raise InvalidDecisionError(
+                f"a choice decision with {len(choices)} candidates exceeds the "
+                f"{CATEGORICAL_LABEL_SCHEME_ID} scheme, which provides at most "
+                f"{len(CATEGORICAL_LABELS)} scoring labels"
+            )
+        targets = CATEGORICAL_LABELS[: len(choices)]
+        candidate_mapping = tuple(
+            CandidateLabelMapping(
+                candidate_index=index,
+                candidate_name=choice.name,
+                candidate_description=choice.description,
+                scoring_label=targets[index],
+            )
+            for index, choice in enumerate(choices)
+        )
+        mapping_lines = [
+            f"{entry.scoring_label} = {entry.candidate_name}"
+            if entry.candidate_description is None
+            else f"{entry.scoring_label} = {entry.candidate_name} ({entry.candidate_description})"
+            for entry in candidate_mapping
+        ]
+        system_prompt, user_prompt = self._doctrine.render(
+            question=decision.question,
+            context=decision.context,
+            mapping_lines=mapping_lines,
+        )
+        return InferencePlan(
+            decision_fingerprint=decision.fingerprint,
+            strategy=ScoringStrategy.CATEGORICAL_TOKEN_LOGITS,
+            prompt=user_prompt,
+            targets=targets,
+            system_prompt=system_prompt,
+            doctrine_id=self._doctrine.doctrine_id,
+            label_scheme_id=CATEGORICAL_LABEL_SCHEME_ID,
+            candidate_mapping=candidate_mapping,
+            required_capabilities=BackendCapabilities(categorical_token_logits=True),
+        )
+
+
 __all__ = [
     "BINARY_COMPILER_VERSION",
+    "CATEGORICAL_COMPILER_VERSION",
+    "CATEGORICAL_LABELS",
+    "CATEGORICAL_LABEL_SCHEME_ID",
     "DEFAULT_NEGATIVE_VERBALIZER",
     "DEFAULT_POSITIVE_VERBALIZER",
     "BoolCompiler",
+    "ChoiceCompiler",
 ]
