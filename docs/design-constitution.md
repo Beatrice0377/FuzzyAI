@@ -177,6 +177,18 @@ numbers.
   and NOT a calibrated probability. Its optional `metadata` is a controlled
   `dict[str, JSONValue]` extension point, never `dict[str, Any]`.
 
+### Scoring position and restricted probability
+
+- **INV-19 (restricted probability never stands alone).** A restricted candidate
+  probability (for example `BoolResult.probability_true`) is conditional on the
+  model's next token being one of the declared candidates. It must not be
+  exposed through a `DecisionTrace` without the accompanying full-vocabulary
+  verbalizer mass, because on its own it reads as evidence that the model was
+  actually choosing among the candidates when it may not have been. Enforcement:
+  `DecisionTrace.scoring_diagnostics` is a required field, and `verbalizer_mass`
+  is derived from full-vocabulary normalization rather than from the two
+  candidate logits alone.
+
 ---
 
 ## 4. Architecture Principles
@@ -422,6 +434,41 @@ Error taxonomy: `FuzzyAIError` is the base; `InvalidDecisionError`,
 `InvalidProbabilityError`, `UnsupportedCapabilityError`, and `FingerprintError`
 are its Phase 1 subclasses.
 
+### Execution Provenance
+
+Four identities are kept distinct, because collapsing them loses information
+that audit and regression work need:
+
+- **Decision fingerprint** (INV-07, INV-12): what semantic question is being
+  judged.
+- **Plan fingerprint**: what the compiler produced from that decision.
+- **Execution fingerprint**: the execution environment and rendering
+  configuration the plan ACTUALLY ran under. Its payload is a deterministic
+  JSON-compatible object covering the plan fingerprint, backend type and
+  implementation version, model identifier and revision, tokenizer identifier
+  and revision, runtime version, dtype, rendering config, input fingerprint, and
+  the resolved verbalizer token ids. It is never built from a Python `repr`.
+- **Trace id**: which single execution this was. It is per-execution identity and
+  is deliberately NOT any fingerprint: running the same plan twice yields two
+  trace ids and one execution fingerprint.
+
+Rendering configuration that affects probability semantics (a model's thinking
+mode, for example) belongs in the execution fingerprint and the trace, and
+deliberately NOT in `InferencePlan`, which stays provider-independent (INV-17).
+That is what keeps INV-17 honest: backend configuration does not enter the core
+plan, but it cannot silently disappear either.
+
+A `DecisionTrace` is a **replay-oriented provenance record**, not a strictly
+replayable execution snapshot. It records what is needed to interpret and compare
+an execution, but it does not snapshot backend or tokenizer code, so strict
+replayability remains an open question (section 8).
+
+Phase 2A and 2A.1 public API additions on top of the Phase 1 core: `FuzzyAI`,
+`Evaluation`, `BoolCompiler`, `ScoringDoctrine`, `DecisionTrace`,
+`ScoringDiagnostics`, `diagnose_bool_evidence`, `UnsupportedDecisionError`,
+`VerbalizerError`, and `TransformersBackend` (optional `transformers` extra).
+`Choice` scoring is still unimplemented.
+
 Phase 1 non-goals (binding): no HTTP, no OpenAI/Anthropic/vLLM/SGLang, no
 automatic routing, no decision graph, no calibration algorithm, no dashboard,
 server, agent, RAG, database, telemetry, or web UI. Local model loading left
@@ -486,7 +533,9 @@ smuggle one in.
 - How multi-token labels aggregate into a single categorical probability
   (sum, product, or max of token-level signals) in the Transformers backend.
 - The `DecisionTrace` schema and what it must capture to make a decision
-  replayable.
+  strictly replayable. Phase 2A and 2A.1 define a replay-oriented trace (section
+  5); what a stricter snapshot-based replay would additionally require is still
+  open.
 - The calibration algorithm(s) and the serialized shape/versioning of a
   calibration profile (Phase 4).
 - How temperature scaling interacts with fingerprinting: does a calibrated
@@ -525,3 +574,9 @@ smuggle one in.
   promoted into a versioned, lineage-recorded artifact instead of remaining
   untracked backend configuration. Today such a change alters the probability
   while leaving the plan fingerprint untouched.
+- When a `verbalizer_mass` threshold may become an automatic scoring-validity
+  decision, and where it would live. Today `ScoringDiagnostics` only measures and
+  records. A future `ScoringValidityPolicy` would take the mass, the top token,
+  and model- or task-specific empirical distributions and return accept, reject,
+  or warn. No threshold is chosen now, because no experiment justifies one that
+  is stable across models, tokenizers, chat templates, verbalizers, and prompts.

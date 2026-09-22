@@ -15,8 +15,9 @@ pytest.importorskip("transformers")
 
 import torch
 
-from fuzzyai.backends.transformers import TransformersBackend
+from fuzzyai.backends.transformers import TRANSFORMERS_BACKEND_VERSION, TransformersBackend
 from fuzzyai.capabilities import BackendCapabilities
+from fuzzyai.diagnostics import diagnose_bool_evidence
 from fuzzyai.errors import UnsupportedCapabilityError, VerbalizerError
 from fuzzyai.fingerprint import JSONValue
 from fuzzyai.plans import EvidenceKind, InferencePlan, ScoringStrategy
@@ -45,11 +46,30 @@ class FakeTokenizer:
     word genuinely merges.
     """
 
-    def __init__(self, chat_template: str | None = None) -> None:
+    def __init__(
+        self,
+        chat_template: str | None = None,
+        *,
+        decode_raises: bool = False,
+    ) -> None:
         self.chat_template = chat_template
+        self.decode_raises = decode_raises
+        self.name_or_path = "fake/model"
+        self.init_kwargs: dict[str, object] = {"_commit_hash": "def456"}
         self._vocab: dict[str, int] = {}
         self.calls: list[tuple[str, bool]] = []
         self.template_calls: list[dict[str, object]] = []
+
+    def decode(self, ids: list[int], **kwargs: object) -> str:
+        if self.decode_raises:
+            raise RuntimeError("decode is broken in this fake")
+        pieces = []
+        for token_id in ids:
+            for piece, piece_id in self._vocab.items():
+                if piece_id == token_id:
+                    pieces.append(piece)
+                    break
+        return "".join(pieces)
 
     def _tokenize(self, text: str) -> list[int]:
         ids: list[int] = []
@@ -80,7 +100,12 @@ class FakeTokenizer:
 
 
 class FakeLogits:
-    """Deterministic fake ``logits`` tensor that ONLY allows last-position reads."""
+    """Deterministic fake ``logits`` tensor that ONLY allows last-position reads.
+
+    The final-position read returns a REAL 1-D float32 ``torch.Tensor`` so the
+    backend's ``.to()``, ``torch.logsumexp`` and ``torch.argmax`` calls run for
+    real; any other index still raises.
+    """
 
     def __init__(self, row: list[float], seq_len: int) -> None:
         self._row = row
@@ -89,7 +114,7 @@ class FakeLogits:
     def __getitem__(self, index: tuple[int, int, slice]) -> torch.Tensor:
         i, j, k = index
         assert (i, j, k) == (0, -1, slice(None)), "backend must read ONLY logits[0, -1, :]"
-        return torch.tensor(self._row)
+        return torch.tensor(self._row, dtype=torch.float32)
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -141,6 +166,20 @@ class FakeModel:
         for token_id in self._vocab.values():
             row[token_id] = -float(token_id)
         return FakeOutput(row, seq_len=int(input_ids.shape[1]))
+
+
+class UniformLogitsModel(FakeModel):
+    """FakeModel variant: EVERY vocabulary position gets logit 0.0.
+
+    The next-token distribution is then exactly uniform over the 4096-wide
+    vocabulary, so the two verbalizer tokens hold a hand-computable share of
+    the full-vocabulary mass: 2 / 4096.
+    """
+
+    def __call__(self, *, input_ids: torch.Tensor) -> FakeOutput:
+        self.forward_calls += 1
+        self.last_batch_shape = tuple(input_ids.shape)
+        return FakeOutput([0.0] * self._VOCAB_SIZE, seq_len=int(input_ids.shape[1]))
 
 
 def make_plan() -> InferencePlan:
@@ -222,6 +261,125 @@ def test_execute_moves_model_to_requested_device(backend: TransformersBackend) -
     backend.execute(make_plan())
     # The model was moved to the requested device at construction.
     assert backend._model.to_calls == ["cpu"]
+
+
+def test_single_forward_per_evaluation(backend: TransformersBackend) -> None:
+    backend.execute(make_plan())
+    model = backend._model
+    assert model.forward_calls == 1, (
+        "the full-vocabulary statistics must come from the SAME single forward pass"
+    )
+    assert model.generate_calls == 0
+
+
+def test_metadata_carries_full_vocabulary_statistics(backend: TransformersBackend) -> None:
+    evidence = backend.execute(make_plan())
+    metadata = evidence.metadata
+
+    # Reconstruct the fake row exactly as FakeModel builds it: every vocab piece
+    # with id n gets logit -n, everything else 0.0.
+    vocab = backend._tokenizer._vocab
+    row = [0.0] * backend._model._VOCAB_SIZE
+    for token_id in vocab.values():
+        row[token_id] = -float(token_id)
+    row_tensor = torch.tensor(row, dtype=torch.float32)
+
+    assert isinstance(metadata["vocab_logsumexp"], float)
+    assert metadata["vocab_logsumexp"] == pytest.approx(torch.logsumexp(row_tensor, dim=-1).item())
+    assert isinstance(metadata["top_token_id"], int)
+    assert metadata["top_token_id"] == int(torch.argmax(row_tensor).item())
+    assert isinstance(metadata["top_token_logit"], float)
+    assert metadata["top_token_logit"] == pytest.approx(max(row))
+    assert metadata["top_token_text"] is None or isinstance(metadata["top_token_text"], str)
+    assert metadata["backend_version"] == str(TRANSFORMERS_BACKEND_VERSION)
+    assert metadata["backend_version"] == "1"
+    assert metadata["tokenizer"] == "fake/model"
+    assert metadata["tokenizer_revision"] == "def456"
+    assert isinstance(metadata["runtime_version"], str)
+    assert metadata["dtype"] == "float32"
+    assert metadata["rendering_config"] == {}
+
+
+def test_top_token_text_decode_failure_is_not_fatal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tokenizer = FakeTokenizer(decode_raises=True)
+    model = FakeModel(tokenizer._vocab)
+    monkeypatch.setattr(
+        "fuzzyai.backends.transformers.AutoTokenizer.from_pretrained",
+        lambda *a, **kw: tokenizer,
+    )
+    monkeypatch.setattr(
+        "fuzzyai.backends.transformers.AutoModelForCausalLM.from_pretrained",
+        lambda *a, **kw: model,
+    )
+    backend = TransformersBackend("fake/model", device="cpu")
+    evidence = backend.execute(make_plan())
+    assert evidence.metadata["top_token_text"] is None
+    assert evidence.kind == EvidenceKind.LOGITS
+    assert model.forward_calls == 1
+
+
+def test_rendering_config_reflects_constructor_kwargs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, _ = make_patched_backend(
+        monkeypatch,
+        chat_template="yes",
+        chat_template_kwargs={"enable_thinking": False},
+    )
+    evidence = backend.execute(make_plan())
+    assert evidence.metadata["rendering_config"] == {"enable_thinking": False}
+
+
+def test_diagnostics_metadata_drives_verbalizer_mass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Uniform logits over the whole vocabulary: every one of the 4096 tokens is
+    # equally likely, so the two verbalizer tokens hold exactly 2/4096 of the
+    # full-vocabulary probability mass. Hand-computed, no diagnostics code involved.
+    tokenizer = FakeTokenizer()
+    model = UniformLogitsModel(tokenizer._vocab)
+    monkeypatch.setattr(
+        "fuzzyai.backends.transformers.AutoTokenizer.from_pretrained",
+        lambda *a, **kw: tokenizer,
+    )
+    monkeypatch.setattr(
+        "fuzzyai.backends.transformers.AutoModelForCausalLM.from_pretrained",
+        lambda *a, **kw: model,
+    )
+    backend = TransformersBackend("fake/model", device="cpu")
+    evidence = backend.execute(make_plan())
+
+    diagnostics = diagnose_bool_evidence(evidence)
+    assert diagnostics.verbalizer_mass == pytest.approx(2 / 4096, rel=1e-6)
+    assert diagnostics.top_token_probability == pytest.approx(1 / 4096, rel=1e-6)
+    assert diagnostics.positive_token_probability == pytest.approx(1 / 4096, rel=1e-6)
+    assert diagnostics.negative_token_probability == pytest.approx(1 / 4096, rel=1e-6)
+    assert diagnostics.top_token_id == evidence.metadata["top_token_id"]
+
+
+def test_tokenizer_revision_falls_back_to_requested_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tokenizer = FakeTokenizer()
+    tokenizer.init_kwargs = {}
+    model = FakeModel(tokenizer._vocab)
+    monkeypatch.setattr(
+        "fuzzyai.backends.transformers.AutoTokenizer.from_pretrained",
+        lambda *a, **kw: tokenizer,
+    )
+    monkeypatch.setattr(
+        "fuzzyai.backends.transformers.AutoModelForCausalLM.from_pretrained",
+        lambda *a, **kw: model,
+    )
+    backend = TransformersBackend("fake/model", device="cpu", revision="v2.0")
+    evidence = backend.execute(make_plan())
+    assert evidence.metadata["tokenizer_revision"] == "v2.0"
+
+    plain_backend = TransformersBackend("fake/model", device="cpu")
+    plain_evidence = plain_backend.execute(make_plan())
+    assert plain_evidence.metadata["tokenizer_revision"] is None
 
 
 def test_execute_uses_chat_template_when_tokenizer_has_one(

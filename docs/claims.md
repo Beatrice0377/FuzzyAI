@@ -134,6 +134,41 @@ models, and never need a GPU.
   `tests/test_backends_transformers.py::test_execute_never_calls_generate`
   (the fake model records the call and raises, so a regression fails loudly).
 
+### Scoring validity and execution provenance (Phase 2A.1)
+
+- `[V]` Restricted-probability diagnostics are computed from full-vocabulary
+  normalization, not from the two candidate logits alone. Evidence:
+  `tests/test_diagnostics.py` (33 tests: verbalizer-mass math, full-vocab
+  probability, `diagnose_bool_evidence` field validation) and
+  `tests/test_backends_transformers.py::test_metadata_carries_full_vocabulary_statistics`.
+- `[V]` A `DecisionTrace` always carries `ScoringDiagnostics`; it cannot be
+  constructed without them. Evidence:
+  `tests/test_runtime.py::TestEndToEnd::test_trace_carries_scoring_diagnostics`.
+- `[V]` The execution fingerprint is deterministic for the same configuration
+  and changes when the rendered input, the rendering config, the model
+  revision, or either resolved token id changes. Evidence:
+  `tests/test_trace.py::TestExecutionFingerprint`
+  (`test_same_config_same_fingerprint`,
+  `test_different_rendered_input_different_fingerprint`,
+  `test_different_rendering_config_different_fingerprint`,
+  `test_different_model_revision_different_fingerprint`,
+  `test_different_positive_token_id_different_fingerprint`,
+  `test_different_negative_token_id_different_fingerprint`).
+- `[V]` Trace id is per-execution identity, distinct from every fingerprint:
+  the same execution fingerprint can carry different trace ids. Evidence:
+  `tests/test_trace.py::TestExecutionFingerprint::test_same_execution_fingerprint_different_trace_id`
+  and
+  `tests/test_trace.py::TestExecutionFingerprint::test_distinct_from_plan_decision_and_input_fingerprints`.
+- `[V]` `capture_rendered_input` does not change the input or execution
+  fingerprint. Evidence:
+  `tests/test_trace.py::TestExecutionFingerprint::test_capture_flag_does_not_change_either_fingerprint`.
+- `[V]` One Bool evaluation performs exactly one model forward pass (no extra
+  pass for diagnostics). Evidence:
+  `tests/test_backends_transformers.py::test_single_forward_per_evaluation`.
+- `[V]` Decoding the top token text is best-effort and never fails an
+  inference. Evidence:
+  `tests/test_backends_transformers.py::test_top_token_text_decode_failure_is_not_fatal`.
+
 ## Experimental records
 
 Single-session observations, each reported with the conditions under which it
@@ -161,6 +196,38 @@ them generalises to other models, revisions, prompts, or tasks.
   `None` in all three. Each question is one a human would answer "yes", but
   this is not a correctness measurement: no ground truth was collected and
   three samples cannot support a quality claim.
+- `[E]` Restricted probability versus verbalizer mass at a decision point.
+  Model `Qwen/Qwen3-0.6B`, full precision (float32), `NVIDIA GeForce RTX 5060
+  Laptop GPU` with 8123 MiB capacity, offline (`HF_HUB_OFFLINE=1`), scoring
+  verbalizers `yes` / `no`. The restricted probability alone could not reveal
+  that the model was not at a decision point, while `verbalizer_mass` could.
+  Same plan, same question, only the chat-template rendering mode differed:
+
+  | rendering | P(True) | verbalizer_mass | top token | top token probability |
+  |---|---|---|---|---|
+  | thinking disabled | 0.9988 | 0.954228 | 'yes' (id 9693) | 0.953119 |
+  | thinking enabled | 0.5116 | 0.000000 | '<think>' (id 151667) | 0.999699 |
+
+  This is a single-case observation about scoring position, not a quality
+  or accuracy measurement. These probabilities are uncalibrated and were not
+  evaluated against ground truth.
+- `[E]` Six-case exploratory session (thinking disabled) on the same model and
+  hardware. Recorded as observations only. All six cases resolved to top token
+  'yes'; this is NOT an accuracy claim (one 0.6B model, six hand-written
+  examples, no ground truth, no calibration):
+
+  | case | P(True) | verbalizer_mass | top token prob | entropy | margin | input tokens | latency ms |
+  |---|---|---|---|---|---|---|---|
+  | obvious true | 0.9988 | 0.954228 | 0.953119 | 0.0130 | 0.9977 | 106 | 17781.4 (includes warm-up) |
+  | obvious false | 0.9928 | 0.858544 | 0.852394 | 0.0613 | 0.9857 | 112 | 185.5 |
+  | ambiguous | 0.9956 | 0.965834 | 0.961592 | 0.0407 | 0.9912 | 111 | 62.4 |
+  | insufficient evidence | 0.9931 | 0.730371 | 0.725351 | 0.0593 | 0.9863 | 108 | 53.7 |
+  | contradictory | 0.9949 | 0.900218 | 0.895594 | 0.0464 | 0.9897 | 121 | 52.6 |
+  | prompt-injection-like | 0.9999 | 0.999018 | 0.998910 | 0.0016 | 0.9998 | 115 | 54.0 |
+
+  In every case `calibrated=False`, `predicted_correctness=None`, and
+  `method=binary_token_logits`. No conclusion is drawn about the model being
+  right or wrong on any case.
 
 ## Current hypotheses
 

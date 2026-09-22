@@ -21,6 +21,13 @@ Phase 2A delivered the Bool path end-to-end; the Choice path is still open.
   Delivered (Phase 2A) for Bool: `BoolCompiler`.
 - Basic `DecisionTrace`. Delivered (Phase 2A): `DecisionTrace` and
   `build_decision_trace`, wired through the thin `FuzzyAI` facade.
+- Scoring-validity diagnostics and execution fingerprint. Delivered (Phase
+  2A.1): every `DecisionTrace` carries `ScoringDiagnostics` (including
+  `verbalizer_mass`, a full-vocabulary quantity independent of the restricted
+  `probability_true`) and an `execution_fingerprint` identifying the execution
+  environment and rendering configuration the plan actually ran under. No
+  threshold and no auto-rejection is implemented; see `ScoringValidityPolicy`
+  under Phase 5.
 - Choice categorical-logit scoring. Pending.
 
 ## Phase 3: cloud backends and experiments
@@ -49,8 +56,17 @@ stays behind the `Backend` boundary.
 ## Phase 5: policy layer
 
 - Abstention policy (`accept` / `abstain` / `review` / `escalate`).
+- Scoring validity policy (`ScoringValidityPolicy`, future): a policy object
+  that consumes the diagnostics Phase 2A.1 now only measures. Inputs:
+  `verbalizer_mass`, the top token, and model- or task-specific empirical
+  distributions. Outputs: accept, reject, or warn. Phase 2A.1 deliberately
+  implements NO threshold and NO auto-rejection, because no experiment
+  justifies a threshold that is stable across models, tokenizers, chat
+  templates, verbalizers, and prompts.
 - Risk-coverage evaluation.
-- Replay.
+- Replay. Today's `DecisionTrace` is replay-oriented provenance: it records
+  what a future replay would need but does not snapshot backend or tokenizer
+  code, so strict replayability remains an open question this item must close.
 - Robustness testing.
 
 ## Later (unscheduled)
@@ -98,10 +114,13 @@ doctrine now exists: `BINARY_SEMANTIC_JUDGMENT_V1` (`src/fuzzyai/doctrine.py`)
 covers the binary case. Doctrines for other decision types remain future
 concepts only.
 
-### Evidence Lineage / replayable derivation
+### Evidence Lineage / replay-oriented derivation
 
-Evolving `DecisionTrace` from a telemetry record into a replayable derivation
-record, per constitution AP-02. The schema is not frozen.
+Evolving `DecisionTrace` from a telemetry record toward a replay-oriented
+derivation record, per constitution AP-02. The trace is replay-oriented
+provenance: it records what a future replay would need, but it does not
+snapshot backend or tokenizer code, so strict replayability remains an open
+question, not a present property. The schema is not frozen.
 
 ### Incremental Decision Evaluation
 
@@ -154,4 +173,7 @@ tier must be earned by evaluation.
 
 The conceptual `minimal` / `replayable` / `full` space recorded in constitution
 AP-02; storage and privacy policy decide what each mode persists. Design space
-only.
+only. Note that the `replayable` label names a future retention mode, not a
+present property of `DecisionTrace`: today's trace is replay-oriented
+provenance and snapshots no backend or tokenizer code, so strict replayability
+is not claimed at any retention level yet.

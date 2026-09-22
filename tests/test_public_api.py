@@ -56,6 +56,8 @@ def test_representative_names_present() -> None:
         "build_decision_trace",
         "Evaluation",
         "FuzzyAI",
+        "ScoringDiagnostics",
+        "diagnose_bool_evidence",
     }
     assert expected <= set(fuzzyai.__all__)
 
@@ -65,6 +67,16 @@ def test_no_internal_helpers_exported() -> None:
         assert not name.startswith("_")
     # Internal helpers must not be part of the public surface.
     for internal in ("_canonicalize", "_validate_distribution", "_normalize_choices"):
+        assert internal not in fuzzyai.__all__
+
+
+def test_internal_diagnostic_helpers_not_exported() -> None:
+    for internal in (
+        "log_verbalizer_mass",
+        "verbalizer_mass",
+        "full_vocab_probability",
+        "_logaddexp",
+    ):
         assert internal not in fuzzyai.__all__
 
 

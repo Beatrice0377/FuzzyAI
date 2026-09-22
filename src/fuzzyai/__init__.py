@@ -10,6 +10,7 @@ from fuzzyai.backends import Backend
 from fuzzyai.capabilities import BackendCapabilities
 from fuzzyai.compiler import BINARY_COMPILER_VERSION, BoolCompiler
 from fuzzyai.decisions import BoolDecision, Choice, ChoiceDecision
+from fuzzyai.diagnostics import ScoringDiagnostics, diagnose_bool_evidence
 from fuzzyai.doctrine import (
     BINARY_DOCTRINE_ID,
     BINARY_DOCTRINE_VERSION,
@@ -65,6 +66,7 @@ __all__ = [
     "InvalidProbabilityError",
     "JSONValue",
     "RawEvidence",
+    "ScoringDiagnostics",
     "ScoringDoctrine",
     "ScoringStrategy",
     "UnsupportedCapabilityError",
@@ -73,6 +75,7 @@ __all__ = [
     "assemble_bool_probability",
     "build_decision_trace",
     "canonical_json",
+    "diagnose_bool_evidence",
     "fingerprint",
     "normalized_entropy",
     "probability_margin",

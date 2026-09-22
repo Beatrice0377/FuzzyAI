@@ -26,6 +26,7 @@ from fuzzyai import (
     InferencePlan,
     InvalidDecisionError,
     RawEvidence,
+    ScoringDiagnostics,
     UnsupportedCapabilityError,
     UnsupportedDecisionError,
     normalized_entropy,
@@ -34,6 +35,7 @@ from fuzzyai import (
 
 LOGIT_FALSE = 0.0
 LOGIT_TRUE = math.log(3.0)
+VOCAB_LOGSUMEXP = math.log(4.0)
 
 HONEST_METADATA: dict[str, Any] = {
     "positive_token_id": 9642,
@@ -41,6 +43,9 @@ HONEST_METADATA: dict[str, Any] = {
     "model": "fake-model",
     "model_revision": "rev-1",
     "input_token_count": 42,
+    "vocab_logsumexp": VOCAB_LOGSUMEXP,
+    "top_token_id": 9642,
+    "top_token_logit": LOGIT_TRUE,
 }
 
 
@@ -144,6 +149,37 @@ class TestEndToEnd:
         assert trace.timestamp
         assert trace.rendered_input is None
         assert backend.executed_plans
+
+    def test_trace_carries_scoring_diagnostics(self) -> None:
+        runtime, _ = make_runtime()
+        trace = runtime.evaluate_with_trace(make_decision()).trace
+        assert isinstance(trace.scoring_diagnostics, ScoringDiagnostics)
+        # The fake logits are (0, ln 3) over a uniform 4-token vocabulary, so
+        # the two verbalizers hold exactly 3/4 of the full-vocabulary mass.
+        # math.logaddexp does not exist in the stdlib; use the stable form.
+        log_mass = LOGIT_TRUE + math.log1p(math.exp(LOGIT_FALSE - LOGIT_TRUE))
+        assert trace.scoring_diagnostics.verbalizer_mass == pytest.approx(
+            math.exp(log_mass - VOCAB_LOGSUMEXP)
+        )
+        assert trace.scoring_diagnostics.top_token_id == 9642
+        assert trace.scoring_diagnostics.top_token_probability == pytest.approx(
+            math.exp(LOGIT_TRUE - VOCAB_LOGSUMEXP)
+        )
+        assert trace.scoring_diagnostics.positive_token_probability == pytest.approx(
+            math.exp(LOGIT_TRUE - VOCAB_LOGSUMEXP)
+        )
+        assert trace.scoring_diagnostics.negative_token_probability == pytest.approx(
+            math.exp(LOGIT_FALSE - VOCAB_LOGSUMEXP)
+        )
+
+    def test_execution_fingerprint_is_64_lowercase_hex(self) -> None:
+        runtime, _ = make_runtime()
+        trace = runtime.evaluate_with_trace(make_decision()).trace
+        fp = trace.execution_fingerprint
+        assert isinstance(fp, str)
+        assert len(fp) == 64
+        assert fp == fp.lower()
+        int(fp, 16)
 
     def test_evaluate_matches_evaluate_with_trace(self) -> None:
         runtime, _ = make_runtime()

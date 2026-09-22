@@ -26,7 +26,9 @@ structured-output wrapper.
 ## Currently working: the Bool vertical slice
 
 The one end-to-end path that exists today is Bool-only. A thin `FuzzyAI` facade
-orchestrates the pipeline in a fixed order and adds no fallbacks of its own:
+orchestrates the pipeline in a fixed order and adds no fallbacks of its own.
+Since Phase 2A.1 the Bool slice also reports scoring-validity diagnostics and
+an execution fingerprint on every trace:
 
 ```
 BoolDecision -> BoolCompiler -> InferencePlan -> TransformersBackend
@@ -41,8 +43,9 @@ uv sync --extra transformers    # group: torch>=2.7, transformers>=4.53
 ```
 
 ```python
-from fuzzyai import BoolDecision, FuzzyAI
+from fuzzyai import BoolDecision
 from fuzzyai.backends.transformers import TransformersBackend
+from fuzzyai.runtime import FuzzyAI
 
 backend = TransformersBackend(
     "Qwen/Qwen3-0.6B",  # a local HF causal LM
@@ -51,29 +54,50 @@ backend = TransformersBackend(
 )
 ai = FuzzyAI(backend=backend)
 
-result = ai.evaluate(
+evaluation = ai.evaluate_with_trace(
     BoolDecision(
-        question="Does the evidence support the claim?",
-        context={"claim": "the cache was warm", "evidence": "hit ratio rose"},
+        question="Is this a delivery issue?",
+        context="My package never arrived.",
     )
 )
 
-result.probability_true        # two-way softmax over the two verbalizer logits
-result.certainty               # entropy + margin of that distribution
-result.predicted_correctness   # None: calibration does not exist yet
-result.trace_id                # correlates the result with its DecisionTrace
+print(evaluation.result.probability_true)
+print(evaluation.trace.scoring_diagnostics.verbalizer_mass)
+print(evaluation.trace.execution_fingerprint)
 ```
+
+`ai.evaluate(decision)` is the same pipeline returning only the `BoolResult`
+(`probability_true`, `certainty`, `predicted_correctness`, `trace_id`).
 
 `ai.evaluate_with_trace(decision)` returns an `Evaluation` (the result plus its
 `DecisionTrace`). The trace records the decision and plan fingerprints, the
 scoring strategy, the doctrine id, the resolved verbalizer token ids, the raw
-evidence, the input fingerprint, the backend type, and the latency.
+evidence, the input fingerprint, the backend type, the latency, the
+`ScoringDiagnostics`, and the execution fingerprint. The trace is
+replay-oriented provenance: it records what a future replay would need, but
+it does not snapshot backend or tokenizer code, so strict replayability
+remains an open question.
 
-What `probability_true` is: a numerically stable two-way softmax over exactly
-two verbalizer-token logits, equal to `sigmoid(l_true - l_false)`. What it is
-not: a full-vocabulary probability, a real-world event probability, a
+What `probability_true` is: a conditional, restricted probability,
+`P(True | next token is one of the two scored verbalizer tokens)`, computed as
+a numerically stable two-way softmax over exactly two verbalizer-token logits,
+equal to `sigmoid(l_true - l_false)`. It cannot tell you whether the model
+intended to choose among those candidates at all. What it is not: a
+full-vocabulary probability, a real-world event probability, a
 prediction-accuracy figure, or a calibrated number. `calibrated` stays `False`
 and `predicted_correctness` stays `None`.
+
+Because the restricted number alone cannot show whether the model was at a
+decision point, every trace also carries an independent full-vocabulary
+quantity, `trace.scoring_diagnostics.verbalizer_mass`:
+`P(next token is one of the two scored verbalizer tokens)`, with the stable
+log form `log_verbalizer_mass = logsumexp([l_true, l_false]) -
+logsumexp(all_vocab_logits)`. The interpretation rule: `probability_true =
+0.75` together with `verbalizer_mass = 0.000001` means the model internally
+prefers `yes` over `no` but was almost certainly not about to output either,
+so `0.75` must not be read as "75% inclined to answer yes" unless its
+restricted nature is stated. The diagnostics carry no verdict: Phase 2A.1
+applies no threshold and performs no auto-rejection.
 
 The backend loads a local causal LM, runs it under `eval()` and
 `torch.inference_mode()`, prefers CUDA and falls back to CPU, and reads only
@@ -89,11 +113,34 @@ models (thinking or reasoning models) start a reasoning block instead: with the
 wrong chat-template mode the model's top token is its reasoning opener and both
 verbalizer tokens sit in the far tail, so the two-way softmax renormalizes tail
 noise into a number that looks plausible. The demo above therefore renders with
-`chat_template_kwargs={"enable_thinking": False}`. The measured difference is
-recorded in [docs/claims.md](docs/claims.md): the same plan and the same model
-gave `P(True) = 0.3479` in thinking mode and `P(True) = 0.9951` with thinking
-disabled. Phase 2A does not detect this automatically, and refusing to answer
-would be a policy action that does not exist yet.
+`chat_template_kwargs={"enable_thinking": False}`. The diagnostics make this
+visible: the measured difference is recorded in
+[docs/claims.md](docs/claims.md), where the same plan and question gave
+`P(True) = 0.9988` with `verbalizer_mass = 0.954228` (top token `'yes'`, id
+9693, probability 0.953119) when thinking was disabled, and `P(True) = 0.5116`
+with `verbalizer_mass = 0.000000` (top token `'<think>'`, id 151667,
+probability 0.999699) when thinking was enabled. Phase 2A.1 does not detect
+this automatically and rejects nothing, because no threshold has experimental
+support across models, tokenizers, chat templates, verbalizers, and prompts;
+refusing to answer would be a policy action that does not exist yet.
+
+Every evaluation carries four distinct identities, each answering a different
+question:
+
+- decision fingerprint: what semantic question is being judged
+- plan fingerprint: what the compiler produced
+- execution fingerprint: the execution environment and rendering
+  configuration the plan actually ran under
+- trace id: which single execution this was
+
+The execution fingerprint payload covers the plan fingerprint, backend type,
+backend implementation version, model identifier, model revision, tokenizer
+identifier, tokenizer revision, runtime version, dtype, rendering config,
+input fingerprint, and the resolved positive/negative token ids. Running the
+same plan twice yields two trace ids and one execution fingerprint. Rendering
+configuration that affects probability semantics (for example a model's
+thinking mode) enters the execution fingerprint and the trace, but
+deliberately not the provider-independent `InferencePlan`.
 
 Decision context is rendered into the user prompt as evidence only and never
 into the system prompt. That is a structural placement rule, not a claim of
@@ -126,8 +173,9 @@ route = ai.choice(
 
 - **Probability**: the decision distribution produced by some scoring strategy.
   It is not automatically a real-world correctness rate. Today's Bool
-  probability comes from binary token logits and is not a full-vocabulary
-  distribution.
+  probability is a restricted (conditional) probability over the two
+  verbalizer-token logits, not a full-vocabulary distribution; the trace's
+  `verbalizer_mass` is the independent full-vocabulary companion quantity.
 - **Certainty**: how concentrated that distribution is (entropy, margin). A
   mathematical property, not a correctness probability. We never call it
   "confidence".
@@ -159,6 +207,14 @@ The Phase 2A Bool path:
 - `DecisionTrace` / `build_decision_trace` (its `trace_id` is never derived
   from a fingerprint)
 - The thin `FuzzyAI` / `Evaluation` facade
+
+The Phase 2A.1 scoring-validity increment:
+
+- `ScoringDiagnostics` / `diagnose_bool_evidence` (full-vocabulary statistics:
+  `verbalizer_mass`, top token id, probability, and best-effort text; no
+  threshold, no verdict)
+- The execution fingerprint on `DecisionTrace` (two executions of one plan:
+  two trace ids, one execution fingerprint)
 
 ```
 BoolDecision --(BoolCompiler)--> InferencePlan --(TransformersBackend)--> RawEvidence

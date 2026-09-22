@@ -13,6 +13,7 @@ from fuzzyai import (
     InferencePlan,
     InvalidDecisionError,
     RawEvidence,
+    ScoringDiagnostics,
     ScoringStrategy,
     assemble_bool_probability,
     build_decision_trace,
@@ -27,6 +28,15 @@ HONEST_METADATA: dict[str, Any] = {
     "model": "fake-model",
     "model_revision": "rev-1",
     "input_token_count": 42,
+    "vocab_logsumexp": math.log(4.0),
+    "top_token_id": 9642,
+    "top_token_logit": 1.0,
+    "backend_version": "1",
+    "tokenizer": "fake-tokenizer",
+    "tokenizer_revision": "tok-rev-1",
+    "runtime_version": "transformers 5.0.0; torch 2.9.0",
+    "dtype": "float32",
+    "rendering_config": {"enable_thinking": False},
 }
 
 
@@ -60,6 +70,12 @@ def make_result(evidence: RawEvidence, trace_id: str | None = "trace-1"):
     return assemble_bool_probability(evidence, trace_id=trace_id)
 
 
+def make_diagnostics(evidence: RawEvidence) -> ScoringDiagnostics:
+    from fuzzyai import diagnose_bool_evidence
+
+    return diagnose_bool_evidence(evidence)
+
+
 def build_trace(**overrides: Any) -> DecisionTrace:
     kwargs: dict[str, Any] = {
         "trace_id": "trace-1",
@@ -75,6 +91,21 @@ def build_trace(**overrides: Any) -> DecisionTrace:
     if "evidence" in overrides:
         kwargs["evidence"] = overrides.pop("evidence")
         kwargs["result"] = make_result(kwargs["evidence"])
+    if "diagnostics" not in kwargs and "diagnostics" not in overrides:
+        evidence: RawEvidence = kwargs["evidence"]
+        if all(
+            key in evidence.metadata
+            for key in ("vocab_logsumexp", "top_token_id", "top_token_logit")
+        ):
+            kwargs["diagnostics"] = make_diagnostics(evidence)
+        else:
+            kwargs["diagnostics"] = ScoringDiagnostics(
+                verbalizer_mass=0.0,
+                top_token_id=0,
+                top_token_probability=0.0,
+                positive_token_probability=0.0,
+                negative_token_probability=0.0,
+            )
     kwargs.update(overrides)
     return build_decision_trace(**kwargs)
 
@@ -106,6 +137,35 @@ class TestDecisionTraceFields:
         assert trace.model_revision == "rev-1"
         assert trace.input_token_count == 42
         assert trace.rendered_input is None
+        assert trace.backend_version == "1"
+        assert trace.tokenizer == "fake-tokenizer"
+        assert trace.tokenizer_revision == "tok-rev-1"
+        assert trace.runtime_version == "transformers 5.0.0; torch 2.9.0"
+        assert trace.dtype == "float32"
+        assert trace.rendering_config == {"enable_thinking": False}
+        assert trace.scoring_diagnostics.verbalizer_mass == pytest.approx(
+            (math.exp(1.0) + 1.0) / 4.0
+        )
+        assert trace.scoring_diagnostics.top_token_id == 9642
+        assert trace.execution_fingerprint == fingerprint(
+            {
+                "v": 1,
+                "kind": "execution",
+                "plan_fingerprint": plan.fingerprint,
+                "backend_type": "FakeBackend",
+                "backend_version": "1",
+                "model": "fake-model",
+                "model_revision": "rev-1",
+                "tokenizer": "fake-tokenizer",
+                "tokenizer_revision": "tok-rev-1",
+                "runtime_version": "transformers 5.0.0; torch 2.9.0",
+                "dtype": "float32",
+                "rendering_config": {"enable_thinking": False},
+                "input_fingerprint": trace.input_fingerprint,
+                "positive_token_id": 9642,
+                "negative_token_id": 3134,
+            }
+        )
 
     def test_lineage_fields_come_from_plan_and_argument(self) -> None:
         plan = make_plan(decision_fingerprint="c" * 64)
@@ -120,6 +180,12 @@ class TestDecisionTraceFields:
         assert trace.model_revision is None
         assert trace.input_token_count is None
         assert trace.rendered_input is None
+        assert trace.backend_version is None
+        assert trace.tokenizer is None
+        assert trace.tokenizer_revision is None
+        assert trace.runtime_version is None
+        assert trace.dtype is None
+        assert trace.rendering_config == {}
 
     def test_frozen(self) -> None:
         trace = build_trace()
@@ -232,6 +298,153 @@ class TestTraceMetadataValidation:
         with pytest.raises(InvalidDecisionError, match="input_token_count"):
             build_trace(evidence=make_evidence(metadata=metadata))
 
+    def test_wrong_type_backend_version_rejected(self) -> None:
+        metadata = dict(HONEST_METADATA)
+        metadata["backend_version"] = 1
+        with pytest.raises(InvalidDecisionError, match="backend_version"):
+            build_trace(evidence=make_evidence(metadata=metadata))
+
+    def test_wrong_type_tokenizer_rejected(self) -> None:
+        metadata = dict(HONEST_METADATA)
+        metadata["tokenizer"] = ["fake-tokenizer"]
+        with pytest.raises(InvalidDecisionError, match="tokenizer"):
+            build_trace(evidence=make_evidence(metadata=metadata))
+
+    def test_wrong_type_tokenizer_revision_rejected(self) -> None:
+        metadata = dict(HONEST_METADATA)
+        metadata["tokenizer_revision"] = 3
+        with pytest.raises(InvalidDecisionError, match="tokenizer_revision"):
+            build_trace(evidence=make_evidence(metadata=metadata))
+
+    def test_wrong_type_runtime_version_rejected(self) -> None:
+        metadata = dict(HONEST_METADATA)
+        metadata["runtime_version"] = 5.0
+        with pytest.raises(InvalidDecisionError, match="runtime_version"):
+            build_trace(evidence=make_evidence(metadata=metadata))
+
+    def test_wrong_type_dtype_rejected(self) -> None:
+        metadata = dict(HONEST_METADATA)
+        metadata["dtype"] = True
+        with pytest.raises(InvalidDecisionError, match="dtype"):
+            build_trace(evidence=make_evidence(metadata=metadata))
+
+
+class TestRenderingConfig:
+    def test_absent_yields_empty_dict(self) -> None:
+        metadata = {k: v for k, v in HONEST_METADATA.items() if k != "rendering_config"}
+        trace = build_trace(evidence=make_evidence(metadata=metadata))
+        assert trace.rendering_config == {}
+
+    def test_none_yields_empty_dict(self) -> None:
+        metadata = {**HONEST_METADATA, "rendering_config": None}
+        trace = build_trace(evidence=make_evidence(metadata=metadata))
+        assert trace.rendering_config == {}
+
+    def test_non_mapping_rejected(self) -> None:
+        metadata = {**HONEST_METADATA, "rendering_config": "enable_thinking=False"}
+        with pytest.raises(InvalidDecisionError, match="rendering_config"):
+            build_trace(evidence=make_evidence(metadata=metadata))
+
+    def test_non_str_key_rejected(self) -> None:
+        # RawEvidence is the JSON gate, so a non-string key never reaches the
+        # trace helper; the helper's own guard is defense-in-depth only.
+        metadata = {**HONEST_METADATA, "rendering_config": {1: "yes"}}
+        with pytest.raises(InvalidDecisionError, match="rendering_config"):
+            make_evidence(metadata=metadata)
+
+    def test_non_json_compatible_value_rejected(self) -> None:
+        metadata = {**HONEST_METADATA, "rendering_config": {"enable_thinking": object()}}
+        with pytest.raises(InvalidDecisionError, match="rendering_config"):
+            make_evidence(metadata=metadata)
+
+
+class TestExecutionFingerprint:
+    def test_same_config_same_fingerprint(self) -> None:
+        first = build_trace()
+        second = build_trace()
+        assert first.execution_fingerprint == second.execution_fingerprint
+
+    def test_different_rendered_input_different_fingerprint(self) -> None:
+        first = build_trace(
+            evidence=make_evidence(metadata={**HONEST_METADATA, "rendered_input": "RENDERING A"})
+        )
+        second = build_trace(
+            evidence=make_evidence(metadata={**HONEST_METADATA, "rendered_input": "RENDERING B"})
+        )
+        assert first.execution_fingerprint != second.execution_fingerprint
+
+    def test_different_rendering_config_different_fingerprint(self) -> None:
+        false_cfg = build_trace(
+            evidence=make_evidence(
+                metadata={**HONEST_METADATA, "rendering_config": {"enable_thinking": False}}
+            )
+        )
+        true_cfg = build_trace(
+            evidence=make_evidence(
+                metadata={**HONEST_METADATA, "rendering_config": {"enable_thinking": True}}
+            )
+        )
+        absent_cfg = build_trace(
+            evidence=make_evidence(
+                metadata={k: v for k, v in HONEST_METADATA.items() if k != "rendering_config"}
+            )
+        )
+        assert false_cfg.execution_fingerprint != true_cfg.execution_fingerprint
+        assert false_cfg.execution_fingerprint != absent_cfg.execution_fingerprint
+        assert true_cfg.execution_fingerprint != absent_cfg.execution_fingerprint
+
+    def test_different_model_revision_different_fingerprint(self) -> None:
+        first = build_trace(
+            evidence=make_evidence(metadata={**HONEST_METADATA, "model_revision": "rev-1"})
+        )
+        second = build_trace(
+            evidence=make_evidence(metadata={**HONEST_METADATA, "model_revision": "rev-2"})
+        )
+        assert first.execution_fingerprint != second.execution_fingerprint
+
+    def test_different_positive_token_id_different_fingerprint(self) -> None:
+        first = build_trace(
+            evidence=make_evidence(metadata={**HONEST_METADATA, "positive_token_id": 9642})
+        )
+        second = build_trace(
+            evidence=make_evidence(metadata={**HONEST_METADATA, "positive_token_id": 9999})
+        )
+        assert first.execution_fingerprint != second.execution_fingerprint
+
+    def test_different_negative_token_id_different_fingerprint(self) -> None:
+        first = build_trace(
+            evidence=make_evidence(metadata={**HONEST_METADATA, "negative_token_id": 3134})
+        )
+        second = build_trace(
+            evidence=make_evidence(metadata={**HONEST_METADATA, "negative_token_id": 3000})
+        )
+        assert first.execution_fingerprint != second.execution_fingerprint
+
+    def test_same_execution_fingerprint_different_trace_id(self) -> None:
+        first = build_trace(trace_id="trace-1")
+        second = build_trace(trace_id="trace-2")
+        assert first.execution_fingerprint == second.execution_fingerprint
+        assert first.trace_id != second.trace_id
+
+    def test_capture_flag_does_not_change_either_fingerprint(self) -> None:
+        evidence = make_evidence(metadata={**HONEST_METADATA, "rendered_input": "RENDERED PROMPT"})
+        without_capture = build_trace(evidence=evidence, capture_rendered_input=False)
+        with_capture = build_trace(evidence=evidence, capture_rendered_input=True)
+        assert without_capture.input_fingerprint == with_capture.input_fingerprint
+        assert without_capture.execution_fingerprint == with_capture.execution_fingerprint
+
+    def test_distinct_from_plan_decision_and_input_fingerprints(self) -> None:
+        trace = build_trace()
+        assert trace.execution_fingerprint != trace.plan_fingerprint
+        assert trace.execution_fingerprint != trace.decision_fingerprint
+        assert trace.execution_fingerprint != trace.input_fingerprint
+
+    def test_is_64_lowercase_hex(self) -> None:
+        fp = build_trace().execution_fingerprint
+        assert len(fp) == 64
+        assert fp == fp.lower()
+        int(fp, 16)
+
 
 class TestToDict:
     def test_json_compatible(self) -> None:
@@ -244,6 +457,17 @@ class TestToDict:
         assert decoded["evidence"]["labels"] == ["false", "true"]
         assert decoded["evidence"]["metadata"]["positive_token_id"] == 9642
         assert decoded["positive_token_id"] == 9642
+        assert decoded["scoring_diagnostics"]["verbalizer_mass"] == pytest.approx(
+            (math.exp(1.0) + 1.0) / 4.0
+        )
+        assert decoded["scoring_diagnostics"]["top_token_id"] == 9642
+        assert decoded["execution_fingerprint"] == trace.execution_fingerprint
+        assert decoded["backend_version"] == "1"
+        assert decoded["tokenizer"] == "fake-tokenizer"
+        assert decoded["tokenizer_revision"] == "tok-rev-1"
+        assert decoded["runtime_version"] == "transformers 5.0.0; torch 2.9.0"
+        assert decoded["dtype"] == "float32"
+        assert decoded["rendering_config"] == {"enable_thinking": False}
 
     def test_to_dict_round_trips_every_scalar_field(self) -> None:
         trace = build_trace(capture_rendered_input=True)
@@ -257,6 +481,12 @@ class TestToDict:
         decoded = json.loads(json.dumps(trace.to_dict()))
         assert decoded["model"] is None
         assert decoded["rendered_input"] is None
+        assert decoded["backend_version"] is None
+        assert decoded["tokenizer"] is None
+        assert decoded["tokenizer_revision"] is None
+        assert decoded["runtime_version"] is None
+        assert decoded["dtype"] is None
+        assert decoded["rendering_config"] == {}
 
 
 class TestTraceIdProvenance:

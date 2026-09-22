@@ -14,6 +14,7 @@ from fuzzyai.assembler import assemble_bool_probability
 from fuzzyai.backends.base import Backend
 from fuzzyai.compiler import BoolCompiler
 from fuzzyai.decisions import BoolDecision, ChoiceDecision
+from fuzzyai.diagnostics import diagnose_bool_evidence
 from fuzzyai.errors import InvalidDecisionError
 from fuzzyai.plans import InferencePlan, RawEvidence
 from fuzzyai.results import BoolResult
@@ -69,7 +70,8 @@ class FuzzyAI:
         4. Check evidence/plan lineage: evidence that does not carry the
            executed plan's fingerprint — either a DIFFERENT fingerprint or
            none at all — is an ``InvalidDecisionError``.
-        5. Assemble the result from the evidence, stamped with the trace id.
+        5. Assemble the decision result and the scoring diagnostics from the
+           evidence, stamped with the trace id.
         6. Build the decision trace.
         7. Return the :class:`Evaluation`.
 
@@ -102,8 +104,11 @@ class FuzzyAI:
                 "evidence plan_fingerprint does not match the executed plan: "
                 f"expected {plan.fingerprint!r}, got {evidence.plan_fingerprint!r}"
             )
-        # 5. Assemble the result, stamped with the trace id.
+        # 5. Assemble the result and the scoring diagnostics, stamped with
+        #    the trace id. The diagnostics are derived from evidence the
+        #    backend already produced — no extra model work, no verdict.
         result = assemble_bool_probability(evidence, trace_id=trace_id)
+        diagnostics = diagnose_bool_evidence(evidence)
         # 6. Build the trace.
         timestamp = datetime.now(UTC).isoformat()
         trace = build_decision_trace(
@@ -113,6 +118,7 @@ class FuzzyAI:
             plan=plan,
             evidence=evidence,
             result=result,
+            diagnostics=diagnostics,
             backend_type=type(self._backend).__name__,
             latency_ms=latency_ms,
             capture_rendered_input=self._capture_rendered_input,

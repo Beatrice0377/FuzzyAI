@@ -16,12 +16,19 @@ from fuzzyai.backends.verbalizers import (
     resolve_verbalizers,
 )
 from fuzzyai.capabilities import BackendCapabilities
+from fuzzyai.diagnostics import (
+    TOP_TOKEN_ID_KEY,
+    TOP_TOKEN_LOGIT_KEY,
+    TOP_TOKEN_TEXT_KEY,
+    VOCAB_LOGSUMEXP_KEY,
+)
 from fuzzyai.errors import UnsupportedCapabilityError
 from fuzzyai.fingerprint import JSONValue, canonical_json
 from fuzzyai.plans import EvidenceKind, InferencePlan, RawEvidence, ScoringStrategy
 
 try:
     import torch
+    import transformers
     from transformers import AutoModelForCausalLM, AutoTokenizer
 except ImportError as exc:  # pragma: no cover - exercised only without the extra
     raise ImportError(
@@ -29,7 +36,11 @@ except ImportError as exc:  # pragma: no cover - exercised only without the extr
         "install with 'uv sync --extra transformers' (or 'pip install fuzzyai[transformers]')"
     ) from exc
 
-_ALLOWED_DTYPES: dict[str, Any] = {
+TRANSFORMERS_BACKEND_VERSION = 1
+
+_RUNTIME_VERSION = f"transformers {transformers.__version__}; torch {torch.__version__}"
+
+_ALLOWED_DTYPES: dict[str, "torch.dtype"] = {
     "float32": torch.float32,
     "float16": torch.float16,
     "bfloat16": torch.bfloat16,
@@ -161,10 +172,42 @@ class TransformersBackend:
         with torch.inference_mode():
             logits = self._model(input_ids=inputs).logits
         # Read ONLY the final position: the distribution over the next token.
-        row = logits[0, -1, :]
+        # The row is converted to float32 BEFORE the normalization statistics so
+        # half-precision logits cannot distort logsumexp/argmax. These are the
+        # full-vocabulary normalization facts measured from the SAME single
+        # forward pass; the full logits vector itself is never stored.
+        row = logits[0, -1, :].to(torch.float32)
+        vocab_logsumexp = float(torch.logsumexp(row, dim=-1).item())
+        top_token_id = int(torch.argmax(row).item())
+        top_token_logit = float(row[top_token_id].item())
         logit_positive = float(row[verbalizers.positive_token_id].item())
         logit_negative = float(row[verbalizers.negative_token_id].item())
+        # Best-effort debug aid only: a decode failure must never fail the inference.
+        top_token_text: str | None = None
+        try:
+            decoded = self._tokenizer.decode([top_token_id])
+        except Exception:  # best-effort debug aid only; never fail inference for it
+            decoded = None
+        if isinstance(decoded, str):
+            top_token_text = decoded
+        # Tokenizer provenance, best effort and honest: fall back to the model id
+        # when the tokenizer does not expose its own identity, and never invent a
+        # commit hash we do not actually have.
+        tokenizer_id = getattr(self._tokenizer, "name_or_path", None)
+        if not isinstance(tokenizer_id, str) or not tokenizer_id:
+            tokenizer_id = self._model_id
+        tokenizer_revision: str | None = None
+        init_kwargs = getattr(self._tokenizer, "init_kwargs", None)
+        if isinstance(init_kwargs, Mapping):
+            raw_commit = init_kwargs.get("_commit_hash")
+            if isinstance(raw_commit, str) and raw_commit:
+                tokenizer_revision = raw_commit
+        if tokenizer_revision is None:
+            # The tokenizer was loaded with the same requested revision; recording
+            # the request is honest, recording a resolved commit we do not have is not.
+            tokenizer_revision = self._revision
         model_revision = getattr(self._model.config, "_commit_hash", None) or self._revision
+        dtype_name = str(self._dtype).replace("torch.", "")
         return RawEvidence(
             kind=EvidenceKind.LOGITS,
             labels=("false", "true"),
@@ -180,5 +223,15 @@ class TransformersBackend:
                 "device": self._device,
                 "rendered_input": prefix_text,
                 "input_token_count": int(logits.shape[1]),
+                TOP_TOKEN_ID_KEY: top_token_id,
+                TOP_TOKEN_LOGIT_KEY: top_token_logit,
+                VOCAB_LOGSUMEXP_KEY: vocab_logsumexp,
+                TOP_TOKEN_TEXT_KEY: top_token_text,
+                "backend_version": str(TRANSFORMERS_BACKEND_VERSION),
+                "tokenizer": tokenizer_id,
+                "tokenizer_revision": tokenizer_revision,
+                "runtime_version": _RUNTIME_VERSION,
+                "dtype": dtype_name,
+                "rendering_config": dict(self._chat_template_kwargs),
             },
         )

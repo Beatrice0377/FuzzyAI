@@ -17,7 +17,7 @@ FuzzyAI 是一个 provider-agnostic（供应商无关）的概率决策运行时
 
 ## 当前可用：Bool 垂直切片
 
-目前唯一端到端可用的路径是 Bool-only。一个轻量的 `FuzzyAI` facade 按固定顺序编排整条流水线，自身不添加任何回退（fallback）：
+目前唯一端到端可用的路径是 Bool-only。一个轻量的 `FuzzyAI` facade 按固定顺序编排整条流水线，自身不添加任何回退（fallback）。自 Phase 2A.1 起，Bool 切片还会在每条 trace 上报告 scoring-validity 诊断（scoring-validity diagnostics）与执行指纹（execution fingerprint）：
 
 ```
 BoolDecision -> BoolCompiler -> InferencePlan -> TransformersBackend
@@ -31,8 +31,9 @@ uv sync --extra transformers    # 依赖组：torch>=2.7, transformers>=4.53
 ```
 
 ```python
-from fuzzyai import BoolDecision, FuzzyAI
+from fuzzyai import BoolDecision
 from fuzzyai.backends.transformers import TransformersBackend
+from fuzzyai.runtime import FuzzyAI
 
 backend = TransformersBackend(
     "Qwen/Qwen3-0.6B",  # 一个本地 HF causal LM
@@ -41,26 +42,38 @@ backend = TransformersBackend(
 )
 ai = FuzzyAI(backend=backend)
 
-result = ai.evaluate(
+evaluation = ai.evaluate_with_trace(
     BoolDecision(
-        question="Does the evidence support the claim?",
-        context={"claim": "the cache was warm", "evidence": "hit ratio rose"},
+        question="Is this a delivery issue?",
+        context="My package never arrived.",
     )
 )
 
-result.probability_true        # 两个 verbalizer logit 上的 two-way softmax
-result.certainty               # 该分布的熵 entropy + margin
-result.predicted_correctness   # None：校准尚不存在
-result.trace_id                # 将结果与其 DecisionTrace 关联起来
+print(evaluation.result.probability_true)
+print(evaluation.trace.scoring_diagnostics.verbalizer_mass)
+print(evaluation.trace.execution_fingerprint)
 ```
 
-`ai.evaluate_with_trace(decision)` 返回一个 `Evaluation`（结果加上它的 `DecisionTrace`）。trace 记录了 decision 与 plan 的指纹（fingerprint）、scoring strategy、doctrine id、解析出的 verbalizer token id、原始证据（raw evidence）、input fingerprint、backend 类型与延迟（latency）。
+`ai.evaluate(decision)` 是同一条流水线，只返回 `BoolResult`（`probability_true`、`certainty`、`predicted_correctness`、`trace_id`）。
 
-`probability_true` 是什么：在恰好两个 verbalizer-token logit 上做的数值稳定的 two-way softmax，等于 `sigmoid(l_true - l_false)`。它不是什么：不是全词表（full-vocabulary）概率，不是现实世界事件概率，不是预测准确率，也不是校准后的数值。`calibrated` 恒为 `False`，`predicted_correctness` 恒为 `None`。
+`ai.evaluate_with_trace(decision)` 返回一个 `Evaluation`（结果加上它的 `DecisionTrace`）。trace 记录了 decision 与 plan 的指纹（fingerprint）、scoring strategy、doctrine id、解析出的 verbalizer token id、原始证据（raw evidence）、input fingerprint、backend 类型、延迟（latency）、`ScoringDiagnostics` 与 execution fingerprint。该 trace 是 replay-oriented provenance（面向回放的溯源）：它记录了未来回放所需的信息，但并不快照 backend 或 tokenizer 的代码，因此严格可回放性（strict replayability）仍是未决问题。
+
+`probability_true` 是什么：一个有条件的、受限（restricted）的概率，`P(True | next token is one of the two scored verbalizer tokens)`，在恰好两个 verbalizer-token logit 上以数值稳定的 two-way softmax 计算，等于 `sigmoid(l_true - l_false)`。它无法告诉你模型是否本来就打算在这些候选项之间做出选择。它不是什么：不是全词表（full-vocabulary）概率，不是现实世界事件概率，不是预测准确率，也不是校准后的数值。`calibrated` 恒为 `False`，`predicted_correctness` 恒为 `None`。
+
+由于受限数值本身无法显示模型是否处在决策点，每条 trace 还携带一个独立的词表级量 `trace.scoring_diagnostics.verbalizer_mass`：`P(next token is one of the two scored verbalizer tokens)`，其稳定对数形式为 `log_verbalizer_mass = logsumexp([l_true, l_false]) - logsumexp(all_vocab_logits)`。解读规则：`probability_true = 0.75` 且 `verbalizer_mass = 0.000001` 意味着模型在内部更偏好 `yes` 而非 `no`，但它几乎肯定不会输出两者中的任何一个；因此除非同时说明其受限性质，`0.75` 不得被读作「有 75% 的倾向回答 yes」。诊断不携带任何裁决：Phase 2A.1 不施加任何阈值，也不做自动拒绝。
 
 后端加载一个本地 causal LM，在 `eval()` 与 `torch.inference_mode()` 下运行，优先使用 CUDA 并回退到 CPU，且只读取最后一个位置的 logits。它从不调用 `generate()`，从不解析生成的文本。verbalizer 默认为 `yes`/`no`，且各自必须在真实的 chat-template 前缀之后解析为恰好一个、互不相同的打分 token；否则抛出 `VerbalizerError`。没有静默回退，没有截断，没有多 token logit 求和，也没有采样回退。
 
-`probability_true` 只有在模型确实处在决策位置时才有意义，也就是说它的下一个 token 真的必须是两个 verbalizer 之一。某些模型（thinking / reasoning 模型）会先输出推理块：如果 chat-template 的渲染模式不对，模型概率最高的 token 会是它的推理开标签，两个 verbalizer token 都落在分布极尾部，两路 softmax 于是把尾部噪声重归一化成一个看起来合理的数字。上面的示例因此使用 `chat_template_kwargs={"enable_thinking": False}` 渲染。实测差异记录在 [docs/claims.md](docs/claims.md)：同一个 plan、同一个模型，thinking 模式下 `P(True) = 0.3479`，关闭 thinking 后 `P(True) = 0.9951`。Phase 2A 不会自动检测这种情况，而「拒绝作答」属于尚不存在的 policy 行为。
+`probability_true` 只有在模型确实处在决策位置时才有意义，也就是说它的下一个 token 真的必须是两个 verbalizer 之一。某些模型（thinking / reasoning 模型）会先输出推理块：如果 chat-template 的渲染模式不对，模型概率最高的 token 会是它的推理开标签，两个 verbalizer token 都落在分布极尾部，两路 softmax 于是把尾部噪声重归一化成一个看起来合理的数字。上面的示例因此使用 `chat_template_kwargs={"enable_thinking": False}` 渲染。诊断信息让这一点可见：实测差异记录在 [docs/claims.md](docs/claims.md)，同一个 plan、同一个问题，关闭 thinking 时 `P(True) = 0.9988`、`verbalizer_mass = 0.954228`（top token `'yes'`，id 9693，概率 0.953119）；开启 thinking 时 `P(True) = 0.5116`、`verbalizer_mass = 0.000000`（top token `'<think>'`，id 151667，概率 0.999699）。Phase 2A.1 不会自动检测这种情况，也不会自动拒绝任何结果，因为没有实验能支持一个跨模型、tokenizer、chat template、verbalizer 与 prompt 都稳定的阈值；而「拒绝作答」属于尚不存在的 policy 行为。
+
+每次评估携带四个互不相同的身份标识，各自回答不同的问题：
+
+- decision fingerprint（决策指纹）：正在被判断的是哪个语义问题
+- plan fingerprint（计划指纹）：编译器产出了什么
+- execution fingerprint（执行指纹）：该 plan 实际运行时所处的执行环境与渲染配置
+- trace id：这是哪一次单独的执行
+
+execution fingerprint 的 payload 覆盖：plan fingerprint、backend 类型、backend 实现版本、模型标识、模型 revision、tokenizer 标识、tokenizer revision、运行时版本、dtype、渲染配置（rendering config）、input fingerprint，以及解析出的 positive/negative token id。同一个 plan 运行两次，会得到两个 trace id 与一个 execution fingerprint。影响概率语义的渲染配置（例如模型的 thinking 模式）会进入 execution fingerprint 与 trace，但刻意不进入与 provider 无关的 `InferencePlan`。
 
 decision 的 context 只会被渲染进 user prompt 作为证据（evidence），永远不会进入 system prompt。这是一条结构性放置规则，不是 prompt-injection（提示注入）安全性声明。
 
@@ -86,7 +99,7 @@ route = ai.choice(
 
 ## 概率、certainty、predicted correctness：不是一回事
 
-- **概率（Probability）**：由某种 scoring strategy（打分策略）产生的决策分布。它并不自动等于现实世界中的正确率。当前 Bool 概率来自 binary token logits，不是全词表分布。
+- **概率（Probability）**：由某种 scoring strategy（打分策略）产生的决策分布。它并不自动等于现实世界中的正确率。当前 Bool 概率是在两个 verbalizer-token logit 上的受限（条件）概率，不是全词表分布；trace 中的 `verbalizer_mass` 是与之独立的词表级伴随量。
 - **Certainty**：只描述该概率分布有多集中（熵 entropy、margin）。它是一个数学属性，不是正确性概率。我们从不把它称为 "confidence"。规范性约束：certainty 不得被称为 confidence（置信度）。
 - **Predicted correctness（预测正确性）**：只有在有效校准之后才可表达。当前产出的每个结果都是 `predicted_correctness = None` 且 `calibrated = False`。max softmax、logit、熵，或 LLM 自称"我有 95% 把握"，都不是 predicted correctness。
 
@@ -111,6 +124,11 @@ Phase 2A Bool 路径：
 - `TransformersBackend`（可选 `transformers` 附加包，只读 logits）
 - `DecisionTrace` / `build_decision_trace`（其 `trace_id` 从不派生自任何指纹）
 - 轻量的 `FuzzyAI` / `Evaluation` facade
+
+Phase 2A.1 的 scoring-validity 增量：
+
+- `ScoringDiagnostics` / `diagnose_bool_evidence`（词表级统计量：`verbalizer_mass`、top token id、概率与尽力而为的解码文本；不设阈值、不下裁决）
+- `DecisionTrace` 上的 execution fingerprint（同一个 plan 的两次执行：两个 trace id，一个 execution fingerprint）
 
 ```
 BoolDecision --(BoolCompiler)--> InferencePlan --(TransformersBackend)--> RawEvidence
