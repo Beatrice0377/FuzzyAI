@@ -1,0 +1,110 @@
+{
+  "case_set_version": "choice-signal-v1",
+  "note": "Synthetic routing fixtures for the Phase 2B Choice experiment. Not a benchmark. The expected_category recorded per case is the obvious reading of a hand-written context, not ground truth from a dataset.",
+  "question": "Which team should handle this request?",
+  "candidate_sets": {
+    "three_way": [
+      {"name": "billing", "description": "Payment, charges, and invoices"},
+      {"name": "shipping", "description": "Delivery, tracking, and logistics"},
+      {"name": "technical", "description": "Product or software problems"}
+    ],
+    "three_way_plus_irrelevant": [
+      {"name": "billing", "description": "Payment, charges, and invoices"},
+      {"name": "shipping", "description": "Delivery, tracking, and logistics"},
+      {"name": "technical", "description": "Product or software problems"},
+      {"name": "account deletion", "description": "Permanent account and data deletion requests"}
+    ],
+    "three_way_billing_paraphrase": [
+      {"name": "billing", "description": "Problems involving invoices, charges, or payments"},
+      {"name": "shipping", "description": "Delivery, tracking, and logistics"},
+      {"name": "technical", "description": "Product or software problems"}
+    ],
+    "five_way": [
+      {"name": "billing", "description": "Payment, charges, and invoices"},
+      {"name": "shipping", "description": "Delivery, tracking, and logistics"},
+      {"name": "returns", "description": "Returns, refunds, and exchanges"},
+      {"name": "technical", "description": "Product or software problems"},
+      {"name": "account", "description": "Account access, settings, and deletion"}
+    ],
+    "taxonomy_overlap": [
+      {"name": "billing", "description": "Payment, charges, and invoices"},
+      {"name": "payment issue", "description": "Problems paying or with payment methods"},
+      {"name": "shipping", "description": "Delivery, tracking, and logistics"},
+      {"name": "technical", "description": "Product or software problems"}
+    ]
+  },
+  "three_way_cases": [
+    {"id": "3w-billing-01", "expected_category": "billing", "context": "I was charged twice for the same order and I need the extra charge removed."},
+    {"id": "3w-billing-02", "expected_category": "billing", "context": "My invoice shows a total that is higher than the price I agreed to."},
+    {"id": "3w-billing-03", "expected_category": "billing", "context": "I updated my card details but the payment still failed and I want to know why."},
+    {"id": "3w-billing-04", "expected_category": "billing", "context": "The subscription fee was taken on the wrong date this month."},
+    {"id": "3w-billing-05", "expected_category": "billing", "context": "I need a copy of last year's invoices for my records."},
+
+    {"id": "3w-shipping-01", "expected_category": "shipping", "context": "My package was supposed to arrive on Tuesday and it is still not here."},
+    {"id": "3w-shipping-02", "expected_category": "shipping", "context": "The tracking page has not updated in five days."},
+    {"id": "3w-shipping-03", "expected_category": "shipping", "context": "The courier delivered my parcel to the wrong building."},
+    {"id": "3w-shipping-04", "expected_category": "shipping", "context": "I need to change the delivery address before the order ships."},
+    {"id": "3w-shipping-05", "expected_category": "shipping", "context": "My order arrived in a damaged box with a broken item inside."},
+
+    {"id": "3w-technical-01", "expected_category": "technical", "context": "The app crashes every time I open the settings screen."},
+    {"id": "3w-technical-02", "expected_category": "technical", "context": "I cannot log in even after resetting my password."},
+    {"id": "3w-technical-03", "expected_category": "technical", "context": "The export button produces an empty file."},
+    {"id": "3w-technical-04", "expected_category": "technical", "context": "Since the last update the search box returns no results."},
+    {"id": "3w-technical-05", "expected_category": "technical", "context": "Syncing between my phone and the website stopped working yesterday."}
+  ],
+  "five_way_cases": [
+    {"id": "5w-billing-01", "expected_category": "billing", "context": "I was billed for a plan I cancelled last month."},
+    {"id": "5w-billing-02", "expected_category": "billing", "context": "There is an unexplained charge of 19.99 on my statement."},
+    {"id": "5w-billing-03", "expected_category": "billing", "context": "The discount code was accepted at checkout but the full price was charged."},
+
+    {"id": "5w-shipping-01", "expected_category": "shipping", "context": "My parcel has been stuck at the sorting centre for a week."},
+    {"id": "5w-shipping-02", "expected_category": "shipping", "context": "The delivery driver left my package at the wrong door."},
+    {"id": "5w-shipping-03", "expected_category": "shipping", "context": "The estimated delivery date keeps moving back by a day."},
+
+    {"id": "5w-returns-01", "expected_category": "returns", "context": "I would like to send back the shoes because the size is wrong."},
+    {"id": "5w-returns-02", "expected_category": "returns", "context": "I returned the item two weeks ago and have not received my money back."},
+    {"id": "5w-returns-03", "expected_category": "returns", "context": "Can I exchange this for a different colour instead of a refund?"},
+
+    {"id": "5w-technical-01", "expected_category": "technical", "context": "The mobile app freezes whenever I upload a photo."},
+    {"id": "5w-technical-02", "expected_category": "technical", "context": "Your website shows an error page when I try to check out."},
+    {"id": "5w-technical-03", "expected_category": "technical", "context": "Notifications stopped arriving on my device after the update."},
+
+    {"id": "5w-account-01", "expected_category": "account", "context": "I want to permanently delete my account and all my data."},
+    {"id": "5w-account-02", "expected_category": "account", "context": "I cannot change the email address associated with my profile."},
+    {"id": "5w-account-03", "expected_category": "account", "context": "Please turn off two factor authentication on my account."}
+  ],
+  "irrelevant_addition": {
+    "base_set": "three_way",
+    "extended_set": "three_way_plus_irrelevant",
+    "case_ids": [
+      "3w-billing-01",
+      "3w-billing-03",
+      "3w-shipping-01",
+      "3w-shipping-04",
+      "3w-technical-01",
+      "3w-technical-03"
+    ]
+  },
+  "description_paraphrase": {
+    "original_set": "three_way",
+    "variant_set": "three_way_billing_paraphrase",
+    "changed_candidate": "billing",
+    "case_ids": [
+      "3w-billing-01",
+      "3w-billing-02",
+      "3w-billing-05",
+      "3w-shipping-01",
+      "3w-technical-02"
+    ]
+  },
+  "taxonomy_overlap_cases": [
+    {"id": "ov-payment-01", "note": "genuinely between billing and payment issue", "context": "My card was declined but the money still left my account."},
+    {"id": "ov-payment-02", "note": "genuinely between billing and payment issue", "context": "I want to switch to a different payment method for next month."},
+    {"id": "ov-payment-03", "note": "control, clearly billing only", "context": "Please send me an invoice for the annual plan."}
+  ],
+  "out_of_set_cases": [
+    {"id": "oos-01", "note": "true topic is account, absent from the three_way set", "context": "Please delete my account and remove all of my personal data."},
+    {"id": "oos-02", "note": "true topic is unrelated to the three_way set", "context": "How do I apply for a job at your company?"},
+    {"id": "oos-03", "note": "true topic is unrelated to the three_way set", "context": "Your company sponsors a local football team and I would like details about the programme."}
+  ]
+}
