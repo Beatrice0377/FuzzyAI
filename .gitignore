@@ -29,3 +29,6 @@ htmlcov/
 .idea/
 .vscode/
 .DS_Store
+
+# Local coding-agent workspace state
+.omo/
