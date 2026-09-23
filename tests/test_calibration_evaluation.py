@@ -1,7 +1,8 @@
 """Tests for the pre-calibration evaluation foundation.
 
-Covers :mod:`probvenance.calibration_evaluation`: the evaluation dataset
-contract, the Brier winner-correctness metric, and the result artifact.
+Covers :mod:`probvenance.calibration_evaluation`: the declared evaluation
+source cohort contract, the metric-eligible dataset projection, the Brier
+winner-correctness metric, and the result artifact.
 
 The fixture helpers below build REAL ``CalibrationObservation`` objects through
 the supported ``from_evaluation`` path (a hand-built result paired with a real
@@ -11,11 +12,12 @@ evaluator itself is never faked.
 One fixture deserves explanation: ``recorded_selection_observation`` records a
 ``selected_value`` that is not the argmax of the recorded probabilities. The
 runtime would never select a non-argmax outcome, but the observation contract
-treats ``selected_value`` as a recorded execution fact, and the evaluation
-layer must use the record without recomputing the winner. The Brier matrix
-entries with ``p = 0.0`` require exactly such a record (the argmax of a
-normalized distribution is never ``0.0``), and the hand-calculated matrix uses
-one for its ``p = 0.2`` row over the standard three-candidate decision.
+records the selection carried by the supplied runtime-linked result, and the
+evaluation layer must use the record without recomputing the winner. The
+Brier matrix entries with ``p = 0.0`` require exactly such a record (the
+argmax of a normalized distribution is never ``0.0``), and the
+hand-calculated matrix uses one for its ``p = 0.2`` row over the standard
+three-candidate decision.
 
 All choice observations in one dataset share the standard three-candidate
 decision because the binding includes the formulation (candidate names and
@@ -53,11 +55,13 @@ from probvenance.calibration import (
     GROUND_TRUTH_SEMANTICS_FINGERPRINT_VERSION,
     RENDERING_SEMANTICS_VERSION,
     CalibrationObservation,
+    CalibrationObservationStatus,
 )
 from probvenance.calibration_evaluation import (
     BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION,
     BRIER_METRIC_ID,
     BRIER_METRIC_VERSION,
+    CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION,
     CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION,
     LOG_LOSS_BOUNDARY_POLICY,
     LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION,
@@ -68,6 +72,7 @@ from probvenance.calibration_evaluation import (
     UNCALIBRATED_SELECTED_PROBABILITY_ID,
     UNCALIBRATED_SELECTED_PROBABILITY_VERSION,
     BrierEvaluationResult,
+    CalibrationEvaluationCohort,
     CalibrationEvaluationDataset,
     EvaluationSplitRole,
     LogLossEvaluationResult,
@@ -82,14 +87,26 @@ from probvenance.fingerprint import fingerprint
 # ---------------------------------------------------------------------------
 
 
+def evaluation_cohort(
+    observations,
+    *,
+    split_role=EvaluationSplitRole.TEST,
+    split_id="eval-split-1",
+):
+    return CalibrationEvaluationCohort(
+        observations=tuple(observations), split_role=split_role, split_id=split_id
+    )
+
+
 def evaluation_dataset(
     observations,
     *,
     split_role=EvaluationSplitRole.TEST,
     split_id="eval-split-1",
 ):
-    return CalibrationEvaluationDataset(
-        observations=tuple(observations), split_role=split_role, split_id=split_id
+    """Build a dataset through the supported cohort projection path."""
+    return CalibrationEvaluationDataset.from_cohort(
+        evaluation_cohort(observations, split_role=split_role, split_id=split_id)
     )
 
 
@@ -128,10 +145,10 @@ def choice_observation_with_probabilities(probabilities, truth):
 def recorded_selection_observation(probabilities, recorded_value, truth):
     """A real Choice observation whose recorded selection is not the argmax.
 
-    The recorded ``selected_value`` is an execution fact: the observation below
-    is built through the supported ``from_evaluation`` path, and the recorded
-    selection is honored exactly by the evaluation layer (the winner is never
-    recomputed).
+    The recorded ``selected_value`` is the selection carried by the supplied
+    runtime-linked result: the observation below is built through the
+    supported ``from_evaluation`` path, and the recorded selection is honored
+    exactly by the evaluation layer (the winner is never recomputed).
     """
     runtime, _ = make_choice_runtime()
     evaluation = runtime.evaluate_with_trace(make_choice_decision())
@@ -332,19 +349,19 @@ class TestSelectedProbabilityExtraction:
 
 
 # ---------------------------------------------------------------------------
-# Evaluation dataset admission
+# Evaluation cohort admission
 # ---------------------------------------------------------------------------
 
 
-class TestEvaluationDatasetAdmission:
+class TestEvaluationCohortAdmission:
     def test_empty_observations_rejected(self):
         with pytest.raises(InvalidDecisionError, match="at least one observation"):
-            evaluation_dataset([])
+            evaluation_cohort([])
 
     def test_observations_must_be_a_tuple(self):
         observation = choice_observation()
         with pytest.raises(InvalidDecisionError, match="at least one observation"):
-            CalibrationEvaluationDataset(
+            CalibrationEvaluationCohort(
                 observations=[observation],  # type: ignore[arg-type]
                 split_role=EvaluationSplitRole.TEST,
                 split_id="split",
@@ -352,7 +369,7 @@ class TestEvaluationDatasetAdmission:
 
     def test_none_observations_rejected_with_invalid_decision_error(self):
         with pytest.raises(InvalidDecisionError, match="at least one observation"):
-            CalibrationEvaluationDataset(
+            CalibrationEvaluationCohort(
                 observations=None,  # type: ignore[arg-type]
                 split_role=EvaluationSplitRole.TEST,
                 split_id="split",
@@ -360,7 +377,7 @@ class TestEvaluationDatasetAdmission:
 
     def test_generator_observations_rejected_with_invalid_decision_error(self):
         with pytest.raises(InvalidDecisionError, match="at least one observation"):
-            CalibrationEvaluationDataset(
+            CalibrationEvaluationCohort(
                 observations=(item for item in [choice_observation()]),  # type: ignore[arg-type]
                 split_role=EvaluationSplitRole.TEST,
                 split_id="split",
@@ -368,7 +385,7 @@ class TestEvaluationDatasetAdmission:
 
     def test_non_observation_element_rejected_with_invalid_decision_error(self):
         with pytest.raises(InvalidDecisionError, match="expected a CalibrationObservation"):
-            CalibrationEvaluationDataset(
+            CalibrationEvaluationCohort(
                 observations=("not an observation",),  # type: ignore[arg-type]
                 split_role=EvaluationSplitRole.TEST,
                 split_id="split",
@@ -386,35 +403,41 @@ class TestEvaluationDatasetAdmission:
             fingerprint = "fabricated"
 
         with pytest.raises(InvalidDecisionError, match="expected a CalibrationObservation"):
-            CalibrationEvaluationDataset(
+            CalibrationEvaluationCohort(
                 observations=(LookAlike(),),  # type: ignore[arg-type]
                 split_role=EvaluationSplitRole.TEST,
                 split_id="split",
             )
 
-    def test_unresolved_ground_truth_rejected(self):
+    def test_unresolved_rows_retained_in_cohort(self):
         observation = choice_observation(unresolved_truth())
-        with pytest.raises(InvalidDecisionError, match="not fit-eligible"):
-            evaluation_dataset([observation])
+        cohort = evaluation_cohort([observation])
+        assert cohort.source_count == 1
+        assert cohort.unresolved_count == 1
+        assert cohort.eligible_count == 0
 
-    def test_taxonomy_miss_rejected_not_encoded_as_correct_false(self):
+    def test_taxonomy_miss_rows_retained_in_cohort(self):
         # "account" is not among the billing/shipping/returns candidates.
         observation = choice_observation(resolved_truth("account"))
         assert observation.status.name == "TAXONOMY_MISS"
         assert observation.correct is None
-        with pytest.raises(InvalidDecisionError, match="not fit-eligible"):
-            evaluation_dataset([observation])
+        cohort = evaluation_cohort([observation])
+        assert cohort.source_count == 1
+        assert cohort.taxonomy_miss_count == 1
+        assert cohort.eligible_count == 0
 
-    def test_unadjudicated_ground_truth_rejected(self):
+    def test_unadjudicated_rows_retained_in_cohort(self):
         observation = choice_observation(resolved_truth("shipping", adjudicated=False))
-        with pytest.raises(InvalidDecisionError, match="not fit-eligible"):
-            evaluation_dataset([observation])
+        cohort = evaluation_cohort([observation])
+        assert cohort.source_count == 1
+        assert cohort.unadjudicated_resolved_count == 1
+        assert cohort.eligible_count == 0
 
     def test_mixed_binding_rejected(self):
         same = choice_observation()
         other_model = choice_observation(backend=FakeCategoricalBackend(model="other-model"))
         with pytest.raises(InvalidDecisionError, match="binding canonical payload"):
-            evaluation_dataset([same, other_model])
+            evaluation_cohort([same, other_model])
 
     def test_mixed_ground_truth_semantics_rejected(self):
         same = choice_observation()
@@ -422,24 +445,24 @@ class TestEvaluationDatasetAdmission:
             resolved_truth("shipping", labeling_rule="a different labeling rule")
         )
         with pytest.raises(InvalidDecisionError, match="ground-truth semantics"):
-            evaluation_dataset([same, other_rule])
+            evaluation_cohort([same, other_rule])
 
     def test_different_label_source_only_is_accepted(self):
         human = choice_observation()
         reviewer = choice_observation(resolved_truth("shipping", label_source="reviewer"))
-        dataset = evaluation_dataset([human, reviewer])
-        assert len(dataset.observations) == 2
+        cohort = evaluation_cohort([human, reviewer])
+        assert len(cohort.observations) == 2
 
     def test_split_role_must_be_an_evaluation_split_role(self):
         observation = choice_observation()
         with pytest.raises(InvalidDecisionError, match="split_role must be"):
-            CalibrationEvaluationDataset(
+            CalibrationEvaluationCohort(
                 observations=(observation,),
                 split_role="validation",  # type: ignore[arg-type]
                 split_id="split",
             )
         with pytest.raises(InvalidDecisionError, match="split_role must be"):
-            CalibrationEvaluationDataset(
+            CalibrationEvaluationCohort(
                 observations=(observation,),
                 split_role="train",  # type: ignore[arg-type]
                 split_id="split",
@@ -448,35 +471,352 @@ class TestEvaluationDatasetAdmission:
     def test_split_id_must_be_non_empty(self):
         observation = choice_observation()
         with pytest.raises(InvalidDecisionError, match="split_id must be a non-empty"):
-            CalibrationEvaluationDataset(
+            CalibrationEvaluationCohort(
                 observations=(observation,),
                 split_role=EvaluationSplitRole.TEST,
                 split_id="",
             )
 
     def test_rejection_messages_distinguish_reason_kinds(self):
-        # One message that mixes a non-fit-eligible row, a binding mismatch, a
-        # semantics mismatch, and invalid split metadata; the message must
-        # distinguish all four kinds and count the observations and reasons.
+        # One message that mixes a non-observation element, a binding
+        # mismatch, a semantics mismatch, and invalid split metadata; the
+        # message must distinguish all four kinds and count the observations
+        # and reasons.
         unresolved = choice_observation(unresolved_truth())
         other_model = choice_observation(backend=FakeCategoricalBackend(model="other-model"))
         other_rule = choice_observation(
             resolved_truth("shipping", labeling_rule="a different labeling rule")
         )
         with pytest.raises(InvalidDecisionError) as excinfo:
-            CalibrationEvaluationDataset(
+            CalibrationEvaluationCohort(
                 observations=(unresolved, other_model, other_rule),
                 split_role="validation",  # type: ignore[arg-type]
                 split_id="",
             )
         message = str(excinfo.value)
         assert "3 observation(s)" in message
-        assert "5 reason(s)" in message
-        assert "not fit-eligible" in message
+        assert "4 reason(s)" in message
         assert "binding canonical payload" in message
         assert "ground-truth semantics" in message
         assert "split_role must be an EvaluationSplitRole" in message
         assert "split_id must be a non-empty" in message
+
+
+# ---------------------------------------------------------------------------
+# Cohort identity
+# ---------------------------------------------------------------------------
+
+
+class TestEvaluationCohortIdentity:
+    def test_row_order_does_not_change_fingerprint(self):
+        o1 = choice_observation_with_probabilities(
+            three_way_probabilities(billing=0.8, shipping=0.1, returns=0.1),
+            resolved_truth("billing"),
+        )
+        o2 = choice_observation_with_probabilities(
+            three_way_probabilities(billing=0.1, shipping=0.6, returns=0.3),
+            resolved_truth("shipping"),
+        )
+        first = evaluation_cohort([o1, o2])
+        second = evaluation_cohort([o2, o1])
+        assert first.fingerprint == second.fingerprint
+
+    def test_multiplicity_is_preserved(self):
+        o1 = choice_observation()
+        o2 = choice_observation_with_probabilities(
+            three_way_probabilities(billing=0.8, shipping=0.1, returns=0.1),
+            resolved_truth("billing"),
+        )
+        smaller = evaluation_cohort([o1, o2])
+        larger = evaluation_cohort([o1, o1, o2])
+        assert smaller.fingerprint != larger.fingerprint
+        assert larger.source_count == 3
+
+    def test_split_role_changes_fingerprint(self):
+        observation = choice_observation()
+        as_validation = evaluation_cohort([observation], split_role=EvaluationSplitRole.VALIDATION)
+        as_test = evaluation_cohort([observation], split_role=EvaluationSplitRole.TEST)
+        assert as_validation.fingerprint != as_test.fingerprint
+
+    def test_split_id_changes_fingerprint(self):
+        observation = choice_observation()
+        first = evaluation_cohort([observation], split_id="holdout-a")
+        second = evaluation_cohort([observation], split_id="holdout-b")
+        assert first.fingerprint != second.fingerprint
+
+    def test_fingerprint_version_is_one(self):
+        assert CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION == 1
+
+    def test_fingerprint_payload_commits_identity_versions_and_all_rows(self):
+        eligible = choice_observation()
+        taxonomy_miss = choice_observation(resolved_truth("account"))
+        cohort = evaluation_cohort(
+            [eligible, taxonomy_miss],
+            split_role=EvaluationSplitRole.VALIDATION,
+            split_id="holdout",
+        )
+        expected: dict = {
+            "v": CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION,
+            "split_role": "validation",
+            "split_id": "holdout",
+            "binding_fingerprint": cohort.binding.fingerprint,
+            "binding_fingerprint_version": CALIBRATION_BINDING_FINGERPRINT_VERSION,
+            "ground_truth_semantics_fingerprint": (cohort.ground_truth_semantics.fingerprint),
+            "ground_truth_semantics_fingerprint_version": (
+                GROUND_TRUTH_SEMANTICS_FINGERPRINT_VERSION
+            ),
+            "observation_fingerprints": sorted(
+                [observation.fingerprint for observation in cohort.observations]
+            ),
+        }
+        assert cohort.fingerprint == fingerprint(expected)
+
+
+# ---------------------------------------------------------------------------
+# Cohort partition and exclusion accounting
+# ---------------------------------------------------------------------------
+
+
+class TestEvaluationCohortPartition:
+    def test_partition_precedence_counts_each_row_once(self):
+        # An unresolved ground truth is also unadjudicated; the documented
+        # precedence counts it exactly once, as unresolved.
+        unresolved = choice_observation(unresolved_truth())
+        assert unresolved.status is CalibrationObservationStatus.UNRESOLVED
+        cohort = evaluation_cohort([unresolved])
+        assert cohort.source_count == 1
+        assert cohort.unresolved_count == 1
+        assert cohort.unadjudicated_resolved_count == 0
+        assert cohort.eligible_count == 0
+        assert cohort.taxonomy_miss_count == 0
+        assert (
+            cohort.source_count
+            == cohort.eligible_count
+            + cohort.taxonomy_miss_count
+            + cohort.unresolved_count
+            + cohort.unadjudicated_resolved_count
+        )
+
+    def test_partition_covers_all_four_buckets(self):
+        eligible = choice_observation()
+        taxonomy_miss = choice_observation(resolved_truth("account"))
+        unresolved = choice_observation(unresolved_truth())
+        unadjudicated = choice_observation(resolved_truth("shipping", adjudicated=False))
+        cohort = evaluation_cohort([eligible, taxonomy_miss, unresolved, unadjudicated])
+        assert cohort.source_count == 4
+        assert cohort.eligible_count == 1
+        assert cohort.taxonomy_miss_count == 1
+        assert cohort.unresolved_count == 1
+        assert cohort.unadjudicated_resolved_count == 1
+        assert (
+            cohort.source_count
+            == cohort.eligible_count
+            + cohort.taxonomy_miss_count
+            + cohort.unresolved_count
+            + cohort.unadjudicated_resolved_count
+        )
+        assert cohort.eligible_observations == (eligible,)
+
+    def test_accounting_identity_holds_on_several_cohorts(self):
+        cohorts = [
+            evaluation_cohort([choice_observation()]),
+            evaluation_cohort(
+                [
+                    choice_observation(),
+                    choice_observation(resolved_truth("account")),
+                    choice_observation(unresolved_truth()),
+                    choice_observation(resolved_truth("shipping", adjudicated=False)),
+                ]
+            ),
+            evaluation_cohort(
+                [
+                    choice_observation(resolved_truth("account")),
+                    choice_observation(resolved_truth("account")),
+                ]
+            ),
+        ]
+        for cohort in cohorts:
+            assert (
+                cohort.source_count
+                == cohort.eligible_count
+                + cohort.taxonomy_miss_count
+                + cohort.unresolved_count
+                + cohort.unadjudicated_resolved_count
+            )
+
+    def test_zero_eligible_cohort_is_valid_but_projection_fails(self):
+        cohort = evaluation_cohort([choice_observation(resolved_truth("account"))])
+        assert cohort.source_count == 1
+        assert cohort.taxonomy_miss_count == 1
+        assert cohort.eligible_count == 0
+        assert cohort.fingerprint  # the cohort itself is a valid artifact
+        with pytest.raises(InvalidDecisionError, match="zero metric-eligible rows"):
+            CalibrationEvaluationDataset.from_cohort(cohort)
+
+    def test_all_taxonomy_miss_cohort_is_a_legitimate_provenance_artifact(self):
+        cohort = evaluation_cohort(
+            [
+                choice_observation(resolved_truth("account")),
+                choice_observation(resolved_truth("fraud")),
+            ]
+        )
+        assert cohort.eligible_count == 0
+        assert cohort.taxonomy_miss_count == 2
+        assert len(cohort.fingerprint) == 64
+
+
+# ---------------------------------------------------------------------------
+# Evaluation dataset projection
+# ---------------------------------------------------------------------------
+
+
+class TestEvaluationDatasetProjection:
+    def test_direct_construction_rejected(self):
+        observation = choice_observation()
+        with pytest.raises(InvalidDecisionError, match="from_cohort"):
+            CalibrationEvaluationDataset(
+                observations=(observation,),
+                split_role=EvaluationSplitRole.TEST,
+                split_id="split",
+            )
+        with pytest.raises(InvalidDecisionError, match="from_cohort"):
+            CalibrationEvaluationDataset()
+
+    def test_from_cohort_requires_a_cohort(self):
+        with pytest.raises(InvalidDecisionError, match="CalibrationEvaluationCohort"):
+            CalibrationEvaluationDataset.from_cohort("not a cohort")  # type: ignore[arg-type]
+
+    def test_projection_derives_eligible_rows_and_accounting(self):
+        eligible = choice_observation()
+        taxonomy_miss = choice_observation(resolved_truth("account"))
+        unresolved = choice_observation(unresolved_truth())
+        unadjudicated = choice_observation(resolved_truth("shipping", adjudicated=False))
+        cohort = evaluation_cohort([eligible, taxonomy_miss, unresolved, unadjudicated])
+        dataset = CalibrationEvaluationDataset.from_cohort(cohort)
+        assert dataset.observations == (eligible,)
+        assert dataset.split_role == cohort.split_role
+        assert dataset.split_id == cohort.split_id
+        assert dataset.source_cohort_fingerprint == cohort.fingerprint
+        assert dataset.source_count == 4
+        assert dataset.taxonomy_miss_count == 1
+        assert dataset.unresolved_count == 1
+        assert dataset.unadjudicated_resolved_count == 1
+        assert len(dataset.observations) == 1
+
+    def test_projection_rejects_manual_subsets_without_cohort_provenance(self):
+        # A caller cannot present an arbitrary already-filtered tuple as an
+        # evaluation dataset: the supported path derives the projection from
+        # a declared cohort, so no silent manual-subset identity exists.
+        eligible = choice_observation()
+        taxonomy_miss = choice_observation(resolved_truth("account"))
+        with pytest.raises(InvalidDecisionError, match="from_cohort"):
+            CalibrationEvaluationDataset(
+                observations=(eligible,),
+                split_role=EvaluationSplitRole.TEST,
+                split_id="eval-split-1",
+            )
+        # The cohort path keeps the excluded row in the accounting.
+        dataset = evaluation_dataset([eligible, taxonomy_miss])
+        assert dataset.source_count == 2
+        assert dataset.taxonomy_miss_count == 1
+        assert len(dataset.observations) == 1
+
+    def test_dataset_binding_and_semantics_derived_from_cohort(self):
+        cohort = evaluation_cohort([choice_observation()])
+        dataset = CalibrationEvaluationDataset.from_cohort(cohort)
+        assert dataset.binding == cohort.binding
+        assert dataset.ground_truth_semantics == cohort.ground_truth_semantics
+
+
+# ---------------------------------------------------------------------------
+# The decisive A-vs-B regression: metric exclusion is provenance
+# ---------------------------------------------------------------------------
+
+
+class TestCohortProvenanceNoConflation:
+    def _eligible_pair(self):
+        first = choice_observation_with_probabilities(
+            three_way_probabilities(billing=0.8, shipping=0.1, returns=0.1),
+            resolved_truth("billing"),
+        )
+        second = choice_observation_with_probabilities(
+            three_way_probabilities(billing=0.1, shipping=0.6, returns=0.3),
+            resolved_truth("shipping"),
+        )
+        return first, second
+
+    def _taxonomy_miss_rows(self, count):
+        # Distinct taxonomy-miss rows so multiplicity is unambiguous.
+        return [choice_observation(resolved_truth(f"account-{index}")) for index in range(count)]
+
+    def test_identical_scored_rows_with_different_exclusions_do_not_collapse(self):
+        eligible_a, eligible_b = self._eligible_pair()
+        cohort_a = evaluation_cohort([eligible_a, eligible_b])
+        cohort_b = evaluation_cohort([eligible_a, eligible_b, *self._taxonomy_miss_rows(3)])
+        assert cohort_a.eligible_observations == cohort_b.eligible_observations
+        assert cohort_a.eligible_count == cohort_b.eligible_count == 2
+        assert cohort_a.source_count == 2
+        assert cohort_b.source_count == 5
+        assert cohort_a.taxonomy_miss_count == 0
+        assert cohort_b.taxonomy_miss_count == 3
+        assert cohort_a.fingerprint != cohort_b.fingerprint
+
+        dataset_a = CalibrationEvaluationDataset.from_cohort(cohort_a)
+        dataset_b = CalibrationEvaluationDataset.from_cohort(cohort_b)
+        assert dataset_a.observations == dataset_b.observations
+        assert dataset_a.fingerprint != dataset_b.fingerprint
+
+        brier_a = evaluate_uncalibrated_winner_brier(dataset_a)
+        brier_b = evaluate_uncalibrated_winner_brier(dataset_b)
+        assert brier_a.value == brier_b.value
+        assert brier_a.count == brier_b.count == 2
+        assert brier_a.fingerprint != brier_b.fingerprint
+
+        log_loss_a = evaluate_uncalibrated_winner_log_loss(dataset_a)
+        log_loss_b = evaluate_uncalibrated_winner_log_loss(dataset_b)
+        assert log_loss_a.value == log_loss_b.value
+        assert log_loss_a.count == log_loss_b.count == 2
+        assert log_loss_a.fingerprint != log_loss_b.fingerprint
+
+    def test_metric_artifacts_commit_source_cohort_provenance(self):
+        eligible_a, eligible_b = self._eligible_pair()
+        cohort_b = evaluation_cohort([eligible_a, eligible_b, *self._taxonomy_miss_rows(3)])
+        dataset_b = CalibrationEvaluationDataset.from_cohort(cohort_b)
+        for evaluate in (
+            evaluate_uncalibrated_winner_brier,
+            evaluate_uncalibrated_winner_log_loss,
+        ):
+            result = evaluate(dataset_b)
+            assert result.source_cohort_fingerprint == cohort_b.fingerprint
+            assert result.source_cohort_fingerprint_version == (
+                CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION
+            )
+            assert result.source_count == 5
+            assert result.taxonomy_miss_count == 3
+            assert result.unresolved_count == 0
+            assert result.unadjudicated_resolved_count == 0
+            assert result.count == 2
+
+    def test_both_metrics_expose_identical_cohort_accounting(self):
+        cohort = evaluation_cohort(
+            [
+                choice_observation(),
+                choice_observation(resolved_truth("account")),
+                choice_observation(unresolved_truth()),
+                choice_observation(resolved_truth("shipping", adjudicated=False)),
+            ]
+        )
+        dataset = CalibrationEvaluationDataset.from_cohort(cohort)
+        brier = evaluate_uncalibrated_winner_brier(dataset)
+        log_loss = evaluate_uncalibrated_winner_log_loss(dataset)
+        assert brier.source_cohort_fingerprint == log_loss.source_cohort_fingerprint
+        assert brier.source_cohort_fingerprint_version == log_loss.source_cohort_fingerprint_version
+        assert brier.source_count == log_loss.source_count == 4
+        assert brier.taxonomy_miss_count == log_loss.taxonomy_miss_count == 1
+        assert brier.unresolved_count == log_loss.unresolved_count == 1
+        assert brier.unadjudicated_resolved_count == log_loss.unadjudicated_resolved_count == 1
+        assert brier.count == log_loss.count == 1
+        assert brier.evaluation_dataset_fingerprint == log_loss.evaluation_dataset_fingerprint
 
 
 # ---------------------------------------------------------------------------
@@ -520,16 +860,21 @@ class TestEvaluationDatasetIdentity:
         second = evaluation_dataset([observation], split_id="holdout-b")
         assert first.fingerprint != second.fingerprint
 
-    def test_fingerprint_version_is_one(self):
-        assert CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION == 1
+    def test_fingerprint_version_is_two(self):
+        assert CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION == 2
 
-    def test_fingerprint_payload_commits_identity_versions(self):
+    def test_fingerprint_payload_commits_identity_versions_and_cohort_provenance(self):
         observation = choice_observation()
-        dataset = evaluation_dataset(
+        cohort = evaluation_cohort(
             [observation], split_role=EvaluationSplitRole.VALIDATION, split_id="holdout"
         )
+        dataset = CalibrationEvaluationDataset.from_cohort(cohort)
         expected: dict = {
             "v": CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION,
+            "source_cohort_fingerprint": cohort.fingerprint,
+            "source_cohort_fingerprint_version": (
+                CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION
+            ),
             "split_role": "validation",
             "split_id": "holdout",
             "binding_fingerprint": dataset.binding.fingerprint,
@@ -541,6 +886,11 @@ class TestEvaluationDatasetIdentity:
             "observation_fingerprints": sorted(
                 [observation.fingerprint for observation in dataset.observations]
             ),
+            "source_count": 1,
+            "eligible_count": 1,
+            "taxonomy_miss_count": 0,
+            "unresolved_count": 0,
+            "unadjudicated_resolved_count": 0,
         }
         assert dataset.fingerprint == fingerprint(expected)
 
@@ -584,6 +934,14 @@ class TestBrierEvaluationResult:
             "evaluation_dataset_fingerprint_version": (
                 CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION
             ),
+            "source_cohort_fingerprint": dataset.source_cohort_fingerprint,
+            "source_cohort_fingerprint_version": (
+                CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION
+            ),
+            "source_count": 1,
+            "taxonomy_miss_count": 0,
+            "unresolved_count": 0,
+            "unadjudicated_resolved_count": 0,
             "configuration": {},
             "count": 1,
             "value": result.value,
@@ -721,9 +1079,9 @@ class TestNoConflation:
 
 
 class TestVersionGuards:
-    def test_new_versions_are_one(self):
-        assert CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION == 1
-        assert BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION == 1
+    def test_new_versions_are_two(self):
+        assert CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION == 2
+        assert BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION == 2
         assert UNCALIBRATED_SELECTED_PROBABILITY_VERSION == 1
         assert BRIER_METRIC_VERSION == 1
 
@@ -1089,9 +1447,9 @@ class TestLogLossNoConflation:
 
 
 class TestLogLossVersionGuards:
-    def test_new_log_loss_versions_are_one(self):
+    def test_new_log_loss_versions_are_two(self):
         assert LOG_LOSS_METRIC_VERSION == 1
-        assert LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION == 1
+        assert LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION == 2
 
     def test_log_loss_identity_constants(self):
         assert LOG_LOSS_METRIC_ID == "log-loss"
@@ -1100,7 +1458,6 @@ class TestLogLossVersionGuards:
         assert LOG_LOSS_LOG_BASE == "e"
 
     def test_pre_existing_versions_unchanged(self):
-        assert BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION == 1
         assert BRIER_METRIC_VERSION == 1
-        assert CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION == 1
+        assert CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION == 1
         assert UNCALIBRATED_SELECTED_PROBABILITY_VERSION == 1

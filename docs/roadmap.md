@@ -87,13 +87,15 @@ identity, not on task or model identity alone; see
 identity, binding, profile identity, and evaluation contract are designed in
 `docs/calibration-semantics.md`. The Phase 4A data foundation (ground truth,
 binding, observation, dataset, and their identities and fingerprints) and the
-pre-calibration evaluation foundation (the evaluation dataset contract and the
-winner-correctness Brier and exact log-loss metrics) are implemented.
+pre-calibration evaluation foundation (the declared evaluation source cohort,
+the metric-eligible dataset projection with explicit exclusion accounting, and
+the winner-correctness Brier and exact log-loss metrics) are implemented.
 `CalibrationProfile`, fitting, the remaining metrics, profile matching, and
 runtime profile application do not exist, and `predicted_correctness` remains
 `None` for every result the runtime can produce.
 
-- Evaluation harness (started: evaluation dataset contract, Brier, log loss).
+- Evaluation harness (started: declared evaluation source cohort, metric-eligible
+  dataset projection, Brier, log loss).
 - Expected calibration error (ECE).
 - Temperature scaling.
 - Calibration profile.

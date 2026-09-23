@@ -8,10 +8,19 @@ CalibrationObservation:    implemented (src/probvenance/calibration.py)
 CalibrationBinding:        implemented (src/probvenance/calibration.py)
 CalibrationDataset:        implemented (src/probvenance/calibration.py)
 CalibrationProfile:        not implemented
-Evaluation dataset:        implemented (src/probvenance/calibration_evaluation.py)
+Evaluation cohort:         implemented (src/probvenance/calibration_evaluation.py):
+                           declared evaluation source cohort, full observation
+                           statuses retained, cohort fingerprint v1
+Evaluation dataset:        implemented (src/probvenance/calibration_evaluation.py):
+                           metric-eligible projection of one declared cohort,
+                           dataset fingerprint v2 with explicit exclusion
+                           accounting
 Evaluation metrics:        pre-calibration winner-correctness Brier and exact
-                           natural-log log loss over a declared evaluation
-                           split implemented (src/probvenance/calibration_evaluation.py)
+                           natural-log log loss over the metric-eligible
+                           projection implemented
+                           (src/probvenance/calibration_evaluation.py); result
+                           fingerprint v2 commits source cohort identity and
+                           exclusion accounting
 Fitting algorithms:        not implemented
 Calibration runtime:       not implemented
 predicted_correctness:     None for every result the runtime can currently produce
@@ -22,9 +31,10 @@ portions it specified (ground truth, binding, observation, dataset, and their
 identities and fingerprints, in `src/probvenance/calibration.py`) are now
 implemented. The Phase 4A evaluation foundation it specified (the evaluation
 dataset contract and the winner-correctness Brier metric, in
-`src/probvenance/calibration_evaluation.py`) is now implemented as well.
-`CalibrationProfile`, fitting, the remaining metrics, and runtime profile
-application remain unimplemented, and this document does not add any.
+`src/probvenance/calibration_evaluation.py`) is now implemented as well, and
+the evaluation pipeline now commits cohort provenance: metric exclusion is
+provenance. `CalibrationProfile`, fitting, the remaining metrics, and runtime
+profile application remain unimplemented, and this document does not add any.
 
 This document is in part a design proposal. The deterministic data model and
 the evaluation foundation carry `[V]` VERIFIED claims in `docs/claims.md`,
@@ -380,8 +390,11 @@ id cannot be verified against the trace at all, so it is rejected too. Direct
 field construction of an observation is rejected for the same reason: without
 the runtime-issued trace there is no linkage identity to check.
 `dataclasses.replace` reconstruction is rejected for the same reason again:
-it rebuilds the observation through the direct constructor, so an observation
-cannot be rebuilt with a foreign binding or foreign probabilities.
+it rebuilds the observation through the direct constructor. The linkage check
+is linkage CONSISTENCY, not content attestation: it protects against
+accidental pairing of objects carrying different runtime linkage identities,
+and it does not prove that a caller-constructed result's probabilities were
+emitted by the supplied trace.
 Lower-level Python escape hatches such as `object.__new__`, `copy`, and
 `pickle` are not supported construction paths and are not defended against.
 
@@ -894,6 +907,81 @@ which role the caller assigned to the split and do NOT prove statistical
 independence from any data used for future fitting. Independence discipline is
 the caller's responsibility (section 11).
 
+### 14.0.1 Declared source cohort and metric-eligible projection
+
+The evaluation pipeline is conceptually:
+
+```text
+declared evaluation source cohort
+  (retain all observation statuses)
+  -> CalibrationEvaluationCohort
+  (deterministic metric-eligibility projection, exclusions explicitly
+   accounted)
+  -> CalibrationEvaluationDataset
+  -> Brier / exact log loss
+```
+
+`CalibrationEvaluationCohort` is the FULL set of `CalibrationObservation` rows
+supplied as one declared evaluation split, BEFORE metric eligibility is
+applied. It may contain fit-eligible resolved rows, taxonomy-miss rows,
+unresolved rows, and resolved-but-unadjudicated rows; those rows are retained
+as real rows and explicitly accounted, never silently filtered. A cohort is
+NOT a fitting dataset, NOT a metric result, and NOT proof that the caller
+supplied every real deployment event: it records the source cohort supplied
+to the evaluation harness, and it cannot prove that a caller did not discard
+events before cohort construction. The experiment discipline is: construct
+the cohort at ingestion, before metric-eligibility projection.
+
+The projection is a deterministic, mutually exclusive partition of the cohort
+rows with fixed precedence:
+
+```text
+if status == TAXONOMY_MISS:                                    -> taxonomy_miss
+elif status == UNRESOLVED:                                     -> unresolved
+elif status == RESOLVED and provenance.adjudicated is not True -> unadjudicated_resolved
+else:                                                          -> eligible
+```
+
+The partition satisfies
+`source_count == eligible_count + taxonomy_miss_count + unresolved_count +
+unadjudicated_resolved_count`, with no overlapping counts and no
+double-counting (an unresolved row is counted exactly once, as unresolved,
+even when its provenance is also unadjudicated).
+
+Three counts must never be conflated:
+
+- `source_count`: the number of rows in the declared source cohort.
+- `evaluated_count` (the metric artifact's `count`): the number of rows
+  actually scored by the metric, that is, the eligible rows.
+- the exclusion accounting (`taxonomy_miss_count`, `unresolved_count`,
+  `unadjudicated_resolved_count`): coverage information about which rows were
+  NOT scored and why.
+
+The metric value is a statement about the admitted (eligible) population
+only. A taxonomy miss is not an ordinary incorrect prediction (section 6):
+it is a resolved ground truth outside the declared semantic outcome space,
+and it is recorded here as exclusion accounting, not folded into the metric
+and not reported as a taxonomy-miss-rate metric. The counts are provenance
+and accounting in this design; they are not a new metric.
+
+Because metric exclusion is provenance, the dataset fingerprint (version 2)
+commits the source cohort fingerprint, the split metadata, the eligible
+observation fingerprints, and the full exclusion accounting. Two cohorts
+with identical scored rows but different taxonomy-miss, unresolved, or
+unadjudicated exclusions therefore never collapse to the same evaluation
+dataset fingerprint or the same metric artifact fingerprint. Worked
+contrast: a source cohort with 1000 rows, 100 evaluated, and 900 taxonomy
+misses, versus another source cohort with 100 rows, 100 evaluated, and 0
+taxonomy misses, produce the same Brier value and the same evaluated count,
+but they do NOT share an artifact fingerprint: the cohort fingerprints
+differ, the dataset fingerprints differ, and the metric artifact
+fingerprints differ.
+
+Limitation, stated conservatively: the cohort records what was SUPPLIED to
+the evaluation harness. It does not prove complete deployment coverage and
+does not guarantee that no rows were omitted upstream of cohort
+construction.
+
 ### 14.1 Brier score
 
 For winner correctness, with `p_i` the evaluated probability-like score (the
@@ -1117,10 +1205,11 @@ The runtime already resolves ties deterministically: the first candidate in
 declared semantic order among those with maximal probability wins (`ChoiceResult`
 uses a strict greater-than comparison while iterating in candidate order; INV-03).
 
-A calibration observation records the value the runtime actually selected. It
-never re-runs the tie-break, never consults a different ordering, and never treats
-a tie as ambiguous for correctness purposes. The selection is a fact of the
-execution.
+A calibration observation records the selection carried by the supplied
+runtime-linked result. It never re-runs the tie-break, never consults a
+different ordering, and never treats a tie as ambiguous for correctness
+purposes. The recorded selection is honored as recorded; the linkage check
+attests linkage consistency, not the execution origin of the payload.
 
 ### 17.4 Out-of-set
 

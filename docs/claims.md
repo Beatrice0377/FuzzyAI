@@ -344,12 +344,17 @@ calibratable together; see INV-23 and INV-24.
 - `[V]` Calibration observations are constructed only through supported
   construction paths that require matching runtime linkage identities between
   the result and the trace. `CalibrationObservation.from_evaluation` is the
-  only supported construction path: it requires the result's trace id and the
-  trace's trace id to match before calibration provenance is derived, it
-  rejects a result whose trace id is missing, it rejects direct field
-  construction, and it rejects `dataclasses.replace` reconstruction with or
-  without changed fields, so an observation cannot be rebuilt with a foreign
-  binding or foreign probabilities. Lower-level Python escape hatches such as
+  only supported construction path: it requires a non-null result linkage id
+  matching the supplied trace linkage id and rejects mismatched pairs before
+  calibration provenance is derived, it rejects a result whose trace id is
+  missing, it rejects direct field construction, and it rejects
+  `dataclasses.replace` reconstruction with or without changed fields. The
+  binding is derived from the supplied trace and the probabilities and
+  selection are derived from the supplied result. This is linkage
+  CONSISTENCY, not content attestation: the check protects against accidental
+  pairing of objects carrying different runtime linkage identities, and it
+  does not prove that a caller-constructed result's probabilities were
+  emitted by the supplied trace. Lower-level Python escape hatches such as
   `object.__new__`, `copy`, and `pickle` are not supported construction paths
   and are not defended against.
   Evidence:
@@ -394,6 +399,76 @@ has been fitted, and no calibration-quality claim is made anywhere.
 
 ### Pre-calibration evaluation foundation (Phase 4A evaluation)
 
+ - `[V]` `CalibrationEvaluationCohort` is the declared evaluation source
+   cohort: the full set of observations supplied as one declared evaluation
+   split BEFORE metric eligibility is applied. Admission is all-or-nothing
+   with accumulated, distinct rejection messages: non-empty tuple container,
+   every element a real `CalibrationObservation` (duck-typed look-alikes and
+   non-tuple containers rejected), one `CalibrationBinding` canonical payload
+   and one `GroundTruthSemanticsIdentity` enforced by canonical-JSON string
+   equality (`label_source` differences alone are accepted; `labeling_rule`
+   differences are rejected even when the binding matches), and valid split
+   metadata (an `EvaluationSplitRole` `split_role`, a non-empty `split_id`).
+   A cohort MAY contain fit-eligible resolved rows, taxonomy-miss rows,
+   unresolved rows, and resolved-but-unadjudicated rows; those rows are
+   retained, never rejected merely because they cannot enter a
+   winner-correctness metric. The cohort fingerprint is version 1, row-order
+   independent, multiplicity preserving, and commits the split metadata, the
+   binding and ground-truth semantics identities with their payload versions,
+   and the sorted fingerprints of ALL cohort rows (excluded rows are real
+   rows in the identity, not just counters). Evidence:
+   `tests/test_calibration_evaluation.py`
+   (`TestEvaluationCohortAdmission`, `TestEvaluationCohortIdentity`).
+ - `[V]` The cohort partition is deterministic and mutually exclusive with
+   fixed precedence (`TAXONOMY_MISS` -> `taxonomy_miss`; `UNRESOLVED` ->
+   `unresolved`; `RESOLVED` with `provenance.adjudicated is not True` ->
+   `unadjudicated_resolved`; otherwise `eligible`), so
+   `source_count == eligible_count + taxonomy_miss_count + unresolved_count +
+   unadjudicated_resolved_count` with no overlapping counts and no
+   double-counting (an unresolved row is counted exactly once, as unresolved,
+   even when its provenance is also unadjudicated). A cohort with zero
+   eligible rows is still a valid provenance artifact, but the metric-dataset
+   projection fails clearly because a Brier score or a log loss cannot
+   average zero evaluated rows. Evidence: `tests/test_calibration_evaluation.py`
+   (`TestEvaluationCohortPartition`).
+ - `[V]` `CalibrationEvaluationDataset` is the metric-eligible projection of
+   exactly one declared `CalibrationEvaluationCohort`, and the only supported
+   construction path is `CalibrationEvaluationDataset.from_cohort(cohort)`:
+   direct construction is rejected with a construction token, so a caller
+   cannot present an arbitrary already-filtered tuple as an evaluation
+   dataset with no cohort provenance. The projection derives the eligible
+   rows, the binding, the ground-truth semantics, the split metadata, the
+   source cohort identity, and the exclusion accounting from the cohort.
+   The dataset fingerprint is version 2 (bumped from version 1), row-order
+   independent, multiplicity preserving, and commits the source cohort
+   fingerprint and payload version, the split metadata, the binding and
+   ground-truth semantics identities with their payload versions, the sorted
+   eligible observation fingerprints, `source_count`, `eligible_count`, and
+   the exclusion accounting. Two cohorts with identical scored rows but
+   different taxonomy-miss, unresolved, or unadjudicated exclusions never
+   collapse to the same evaluation dataset fingerprint. Evidence:
+   `tests/test_calibration_evaluation.py`
+   (`TestEvaluationDatasetProjection`, `TestEvaluationDatasetIdentity`,
+   `TestCohortProvenanceNoConflation`).
+ - `[V]` Metric exclusion is provenance: the decisive regression is two
+   cohorts, A with 2 eligible rows and 0 taxonomy misses and B with the same
+   2 eligible rows plus 3 taxonomy-miss rows under the same split metadata,
+   binding, and ground-truth semantics. A and B have equal eligible
+   observation fingerprints, equal metric `count`, and equal Brier and
+   log-loss numeric values, but different cohort fingerprints, different
+   evaluation dataset fingerprints, different Brier artifact fingerprints,
+   different log-loss artifact fingerprints, different `source_count`, and
+   different `taxonomy_miss_count`. Both `BrierEvaluationResult` and
+   `LogLossEvaluationResult` (fingerprint versions bumped 1 -> 2) commit
+   `source_cohort_fingerprint` and its payload version, `source_count`, and
+   the exclusion accounting, while `count` remains the number of observations
+   actually scored; the metric formulas and the metric versions (Brier
+   version 1, log-loss version 1) and the input-score identity (version 1)
+   are unchanged. This records the cohort supplied to the evaluation harness;
+   it does not prove a caller did not discard rows before cohort
+   construction. Evidence: `tests/test_calibration_evaluation.py`
+   (`TestCohortProvenanceNoConflation`, `TestVersionGuards`,
+   `TestLogLossVersionGuards`).
  - `[V]` `CalibrationEvaluationDataset` structurally preserves binding,
    ground-truth semantics, and split provenance: admission is all-or-nothing
    over fit-eligible observations with accumulated, distinct rejection
@@ -403,11 +478,12 @@ has been fitted, and no calibration-quality claim is made anywhere.
    binding matches); invalid split metadata (a non-`EvaluationSplitRole`
    `split_role`, an empty `split_id`) is rejected; a taxonomy miss, an
    unresolved ground truth, or an unadjudicated ground truth is rejected as
-   not fit-eligible and never encoded as `correct = False`. The dataset
-   fingerprint is version 1, row-order independent, multiplicity preserving,
-   and commits the declared `split_role` and `split_id`. Evidence:
-   `tests/test_calibration_evaluation.py`
-   (`TestEvaluationDatasetAdmission`, `TestEvaluationDatasetIdentity`).
+    not fit-eligible and never encoded as `correct = False`. The dataset
+    fingerprint is version 2, row-order independent, multiplicity preserving,
+    and commits the declared `split_role` and `split_id` plus the source
+    cohort identity and exclusion accounting. Evidence:
+    `tests/test_calibration_evaluation.py`
+    (`TestEvaluationDatasetProjection`, `TestEvaluationDatasetIdentity`).
  - `[V]` Brier evaluation computes `Brier = mean((p_i - y_i)^2)` with
    `math.fsum` accumulation, where `p_i` is the uncalibrated selected semantic
    probability extracted from the recorded `selected_value` by semantic name
@@ -417,18 +493,20 @@ has been fitted, and no calibration-quality claim is made anywhere.
    `tests/test_calibration_evaluation.py`
    (`TestBrierMatrix`, `TestSelectedProbabilityExtraction`).
  - `[V]` `BrierEvaluationResult` commits metric identity and version
-   (`brier`, version 1), the empirical target (`winner_correctness`),
-   input-score identity and version
-   (`uncalibrated-selected-probability`, version 1), the evaluation dataset
-   fingerprint and payload version, the constant `configuration == {}`,
-   `count`, and `value`; the fingerprint is the hash of `canonical_payload()`,
-   and `evaluate_uncalibrated_winner_brier(dataset)` is the only supported
-   construction path (direct construction and `dataclasses.replace(result)`
-   raise `InvalidDecisionError`; `dataclasses.replace(result, value=...)` is
-   rejected by `dataclasses` itself with a `ValueError`). Two evaluation
-   datasets that accidentally produce the same Brier numeric value yield
-   different result fingerprints. Evidence: `tests/test_calibration_evaluation.py`
-   (`TestBrierEvaluationResult`, `TestVersionGuards`).
+    (`brier`, version 1), the empirical target (`winner_correctness`),
+    input-score identity and version
+    (`uncalibrated-selected-probability`, version 1), the evaluation dataset
+    fingerprint and payload version, the source cohort fingerprint and
+    payload version, the source count and exclusion accounting, the constant
+    `configuration == {}`, the evaluated `count`, and `value`; the
+    fingerprint is the hash of `canonical_payload()`, and
+    `evaluate_uncalibrated_winner_brier(dataset)` is the only supported
+    construction path (direct construction and `dataclasses.replace(result)`
+    raise `InvalidDecisionError`; `dataclasses.replace(result, value=...)` is
+    rejected by `dataclasses` itself with a `ValueError`). Two evaluation
+    datasets that accidentally produce the same Brier numeric value yield
+    different result fingerprints. Evidence: `tests/test_calibration_evaluation.py`
+    (`TestBrierEvaluationResult`, `TestVersionGuards`).
  - `[V]` Exact log-loss evaluation computes
    `log_loss = mean(-ln(p_i) if y_i = 1 else -ln(1 - p_i))` with `math.fsum`
    accumulation of the finite terms, where `p_i` and `y_i` are the same
@@ -445,12 +523,14 @@ has been fitted, and no calibration-quality claim is made anywhere.
    Evidence: `tests/test_calibration_evaluation.py` (`TestLogLossFinite`,
    `TestLogLossExactEndpoints`, `TestLogLossNearBoundary`,
    `TestLogLossInfinityCanonicalization`).
- - `[V]` `LogLossEvaluationResult` commits metric identity and version
-   (`log-loss`, version 1), the empirical target (`winner_correctness`),
-   input-score identity and version (`uncalibrated-selected-probability`,
-   version 1), the evaluation dataset fingerprint and payload version, the
-   fixed configuration (`boundary_policy = exact`, `log_base = e`), `count`,
-   and the structurally encoded `value`;
+  - `[V]` `LogLossEvaluationResult` commits metric identity and version
+    (`log-loss`, version 1), the empirical target (`winner_correctness`),
+    input-score identity and version (`uncalibrated-selected-probability`,
+    version 1), the evaluation dataset fingerprint and payload version, the
+    source cohort fingerprint and payload version, the source count and
+    exclusion accounting, the fixed configuration (`boundary_policy = exact`,
+    `log_base = e`), the evaluated `count`, and the structurally encoded
+    `value`;
    `evaluate_uncalibrated_winner_log_loss(dataset)` is the only supported
    construction path. The same `CalibrationEvaluationDataset` therefore yields
    equal evaluation-dataset fingerprint and version, equal input-score identity
