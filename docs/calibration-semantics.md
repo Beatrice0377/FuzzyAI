@@ -9,7 +9,8 @@ CalibrationBinding:        implemented (src/probvenance/calibration.py)
 CalibrationDataset:        implemented (src/probvenance/calibration.py)
 CalibrationProfile:        not implemented
 Evaluation dataset:        implemented (src/probvenance/calibration_evaluation.py)
-Evaluation metrics:        winner-correctness Brier over a declared evaluation
+Evaluation metrics:        pre-calibration winner-correctness Brier and exact
+                           natural-log log loss over a declared evaluation
                            split implemented (src/probvenance/calibration_evaluation.py)
 Fitting algorithms:        not implemented
 Calibration runtime:       not implemented
@@ -931,10 +932,33 @@ For binary correctness:
 log_loss = -mean( y * log(p) + (1 - y) * log(1 - p) )
 ```
 
-Properties: proper scoring rule under the same forecast interpretation as section
-14.1, punishing on confident errors far more than
-Brier. The numerical treatment of `p = 0` and `p = 1` is a real implementation
-concern and is explicitly deferred. This document does not fix an epsilon policy.
+Phase 4B.2 implements this metric for the pre-calibration winner-correctness
+baseline, using the natural logarithm with an exact boundary policy:
+
+```text
+p = 1, y = 1  -> 0
+p = 0, y = 0  -> 0
+p = 0, y = 1  -> +infinity
+p = 1, y = 0  -> +infinity
+```
+
+There is no clipping, no epsilon, and no smoothing. A clipped implementation
+would replace an exact mathematical result with an arbitrary finite value, which
+would fold a numerical implementation policy into the metric semantics; this
+project does not permit that silent change. A clipped variant would require an
+explicit, identity-bearing boundary configuration, and none exists.
+
+Positive infinity is a legitimate metric result, not an invalid input. Because
+canonical JSON forbids non-finite numbers, the result fingerprint encodes the
+value structurally (a discriminator plus an optional finite number) instead of
+serializing a non-finite number, so an infinite result stays fingerprintable and
+mathematical positive infinity is never confused with a missing value.
+
+Properties: a proper scoring rule under the same forecast interpretation as
+section 14.1, punishing confident errors far more sharply than Brier. As in
+section 14.1, this pre-calibration run does not grant that interpretation to the
+raw uncalibrated selected semantic probability, so the metric is a diagnostic
+baseline and not calibration-quality evidence.
 
 ### 14.3 Expected calibration error
 

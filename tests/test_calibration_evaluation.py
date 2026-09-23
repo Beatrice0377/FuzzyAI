@@ -59,12 +59,21 @@ from probvenance.calibration_evaluation import (
     BRIER_METRIC_ID,
     BRIER_METRIC_VERSION,
     CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION,
+    LOG_LOSS_BOUNDARY_POLICY,
+    LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION,
+    LOG_LOSS_LOG_BASE,
+    LOG_LOSS_METRIC_ID,
+    LOG_LOSS_METRIC_VERSION,
+    LOG_LOSS_TARGET,
     UNCALIBRATED_SELECTED_PROBABILITY_ID,
     UNCALIBRATED_SELECTED_PROBABILITY_VERSION,
     BrierEvaluationResult,
     CalibrationEvaluationDataset,
     EvaluationSplitRole,
+    LogLossEvaluationResult,
+    _binary_log_loss_term,
     evaluate_uncalibrated_winner_brier,
+    evaluate_uncalibrated_winner_log_loss,
 )
 from probvenance.fingerprint import fingerprint
 
@@ -730,3 +739,368 @@ class TestVersionGuards:
         assert BRIER_METRIC_ID == "brier"
         assert BRIER_METRIC_VERSION == 1
         assert math.isfinite(float(BRIER_METRIC_VERSION))
+
+
+# ---------------------------------------------------------------------------
+# Log-loss: finite values
+# ---------------------------------------------------------------------------
+
+
+class TestLogLossFinite:
+    def test_neutral_probability_scores_ln_two(self):
+        # P(True) = 0.5 selects False (the deterministic tie), so the selected
+        # probability is 0.5 on both sides.
+        correct_side = bool_observation_with_probability_true(0.5, resolved_truth(False))
+        wrong_side = bool_observation_with_probability_true(0.5, resolved_truth(True))
+        assert correct_side.selected_value is False
+        assert correct_side.correct is True
+        assert wrong_side.correct is False
+        assert evaluate_uncalibrated_winner_log_loss(
+            evaluation_dataset([correct_side])
+        ).value == pytest.approx(math.log(2.0))
+        assert evaluate_uncalibrated_winner_log_loss(
+            evaluation_dataset([wrong_side])
+        ).value == pytest.approx(math.log(2.0))
+
+    def test_correct_finite_scores_negative_log_p(self):
+        observation = bool_observation_with_probability_true(0.8, resolved_truth(True))
+        assert observation.selected_value is True
+        assert observation.correct is True
+        result = evaluate_uncalibrated_winner_log_loss(evaluation_dataset([observation]))
+        assert result.value == pytest.approx(-math.log(0.8))
+
+    def test_wrong_finite_scores_negative_log_one_minus_p(self):
+        # An implementation that always used P(True) would give -ln(0.8) here.
+        observation = bool_observation_with_probability_true(0.8, resolved_truth(False))
+        assert observation.selected_value is True
+        assert observation.correct is False
+        result = evaluate_uncalibrated_winner_log_loss(evaluation_dataset([observation]))
+        assert result.value == pytest.approx(-math.log(0.2))
+
+    def test_hand_calculated_three_observation_value(self):
+        # p = [0.8, 0.6, 0.2], y = [1, 0, 0]
+        # loss = (-ln(0.8) - ln(0.4) - ln(0.8)) / 3
+        confident_right = choice_observation_with_probabilities(
+            three_way_probabilities(billing=0.8, shipping=0.1, returns=0.1),
+            resolved_truth("billing"),
+        )
+        confident_wrong = choice_observation_with_probabilities(
+            three_way_probabilities(billing=0.1, shipping=0.6, returns=0.3),
+            resolved_truth("billing"),
+        )
+        low_confidence_wrong = recorded_selection_observation(
+            three_way_probabilities(billing=0.2, shipping=0.4, returns=0.4),
+            "billing",
+            resolved_truth("shipping"),
+        )
+        assert confident_right.correct is True
+        assert confident_wrong.correct is False
+        assert low_confidence_wrong.correct is False
+        result = evaluate_uncalibrated_winner_log_loss(
+            evaluation_dataset([confident_right, confident_wrong, low_confidence_wrong])
+        )
+        expected = (-math.log(0.8) - math.log(0.4) - math.log(0.8)) / 3
+        assert result.value == pytest.approx(expected)
+
+
+# ---------------------------------------------------------------------------
+# Log-loss: exact endpoints
+# ---------------------------------------------------------------------------
+
+
+class TestLogLossExactEndpoints:
+    def test_correct_deterministic_endpoints_score_zero(self):
+        assert _binary_log_loss_term(1.0, True) == 0.0
+        assert _binary_log_loss_term(0.0, False) == 0.0
+
+    def test_impossible_observed_endpoints_score_positive_infinity(self):
+        assert _binary_log_loss_term(0.0, True) == math.inf
+        assert _binary_log_loss_term(1.0, False) == math.inf
+
+    def test_integration_confident_correct_scores_zero(self):
+        observation = choice_observation_with_probabilities(
+            three_way_probabilities(billing=1.0), resolved_truth("billing")
+        )
+        assert observation.selected_value == "billing"
+        assert observation.correct is True
+        result = evaluate_uncalibrated_winner_log_loss(evaluation_dataset([observation]))
+        assert result.value == 0.0
+
+    def test_integration_confident_wrong_scores_positive_infinity(self):
+        observation = choice_observation_with_probabilities(
+            three_way_probabilities(billing=1.0), resolved_truth("shipping")
+        )
+        assert observation.correct is False
+        result = evaluate_uncalibrated_winner_log_loss(evaluation_dataset([observation]))
+        assert result.value == math.inf
+
+    def test_integration_zero_probability_wrong_selection_scores_zero(self):
+        # The recorded selection is "billing" at p = 0.0 and the truth is
+        # "returns": a correct deterministic endpoint scores exactly 0.
+        observation = recorded_selection_observation(
+            three_way_probabilities(shipping=1.0), "billing", resolved_truth("returns")
+        )
+        assert observation.selected_value == "billing"
+        assert observation.correct is False
+        result = evaluate_uncalibrated_winner_log_loss(evaluation_dataset([observation]))
+        assert result.value == 0.0
+
+    def test_integration_zero_probability_correct_selection_scores_infinity(self):
+        observation = recorded_selection_observation(
+            three_way_probabilities(shipping=1.0), "billing", resolved_truth("billing")
+        )
+        assert observation.correct is True
+        result = evaluate_uncalibrated_winner_log_loss(evaluation_dataset([observation]))
+        assert result.value == math.inf
+
+
+# ---------------------------------------------------------------------------
+# Log-loss: near-boundary behaviour
+# ---------------------------------------------------------------------------
+
+
+class TestLogLossNearBoundary:
+    def test_near_zero_probability_stays_finite(self):
+        tiny = math.nextafter(0.0, 1.0)
+        term = _binary_log_loss_term(tiny, True)
+        assert math.isfinite(term)
+        assert term == pytest.approx(-math.log(tiny))
+
+    def test_near_one_probability_stays_finite(self):
+        almost_one = math.nextafter(1.0, 0.0)
+        term = _binary_log_loss_term(almost_one, False)
+        assert math.isfinite(term)
+        assert term == pytest.approx(-math.log1p(-almost_one))
+
+    def test_integration_near_one_wrong_selection_stays_finite(self):
+        # Only the exact impossible event scores infinity: a representable
+        # probability arbitrarily close to 1 must stay finite.
+        almost_one = math.nextafter(1.0, 0.0)
+        observation = bool_observation_with_probability_true(almost_one, resolved_truth(False))
+        assert observation.selected_value is True
+        assert observation.correct is False
+        result = evaluate_uncalibrated_winner_log_loss(evaluation_dataset([observation]))
+        assert math.isfinite(result.value)
+        assert result.value > 0.0
+
+
+# ---------------------------------------------------------------------------
+# Log-loss: infinity canonicalization
+# ---------------------------------------------------------------------------
+
+
+class TestLogLossInfinityCanonicalization:
+    def _infinity_result(self):
+        observation = choice_observation_with_probabilities(
+            three_way_probabilities(billing=1.0), resolved_truth("shipping")
+        )
+        return evaluate_uncalibrated_winner_log_loss(evaluation_dataset([observation]))
+
+    def _finite_result(self):
+        observation = choice_observation_with_probabilities(
+            three_way_probabilities(billing=0.8, shipping=0.1, returns=0.1),
+            resolved_truth("billing"),
+        )
+        return evaluate_uncalibrated_winner_log_loss(evaluation_dataset([observation]))
+
+    def test_positive_infinity_is_the_python_metric_value(self):
+        result = self._infinity_result()
+        assert result.value == math.inf
+        assert math.isinf(result.value)
+        assert result.value > 0.0
+
+    def test_infinity_result_is_fingerprintable(self):
+        result = self._infinity_result()
+        encoded = result.canonical_payload()["value"]
+        assert isinstance(encoded, dict)
+        assert encoded == {"kind": "positive_infinity", "number": None}
+        # fingerprint() canonicalises the payload, so it would raise
+        # FingerprintError if a non-finite float had leaked into the payload.
+        assert isinstance(result.fingerprint, str)
+        assert len(result.fingerprint) == 64
+
+    def test_finite_payload_is_structurally_encoded(self):
+        encoded = self._finite_result().canonical_payload()["value"]
+        assert isinstance(encoded, dict)
+        assert encoded["kind"] == "finite"
+        number = encoded["number"]
+        assert isinstance(number, float)
+        assert math.isfinite(number)
+
+    def test_no_non_finite_number_enters_the_canonical_payload(self):
+        result = self._infinity_result()
+        payload = result.canonical_payload()
+        encoded = payload["value"]
+        assert isinstance(encoded, dict)
+        assert encoded["number"] is None
+        # Canonicalising the whole payload is the real guard: it rejects any
+        # non-finite JSON number anywhere in the payload.
+        assert fingerprint(payload) == result.fingerprint
+
+    def test_finite_and_infinite_values_have_different_identities(self):
+        finite = self._finite_result()
+        infinite = self._infinity_result()
+        assert finite.canonical_payload()["value"] != infinite.canonical_payload()["value"]
+        assert finite.fingerprint != infinite.fingerprint
+
+    def test_identical_value_from_different_datasets_yields_different_fingerprints(self):
+        def build(split_id):
+            observation = choice_observation_with_probabilities(
+                three_way_probabilities(billing=0.8, shipping=0.1, returns=0.1),
+                resolved_truth("billing"),
+            )
+            return evaluate_uncalibrated_winner_log_loss(
+                evaluation_dataset([observation], split_id=split_id)
+            )
+
+        first = build("eval-a")
+        second = build("eval-b")
+        assert first.value == pytest.approx(second.value)
+        assert first.evaluation_dataset_fingerprint != second.evaluation_dataset_fingerprint
+        assert first.fingerprint != second.fingerprint
+
+
+# ---------------------------------------------------------------------------
+# Log-loss: result artifact
+# ---------------------------------------------------------------------------
+
+
+class TestLogLossEvaluationResult:
+    def _result(self):
+        return evaluate_uncalibrated_winner_log_loss(evaluation_dataset([choice_observation()]))
+
+    def test_identity_fields_are_actually_set(self):
+        result = self._result()
+        assert result.metric_id == "log-loss"
+        assert result.metric_version == 1
+        assert result.target == "winner_correctness"
+        assert result.input_score_id == "uncalibrated-selected-probability"
+        assert result.input_score_version == 1
+        assert result.count == 1
+        assert isinstance(result.value, float)
+
+    def test_configuration_is_fixed_and_committed(self):
+        result = self._result()
+        assert result.canonical_payload()["configuration"] == {
+            "boundary_policy": "exact",
+            "log_base": "e",
+        }
+
+    def test_no_caller_controlled_configuration_field_exists(self):
+        assert "configuration" not in {f.name for f in fields(LogLossEvaluationResult)}
+
+    def test_value_and_fingerprint_are_deterministic(self):
+        assert self._result().value == self._result().value
+        assert self._result().fingerprint == self._result().fingerprint
+
+    def test_fingerprint_hashes_the_canonical_payload(self):
+        result = self._result()
+        assert result.fingerprint == fingerprint(result.canonical_payload())
+
+    def test_direct_construction_rejected(self):
+        with pytest.raises(InvalidDecisionError):
+            LogLossEvaluationResult()
+
+    def test_dataclasses_replace_without_fields_rejected(self):
+        with pytest.raises(InvalidDecisionError):
+            replace(self._result())
+
+    def test_dataclasses_replace_with_value_rejected_by_dataclasses(self):
+        with pytest.raises(ValueError):
+            replace(self._result(), value=0.01)
+
+    def test_evaluator_rejects_non_dataset_argument(self):
+        with pytest.raises(InvalidDecisionError, match="CalibrationEvaluationDataset"):
+            evaluate_uncalibrated_winner_log_loss("not a dataset")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Log-loss: cross-metric provenance
+# ---------------------------------------------------------------------------
+
+
+class TestLogLossCrossMetricProvenance:
+    def test_same_dataset_shares_provenance_but_not_metric_identity(self):
+        dataset = evaluation_dataset([choice_observation()])
+        brier = evaluate_uncalibrated_winner_brier(dataset)
+        log_loss = evaluate_uncalibrated_winner_log_loss(dataset)
+        assert log_loss.evaluation_dataset_fingerprint == brier.evaluation_dataset_fingerprint
+        assert (
+            log_loss.evaluation_dataset_fingerprint_version
+            == brier.evaluation_dataset_fingerprint_version
+        )
+        assert log_loss.input_score_id == brier.input_score_id
+        assert log_loss.input_score_version == brier.input_score_version
+        assert log_loss.target == brier.target
+        assert log_loss.count == brier.count
+        assert log_loss.metric_id != brier.metric_id
+        assert log_loss.fingerprint != brier.fingerprint
+
+
+# ---------------------------------------------------------------------------
+# Log-loss: no semantic conflation
+# ---------------------------------------------------------------------------
+
+
+class TestLogLossNoConflation:
+    def test_result_has_no_calibration_or_prediction_fields(self):
+        names = {f.name for f in fields(LogLossEvaluationResult)}
+        assert "calibrated" not in names
+        assert "predicted_correctness" not in names
+
+    def test_value_is_never_nan(self):
+        finite = evaluate_uncalibrated_winner_log_loss(evaluation_dataset([choice_observation()]))
+        assert not math.isnan(finite.value)
+        infinite = evaluate_uncalibrated_winner_log_loss(
+            evaluation_dataset(
+                [
+                    choice_observation_with_probabilities(
+                        three_way_probabilities(billing=1.0), resolved_truth("shipping")
+                    )
+                ]
+            )
+        )
+        assert not math.isnan(infinite.value)
+
+    def test_value_is_never_negative(self):
+        observations = (
+            choice_observation(),
+            bool_observation_with_probability_true(0.8, resolved_truth(True)),
+            bool_observation_with_probability_true(0.8, resolved_truth(False)),
+        )
+        for observation in observations:
+            value = evaluate_uncalibrated_winner_log_loss(evaluation_dataset([observation])).value
+            assert value >= 0.0
+            assert value != -math.inf
+
+    def test_evaluation_does_not_mutate_observations_or_dataset(self):
+        observation = choice_observation()
+        dataset = evaluation_dataset([observation])
+        before_observation = observation.fingerprint
+        before_dataset = dataset.fingerprint
+        evaluate_uncalibrated_winner_log_loss(dataset)
+        assert observation.fingerprint == before_observation
+        assert dataset.fingerprint == before_dataset
+
+
+# ---------------------------------------------------------------------------
+# Log-loss: version guards
+# ---------------------------------------------------------------------------
+
+
+class TestLogLossVersionGuards:
+    def test_new_log_loss_versions_are_one(self):
+        assert LOG_LOSS_METRIC_VERSION == 1
+        assert LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION == 1
+
+    def test_log_loss_identity_constants(self):
+        assert LOG_LOSS_METRIC_ID == "log-loss"
+        assert LOG_LOSS_TARGET == "winner_correctness"
+        assert LOG_LOSS_BOUNDARY_POLICY == "exact"
+        assert LOG_LOSS_LOG_BASE == "e"
+
+    def test_pre_existing_versions_unchanged(self):
+        assert BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION == 1
+        assert BRIER_METRIC_VERSION == 1
+        assert CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION == 1
+        assert UNCALIBRATED_SELECTED_PROBABILITY_VERSION == 1

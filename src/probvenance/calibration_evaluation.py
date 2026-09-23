@@ -1,4 +1,4 @@
-"""Pre-calibration evaluation: winner-correctness Brier baseline.
+"""Pre-calibration winner-correctness evaluation.
 
 This module is the evaluation layer of the calibration work. It is deliberately
 separate from the fitting layer in :mod:`probvenance.calibration`:
@@ -40,12 +40,20 @@ __all__ = [
     "BRIER_METRIC_ID",
     "BRIER_METRIC_VERSION",
     "CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION",
+    "LOG_LOSS_BOUNDARY_POLICY",
+    "LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION",
+    "LOG_LOSS_LOG_BASE",
+    "LOG_LOSS_METRIC_ID",
+    "LOG_LOSS_METRIC_VERSION",
+    "LOG_LOSS_TARGET",
     "UNCALIBRATED_SELECTED_PROBABILITY_ID",
     "UNCALIBRATED_SELECTED_PROBABILITY_VERSION",
     "BrierEvaluationResult",
     "CalibrationEvaluationDataset",
     "EvaluationSplitRole",
+    "LogLossEvaluationResult",
     "evaluate_uncalibrated_winner_brier",
+    "evaluate_uncalibrated_winner_log_loss",
 ]
 
 # ---------------------------------------------------------------------------
@@ -54,6 +62,7 @@ __all__ = [
 
 CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION = 1
 BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION = 1
+LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION = 1
 
 # ---------------------------------------------------------------------------
 # Score semantics identity
@@ -76,11 +85,22 @@ BRIER_METRIC_VERSION = 1
 #: The empirical target the Brier score is computed against.
 BRIER_TARGET = "winner_correctness"
 
+LOG_LOSS_METRIC_ID = "log-loss"
+LOG_LOSS_METRIC_VERSION = 1
+#: The empirical target the log loss is computed against.
+LOG_LOSS_TARGET = "winner_correctness"
+#: The boundary policy of the implemented log loss: exact natural-log
+#: endpoints, no epsilon, no clipping, no smoothing.
+LOG_LOSS_BOUNDARY_POLICY = "exact"
+#: The logarithm base of the implemented log loss: the natural logarithm.
+LOG_LOSS_LOG_BASE = "e"
+
 # ---------------------------------------------------------------------------
 # Construction token for the supported-path-only result artifact
 # ---------------------------------------------------------------------------
 
 _BRIER_RESULT_CONSTRUCTION_TOKEN = object()
+_LOG_LOSS_RESULT_CONSTRUCTION_TOKEN = object()
 
 _BOOL_TRUE_NAME = "true"
 _BOOL_FALSE_NAME = "false"
@@ -140,6 +160,30 @@ def _selected_probability(
         f"order {observation.outcome_order!r}; the uncalibrated selected "
         "semantic probability cannot be extracted"
     )
+
+
+def _binary_log_loss_term(probability: float, correct: bool) -> float:
+    """One exact natural-log binary log-loss term.
+
+    ``correct=True`` contributes ``-ln(p)``; ``correct=False`` contributes
+    ``-ln(1 - p)``. The endpoints are exact: a correct deterministic endpoint
+    scores ``0.0`` and an impossible observed outcome scores ``+inf``. There
+    is no epsilon, no clipping, and no smoothing; the branches are explicit so
+    a ``0 * log(0)`` style product (which would produce NaN) is never formed.
+    The ``correct=False`` branch uses :func:`math.log1p` instead of
+    ``log(1.0 - p)`` to avoid precision loss near ``p = 1``.
+    """
+    if correct:
+        if probability == 0.0:
+            return math.inf
+        if probability == 1.0:
+            return 0.0
+        return -math.log(probability)
+    if probability == 1.0:
+        return math.inf
+    if probability == 0.0:
+        return 0.0
+    return -math.log1p(-probability)
 
 
 @dataclass(frozen=True, slots=True)
@@ -418,3 +462,188 @@ def evaluate_uncalibrated_winner_brier(
             f"CalibrationEvaluationDataset, got {type(dataset).__name__}"
         )
     return BrierEvaluationResult(dataset, _construction_token=_BRIER_RESULT_CONSTRUCTION_TOKEN)
+
+
+@dataclass(frozen=True, slots=True)
+class LogLossEvaluationResult:
+    """Immutable, provenance-rich artifact of one log-loss evaluation run.
+
+    The supported construction contract is the module-level evaluator
+    :func:`evaluate_uncalibrated_winner_log_loss`. Direct construction and
+    ``dataclasses.replace`` reconstruction are rejected so a caller cannot
+    combine one dataset with a fabricated ``value`` or ``count``. This is an
+    API discipline within the supported construction contract, not a security
+    boundary; low-level Python escape hatches such as ``object.__new__`` are
+    not supported construction paths and are not defended against.
+
+    ``dataclasses.replace(result)`` reaches ``__init__`` with no construction
+    token and is rejected with :class:`InvalidDecisionError`.
+    ``dataclasses.replace(result, value=...)`` is rejected earlier by
+    ``dataclasses`` itself (a ``ValueError``, because ``value`` is declared
+    with ``init=False``) and never reaches ``__init__``; that rejection is
+    intentional and is NOT an :class:`InvalidDecisionError`.
+
+    ``value`` is the exact natural-log binary log loss over the dataset and
+    MAY be ``math.inf``: an impossible observed outcome (a deterministic
+    endpoint assigned to the wrong label) scores positive infinity. It is
+    never NaN, never negative infinity, and never a negative finite log loss;
+    the evaluator fails closed if such a value could arise. Because canonical
+    JSON forbids non-finite floats, :meth:`canonical_payload` encodes ``value``
+    structurally (a discriminator plus an optional finite number), never as a
+    bare non-finite JSON number.
+
+    ``count`` and ``value`` are derived from the dataset by the evaluator and
+    are stored as immutable scalars. The metric configuration is fixed and
+    derived from the module constants; ``canonical_payload`` emits it
+    literally as ``{"boundary_policy": "exact", "log_base": "e"}``. No
+    caller-controlled configuration mapping exists.
+    """
+
+    metric_id: str = field(init=False, repr=False)
+    metric_version: int = field(init=False, repr=False)
+    target: str = field(init=False, repr=False)
+    input_score_id: str = field(init=False, repr=False)
+    input_score_version: int = field(init=False, repr=False)
+    evaluation_dataset_fingerprint: str = field(init=False, repr=False)
+    evaluation_dataset_fingerprint_version: int = field(init=False, repr=False)
+    count: int = field(init=False, repr=False)
+    value: float = field(init=False, repr=False)
+
+    def __init__(
+        self,
+        dataset: CalibrationEvaluationDataset | None = None,
+        *,
+        _construction_token: object = None,
+    ) -> None:
+        if _construction_token is not _LOG_LOSS_RESULT_CONSTRUCTION_TOKEN:
+            raise InvalidDecisionError(
+                "LogLossEvaluationResult cannot be constructed directly or with "
+                "dataclasses.replace; use "
+                "evaluate_uncalibrated_winner_log_loss(dataset), the only "
+                "supported construction path"
+            )
+        if not isinstance(dataset, CalibrationEvaluationDataset):
+            raise InvalidDecisionError(
+                "the supported LogLossEvaluationResult construction path requires "
+                "a CalibrationEvaluationDataset, got "
+                f"{type(dataset).__name__}"
+            )
+        count = len(dataset.observations)
+        terms: list[float] = []
+        for observation in dataset.observations:
+            probability = _selected_probability(observation)
+            if observation.correct is None:
+                raise InvalidDecisionError(
+                    f"observation {observation.fingerprint} has no derived "
+                    "correctness label; the winner-correctness log loss cannot "
+                    "be computed"
+                )
+            terms.append(_binary_log_loss_term(probability, observation.correct))
+        value = math.inf if any(term == math.inf for term in terms) else math.fsum(terms) / count
+        if math.isnan(value) or value == -math.inf or (math.isfinite(value) and value < 0.0):
+            raise InvalidDecisionError(
+                "the computed log loss value is not a valid log loss "
+                f"(got {value!r}); a log loss is never NaN, never negative "
+                "infinity, and never a negative finite number"
+            )
+        object.__setattr__(self, "metric_id", LOG_LOSS_METRIC_ID)
+        object.__setattr__(self, "metric_version", LOG_LOSS_METRIC_VERSION)
+        object.__setattr__(self, "target", LOG_LOSS_TARGET)
+        object.__setattr__(self, "input_score_id", UNCALIBRATED_SELECTED_PROBABILITY_ID)
+        object.__setattr__(self, "input_score_version", UNCALIBRATED_SELECTED_PROBABILITY_VERSION)
+        object.__setattr__(self, "evaluation_dataset_fingerprint", dataset.fingerprint)
+        object.__setattr__(
+            self,
+            "evaluation_dataset_fingerprint_version",
+            CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION,
+        )
+        object.__setattr__(self, "count", count)
+        object.__setattr__(self, "value", value)
+
+    def canonical_payload(self) -> dict[str, JSONValue]:
+        """Return the exact payload the fingerprint hashes.
+
+        Commits the metric identity, the input-score identity, the evaluation
+        dataset identity with its payload schema version, the fixed metric
+        configuration, ``count``, and a structural encoding of ``value``.
+        Timestamps, wall-clock time, hostnames, and logging metadata are
+        deliberately excluded.
+
+        The structural value encoding exists because canonical JSON forbids
+        non-finite floats: a finite value is encoded as
+        ``{"kind": "finite", "number": <finite float>}`` and positive infinity
+        as ``{"kind": "positive_infinity", "number": None}``. A finite value
+        and positive infinity therefore have different canonical payloads and
+        different fingerprints, and a missing value is never confused with
+        mathematical positive infinity.
+        """
+        if self.value == math.inf:
+            encoded_value: dict[str, JSONValue] = {
+                "kind": "positive_infinity",
+                "number": None,
+            }
+        else:
+            encoded_value = {"kind": "finite", "number": self.value}
+        return {
+            "v": LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION,
+            "metric_id": self.metric_id,
+            "metric_version": self.metric_version,
+            "target": self.target,
+            "input_score_id": self.input_score_id,
+            "input_score_version": self.input_score_version,
+            "evaluation_dataset_fingerprint": self.evaluation_dataset_fingerprint,
+            "evaluation_dataset_fingerprint_version": (self.evaluation_dataset_fingerprint_version),
+            "configuration": {
+                "boundary_policy": LOG_LOSS_BOUNDARY_POLICY,
+                "log_base": LOG_LOSS_LOG_BASE,
+            },
+            "count": self.count,
+            "value": encoded_value,
+        }
+
+    @property
+    def fingerprint(self) -> str:
+        """Stable identity of the evaluation artifact.
+
+        The hash of :meth:`canonical_payload`, deterministic for the object
+        lifetime: every payload field is an immutable scalar, string, or
+        structural value encoding fixed at construction.
+        """
+        return fingerprint(self.canonical_payload())
+
+
+def evaluate_uncalibrated_winner_log_loss(
+    dataset: CalibrationEvaluationDataset,
+) -> LogLossEvaluationResult:
+    """Evaluate the pre-calibration winner-correctness log loss.
+
+    ``log_loss = mean(-ln(p_i) if y_i = 1 else -ln(1 - p_i))`` where ``p_i``
+    is the uncalibrated selected semantic probability of observation ``i`` and
+    ``y_i`` is the derived winner-correctness label (``1`` when the
+    observation is correct, ``0`` otherwise). The boundary policy is exact:
+    there is no epsilon, no clipping, and no smoothing. A correct
+    deterministic endpoint scores ``0.0``; an impossible observed outcome
+    scores ``+inf``, and any infinite term makes the aggregate ``+inf``.
+    Accumulation of finite terms uses :func:`math.fsum` for stable
+    deterministic summation; infinite terms are detected before summation so
+    ``fsum`` never has to guess semantics from a mix of non-finite values.
+
+    The evaluated input score remains the uncalibrated selected semantic
+    probability. It is NOT ``predicted_correctness``, NOT ``P(Y_correct = 1)``,
+    NOT a calibrated probability, and NOT a confidence. Log loss is a proper
+    scoring rule when its input is interpreted as a probability forecast of
+    the scored binary target; this pre-calibration run does not grant that
+    interpretation to the raw selected semantic probability (section 14.0 of
+    ``docs/calibration-semantics.md``).
+
+    This is a read-only offline measurement: it does not mutate the dataset or
+    any observation, does not set ``calibrated`` or ``predicted_correctness``
+    anywhere, does not create a :class:`~probvenance.calibration.CalibrationProfile`,
+    and does not touch the runtime.
+    """
+    if not isinstance(dataset, CalibrationEvaluationDataset):
+        raise InvalidDecisionError(
+            "evaluate_uncalibrated_winner_log_loss requires a "
+            f"CalibrationEvaluationDataset, got {type(dataset).__name__}"
+        )
+    return LogLossEvaluationResult(dataset, _construction_token=_LOG_LOSS_RESULT_CONSTRUCTION_TOKEN)

@@ -429,6 +429,35 @@ has been fitted, and no calibration-quality claim is made anywhere.
    datasets that accidentally produce the same Brier numeric value yield
    different result fingerprints. Evidence: `tests/test_calibration_evaluation.py`
    (`TestBrierEvaluationResult`, `TestVersionGuards`).
+ - `[V]` Exact log-loss evaluation computes
+   `log_loss = mean(-ln(p_i) if y_i = 1 else -ln(1 - p_i))` with `math.fsum`
+   accumulation of the finite terms, where `p_i` and `y_i` are the same
+   uncalibrated selected semantic probability and derived winner-correctness
+   label used by Brier. The boundary policy is exact: there is no clipping, no
+   epsilon, and no smoothing; a correct deterministic endpoint scores exactly
+   `0`, an impossible observed endpoint scores positive infinity, and any
+   infinite term makes the aggregate positive infinity. A representable
+   probability arbitrarily close to 0 or 1 stays finite, and no supported path
+   produces NaN or a negative value. Positive infinity is a legitimate metric
+   value and is encoded structurally in the canonical payload
+   (`{"kind": "positive_infinity", "number": null}`) so the result remains
+   fingerprintable while canonical JSON stays free of non-finite numbers.
+   Evidence: `tests/test_calibration_evaluation.py` (`TestLogLossFinite`,
+   `TestLogLossExactEndpoints`, `TestLogLossNearBoundary`,
+   `TestLogLossInfinityCanonicalization`).
+ - `[V]` `LogLossEvaluationResult` commits metric identity and version
+   (`log-loss`, version 1), the empirical target (`winner_correctness`),
+   input-score identity and version (`uncalibrated-selected-probability`,
+   version 1), the evaluation dataset fingerprint and payload version, the
+   fixed configuration (`boundary_policy = exact`, `log_base = e`), `count`,
+   and the structurally encoded `value`;
+   `evaluate_uncalibrated_winner_log_loss(dataset)` is the only supported
+   construction path. The same `CalibrationEvaluationDataset` therefore yields
+   equal evaluation-dataset fingerprint and version, equal input-score identity
+   and version, and an equal target across Brier and log loss, while the metric
+   identities and the artifact fingerprints differ. Evidence:
+   `tests/test_calibration_evaluation.py` (`TestLogLossEvaluationResult`,
+   `TestLogLossCrossMetricProvenance`, `TestLogLossVersionGuards`).
 
 These claims are deterministic implementation claims about the evaluation
 foundation only. They are NOT claims that any model is calibrated, that any

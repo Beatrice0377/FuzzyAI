@@ -88,13 +88,12 @@ identity, binding, profile identity, and evaluation contract are designed in
 `docs/calibration-semantics.md`. The Phase 4A data foundation (ground truth,
 binding, observation, dataset, and their identities and fingerprints) and the
 pre-calibration evaluation foundation (the evaluation dataset contract and the
-winner-correctness Brier metric) are implemented. `CalibrationProfile`, fitting,
-the remaining metrics, profile matching, and runtime profile application do not
-exist, and `predicted_correctness` remains `None` for every result the runtime
-can produce.
+winner-correctness Brier and exact log-loss metrics) are implemented.
+`CalibrationProfile`, fitting, the remaining metrics, profile matching, and
+runtime profile application do not exist, and `predicted_correctness` remains
+`None` for every result the runtime can produce.
 
-- Evaluation harness (started: evaluation dataset contract and Brier).
-- Log loss.
+- Evaluation harness (started: evaluation dataset contract, Brier, log loss).
 - Expected calibration error (ECE).
 - Temperature scaling.
 - Calibration profile.
