@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
@@ -152,6 +151,24 @@ def _require_non_empty_str(name: str, value: Any) -> None:
 def _require_real_bool(name: str, value: Any) -> None:
     if not isinstance(value, bool):
         raise InvalidDecisionError(f"{name} must be a bool, got {type(value).__name__} ({value!r})")
+
+
+def _freeze_json_value(value: Any) -> Any:
+    """Return a deeply immutable copy of a canonical JSON value."""
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_json_value(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_json_value(item) for item in value)
+    return value
+
+
+def _thaw_json_value(value: Any) -> Any:
+    """Return a plain JSON-compatible copy of a frozen JSON value."""
+    if isinstance(value, Mapping):
+        return {key: _thaw_json_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json_value(item) for item in value]
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -473,7 +490,7 @@ class CalibrationBinding:
         object.__setattr__(
             self,
             "rendering_semantics",
-            MappingProxyType(deepcopy(dict(self.rendering_semantics))),
+            _freeze_json_value(self.rendering_semantics),
         )
 
     @classmethod
@@ -533,7 +550,7 @@ class CalibrationBinding:
             "model_revision": self.model_revision,
             "tokenizer": self.tokenizer,
             "tokenizer_revision": self.tokenizer_revision,
-            "rendering_semantics": dict(self.rendering_semantics),
+            "rendering_semantics": _thaw_json_value(self.rendering_semantics),
             "task_id": self.task_id,
             "domain_id": self.domain_id,
             "taxonomy_id": self.taxonomy_id,

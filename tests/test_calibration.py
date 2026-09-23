@@ -557,6 +557,25 @@ class TestBindingImmutabilityAndFingerprintability:
         with pytest.raises(TypeError):
             replaced.rendering_semantics["enable_thinking"] = True
 
+    def test_nested_list_mutation_cannot_change_binding_identity(self) -> None:
+        source: dict[str, Any] = {
+            "v": 1,
+            "enable_thinking": False,
+            "extra": [1, 2],
+        }
+        binding = hand_bound_binding(rendering_semantics=source)
+        before = binding.fingerprint
+        source["extra"].append(3)
+        assert binding.fingerprint == before
+        assert binding.rendering_semantics["extra"] == (1, 2)
+        with pytest.raises((AttributeError, TypeError)):
+            binding.rendering_semantics["extra"].append(3)
+        assert binding.fingerprint == before
+        payload_semantics = binding.canonical_payload()["rendering_semantics"]
+        assert type(payload_semantics) is dict
+        assert type(payload_semantics["extra"]) is list
+        assert payload_semantics["extra"] == [1, 2]
+
 
 # ---------------------------------------------------------------------------
 # Observation status and derived correctness (Parts G, H)
