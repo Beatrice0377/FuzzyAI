@@ -14,9 +14,11 @@ Calibration runtime:       not implemented
 predicted_correctness:     None for every result the runtime can currently produce
 ```
 
-This document designs the semantics of calibration. It implements nothing. There
-is no `CalibrationProfile`, no fitting, no reliability metric, and no profile
-matching in the repository, and this document does not add any.
+This document originated as a design document. The Phase 4A data foundation
+portions it specified (ground truth, binding, observation, dataset, and their
+identities and fingerprints, in `src/probvenance/calibration.py`) are now
+implemented. `CalibrationProfile`, fitting, evaluation metrics, and runtime
+profile application remain unimplemented, and this document does not add any.
 
 This document is a design proposal and makes no verified claim. Every measured
 number it cites (the Phase 2B.1 total-variation figures in section 1, and the
@@ -351,26 +353,26 @@ patch to this one.
 
 ## 8. CalibrationObservation
 
-A conceptual structure. Not implemented.
-
-It must be able to answer: what did the model output, what was the truth, was it
-correct, which formulation produced it, which source produced it, and which task
+Implemented as `CalibrationObservation` in `src/probvenance/calibration.py`.
+It answers: what did the model output, what was the truth, was it correct,
+which formulation produced it, which source produced it, and which task
 population it belongs to.
 
 Fields are grouped by role. The grouping matters because not every field is part
 of identity.
 
 An observation may only be constructed through `from_evaluation`. Before any
-provenance is derived, the result and the trace must share a provably coherent
-execution lineage, verified through the runtime trace id that the runtime stamps
-onto both the assembled result and the reported trace. A pair whose linkage
-identities do not match is rejected rather than repaired or warned about, and a
-result without a trace id cannot be proven coherent at all, so it is rejected
-too. Direct field construction of an observation is rejected for the same
-reason: without the trace there is nothing against which coherence could be
-proven. `dataclasses.replace` reconstruction is rejected for the same reason
-again: it rebuilds the observation through the direct constructor, so an
-observation cannot be rebuilt with a foreign binding or foreign probabilities.
+provenance is derived, the result and the trace must carry matching runtime
+linkage identities: the runtime stamps the same trace id onto both the
+assembled result and the reported trace, and the pair is checked under the
+supported construction contract. A pair whose linkage identities do not match
+is rejected rather than repaired or warned about, and a result without a trace
+id cannot be verified against the trace at all, so it is rejected too. Direct
+field construction of an observation is rejected for the same reason: without
+the runtime-issued trace there is no linkage identity to check.
+`dataclasses.replace` reconstruction is rejected for the same reason again:
+it rebuilds the observation through the direct constructor, so an observation
+cannot be rebuilt with a foreign binding or foreign probabilities.
 Lower-level Python escape hatches such as `object.__new__`, `copy`, and
 `pickle` are not supported construction paths and are not defended against.
 
@@ -383,8 +385,16 @@ uncalibrated_probabilities       the restricted distribution as produced
 selected_value                   the semantic value the runtime selected
 ground_truth                     the semantic ground truth (never a scoring label)
 correct                          derived: selected_value == ground_truth
-observation_status               correct | ordinary_error | taxonomy_miss | ambiguous
+observation_status               resolved | taxonomy_miss | unresolved
 ```
+
+The runtime status enum is exactly the `CalibrationObservationStatus` members
+`RESOLVED` / `TAXONOMY_MISS` / `UNRESOLVED` shown above. The finer vocabulary
+`correct | ordinary_error | taxonomy_miss | ambiguous` used elsewhere in this
+document (sections 6 and 20) is a conceptual resolution vocabulary for
+reasoning about fitting populations, not the runtime enum: the runtime folds
+the correct/ordinary-error distinction into the derived `correct` boolean on
+`RESOLVED` observations, and represents ambiguity as `UNRESOLVED`.
 
 `selected_value` is the value after the runtime's deterministic tie-break
 (section 17.3). The observation records the selection the system actually made; it
@@ -472,8 +482,10 @@ CalibrationBinding
   + task/domain evidence
 ```
 
-A binding is a composition of existing identities plus declarations. It is not a
-new fingerprint and it does not replace the formulation or family fingerprints.
+A binding is a composition of existing identities plus declarations. Its
+`.fingerprint` is an internal, versioned representation of that composite
+identity (the runtime exposes and consumes it for identity and diagnostics);
+it does not replace the component formulation or family fingerprints.
 Why the composition is three parts and not one: the formulation fingerprint
 deliberately excludes the model, the task, and the instance evidence. The model
 belongs to the source axis by design, task and domain sit in the binding per
@@ -554,14 +566,16 @@ equivalent. The declaration is an assertion carried as provenance.
 
 ## 10. CalibrationDataset identity
 
-A `CalibrationDatasetFingerprint` answers: which exact observations was this
-profile fitted on?
+The dataset fingerprint answers: which exact observations was this profile
+fitted on? In this document `CalibrationDatasetFingerprint` is conceptual
+vocabulary for that identity: it is implemented as the `fingerprint` property
+of `CalibrationDataset`, not as a separate class.
 
 It is not the binding. The two answer different questions:
 
 ```text
 CalibrationBinding             which outputs is this profile for
-CalibrationDatasetFingerprint  which observations was it fitted on
+dataset fingerprint            which observations was it fitted on
 ```
 
 A profile fitted on a small, unrepresentative dataset under a correct binding is
@@ -583,7 +597,7 @@ mean a genuinely repeated event, a repeated sample, or a data bug, and those are
 not the same population. Preserving multiplicity is what lets a reader distinguish
 "one observation" from "the same observation a thousand times".
 
-The proposed mechanism, designed but not implemented:
+The implemented mechanism (`CalibrationDataset.fingerprint`):
 
 ```text
 1. compute a canonical fingerprint for each observation
@@ -602,12 +616,11 @@ Those are separate claims with separate evidence (section 11).
 
 ### 10.4 Observation identity
 
-A future `CalibrationObservationFingerprint` would commit one observation's
-measurement and provenance: the decision or input identity, the uncalibrated
-probabilities, the selected semantic value, the ground truth, its label
-provenance (section 8.3), the formulation identity, and the source metadata. It is
-not implemented this round, and the dataset mechanism in 10.2 depends on its
-canonical form being well defined.
+The implemented `CalibrationObservation.canonical_payload()` commits one
+observation's measurement and provenance: the decision or input identity, the
+uncalibrated probabilities, the selected semantic value, the full ground-truth
+record including its label provenance (section 8.3), the formulation identity,
+and the source metadata.
 
 The Trace ID is not that identity. A trace id identifies one execution instance.
 The same deterministic replay produces a different trace id, and one semantic
@@ -615,6 +628,31 @@ observation can arise from several executions. An observation identity must be a
 function of the measurement and its provenance, never of when or how many times it
 was computed. Trace id and execution fingerprint are therefore audit metadata
 (section 8.4), not the observation identity.
+
+### 10.5 Pooling rule
+
+A `CalibrationDataset` pools observations only when they share the same
+probability population AND the same ground-truth semantics:
+
+```text
+same CalibrationBinding canonical payload          probability population identity
+same GroundTruthSemanticsIdentity                  what the ground-truth target MEANS
+all observations fit-eligible                      eligibility
+```
+
+`GroundTruthSemanticsIdentity` is derived from the ground-truth provenance and
+commits the labeling rule, the ambiguity policy, and the ground-truth taxonomy
+pair. It deliberately excludes `label_source`: a specific label producer is not
+part of the statistical target, so different label sources (for example
+different annotators) may coexist in one dataset when the labeling semantics
+match, while their observation identities remain distinct because
+`label_source` stays in the observation identity through the full provenance.
+Full `GroundTruthProvenance` equality is never required for pooling.
+
+The probability binding and the ground-truth semantics stay orthogonal: they
+remain separate classes, and the semantics identity is never placed inside
+`CalibrationBinding`. Conceptually a fitting population is
+`CalibrationBinding + GroundTruthSemanticsIdentity`.
 
 ## 11. Data splits
 
@@ -663,7 +701,8 @@ numbers mean:
 
 ```text
 CalibrationProfile identity
-  = binding
+  = CalibrationBinding
+  + GroundTruthSemanticsIdentity
   + calibration target
   + method_id and method_version
   + fitted parameters
@@ -671,8 +710,14 @@ CalibrationProfile identity
 ```
 
 The binding alone is not the profile identity: one binding can carry several
-profiles, for different targets, methods, or fitting datasets. Two profiles that
-differ in any component are different artifacts and are never interchangeable.
+profiles, for different targets, methods, or fitting datasets. The ground-truth
+semantics identity is included because the same probability population does not
+imply the same meaning of correctness: labels established under different
+labeling rules or ambiguity policies measure different statistical targets, so
+two datasets under one binding but with different ground-truth semantics must
+never feed one profile identity. Two profiles that differ in any component are
+different artifacts and are never interchangeable. The profile itself remains
+unimplemented.
 
 ### 12.3 Matching is exact by default
 
@@ -921,7 +966,8 @@ a well-calibrated but non-discriminating model is not a useful decision componen
 
 ## 16. Observation validity
 
-Three gates, designed but not implemented.
+Three gates. Structural validity has real runtime enforcement now; the other
+two remain design statements.
 
 ### 16.1 Structural validity
 
@@ -931,6 +977,11 @@ a valid Trace
 a known formulation identity
 ground truth compatible with the decision family
 ```
+
+Implemented: `CalibrationObservation` construction and `CalibrationDataset`
+pooling enforce structural validity at runtime, through fit eligibility
+(status plus adjudication) and explicit dataset rejection (including the
+ground-truth semantics check).
 
 ### 16.2 Scoring-position validity
 
@@ -948,7 +999,7 @@ The diagnostics belong in observation metadata and evaluation slices. A threshol
 that silently decides which ground-truth observations count is exactly the kind of
 hidden policy the project forbids. If a future validity policy uses a threshold,
 it is an explicit, versioned, evidence-backed policy object, not a magic number in
-a fitting routine.
+a fitting routine. No threshold exists in the runtime.
 
 ### 16.3 Semantic validity
 
@@ -1114,7 +1165,10 @@ observation_status = ordinary_error
 ```
 
 This is the wrong-selection case that enters a winner-correctness fitting
-population as `Y_correct = 0`.
+population as `Y_correct = 0`. Here `ordinary_error` is conceptual vocabulary
+for an in-taxonomy wrong selection, not the runtime status enum (which is
+`resolved | taxonomy_miss | unresolved`): at runtime this observation carries
+status `resolved`.
 
 ### 20.4 Out-of-set
 
@@ -1214,13 +1268,13 @@ mean for calibration.
 
 ## 22. Non-goals
 
-This round designs semantics only. It does not implement, and it does not decide
-the eventual API for:
+The Phase 4A data foundation (ground truth, binding, observation, dataset, and
+their identities and fingerprints) is implemented and is no longer listed
+here. This document still does not implement, and does not decide the
+eventual API for:
 
 ```text
-CalibrationProfile, CalibrationObservation, CalibrationBinding
-CalibrationDatasetFingerprint, CalibrationObservationFingerprint,
-  CalibrationProfileFingerprint
+CalibrationProfile, CalibrationProfileFingerprint
 any calibration fitting algorithm or library
 temperature scaling, Platt scaling, isotonic regression, binning
 Brier, log loss, ECE, or reliability-curve runtime code
@@ -1232,7 +1286,8 @@ multi-label ground truth
 open-set detection
 ```
 
-It also does not change `src/probvenance/`. The runtime is untouched.
+Scoring-position and semantic validity (section 16) also remain design
+statements without runtime enforcement.
 
 ## 23. Open questions
 

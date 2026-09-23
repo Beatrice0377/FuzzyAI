@@ -341,15 +341,17 @@ calibratable together; see INV-23 and INV-24.
   `test_unadjudicated_truth_not_fit_eligible`,
   `test_caller_cannot_supply_correct`,
   `test_no_scoring_thresholds_in_fit_eligibility`).
-- `[V]` Calibration observations are constructed only from provenance-coherent
-  result and trace pairs. `CalibrationObservation.from_evaluation` is the only
-  supported construction path: it requires the result's trace id and the trace's
-  trace id to match before any provenance is derived, it rejects a result whose
-  trace id is missing, it rejects direct field construction, and it rejects
-  `dataclasses.replace` reconstruction with or without changed fields, so an
-  observation cannot be rebuilt with a foreign binding or foreign probabilities.
-  Lower-level Python escape hatches such as `object.__new__`, `copy`, and
-  `pickle` are not supported construction paths and are not defended against.
+- `[V]` Calibration observations are constructed only through supported
+  construction paths that require matching runtime linkage identities between
+  the result and the trace. `CalibrationObservation.from_evaluation` is the
+  only supported construction path: it requires the result's trace id and the
+  trace's trace id to match before calibration provenance is derived, it
+  rejects a result whose trace id is missing, it rejects direct field
+  construction, and it rejects `dataclasses.replace` reconstruction with or
+  without changed fields, so an observation cannot be rebuilt with a foreign
+  binding or foreign probabilities. Lower-level Python escape hatches such as
+  `object.__new__`, `copy`, and `pickle` are not supported construction paths
+  and are not defended against.
   Evidence:
   `tests/test_calibration.py::TestObservationProvenanceCoherence`
   (`test_mismatched_pair_rejected`,
@@ -361,6 +363,30 @@ calibratable together; see INV-23 and INV-24.
   `test_replace_with_no_changes_rejected`,
   `test_replace_derived_field_rejected`,
   `test_construction_token_is_not_an_instance_attribute`).
+- `[V]` A `CalibrationDataset` rejects fit-eligible observations whose
+  derived `GroundTruthSemanticsIdentity` differs from the dataset's, even
+  when the `CalibrationBinding` canonical payload matches: observations
+  whose ground truth was established under a different labeling rule, a
+  different ambiguity policy, or a different ground-truth taxonomy measure
+  a different statistical target and are refused with a
+  semantics-specific rejection message that is distinct from the binding
+  mismatch message. Evidence: `tests/test_calibration.py`
+  (`TestDatasetPoolingSemantics::test_same_binding_different_labeling_rule_rejected`,
+  `TestDatasetPoolingSemantics::test_same_binding_different_ambiguity_policy_rejected`,
+  `TestDatasetPoolingSemantics::test_same_binding_different_ground_truth_taxonomy_rejected`,
+  `TestDatasetPoolingSemantics::test_rejection_messages_distinguish_binding_from_semantics`,
+  `TestDatasetPoolingSemantics::test_direct_construction_enforces_same_checks`).
+- `[V]` Different label sources may coexist in one `CalibrationDataset`
+  when the ground-truth semantics identity matches: `label_source` is
+  excluded from the semantics pooling key, so observations from different
+  annotators with identical labeling semantics are accepted together while
+  their observation fingerprints remain distinct because `label_source`
+  stays in the observation identity. Evidence:
+  `tests/test_calibration.py`
+  (`TestDatasetPoolingSemantics::test_same_binding_same_semantics_different_label_source_accepted`,
+  `TestObservationLineageUnderSemanticsSplit::test_different_label_source_different_observation_fingerprint`,
+  `TestGroundTruthSemanticsIdentity::test_different_label_source_only_same_semantics`,
+  `TestDatasetPoolingSemantics::test_label_source_pooling_and_fingerprint_distinction_combined`).
 
 These claims are about the deterministic data model only. They say nothing
 about the quality of any calibration produced from such data; no calibration

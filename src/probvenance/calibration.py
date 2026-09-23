@@ -25,7 +25,7 @@ from enum import StrEnum
 from typing import Any, Final
 
 from probvenance.errors import InvalidDecisionError
-from probvenance.fingerprint import JSONValue, fingerprint
+from probvenance.fingerprint import JSONValue, canonical_json, fingerprint
 from probvenance.results import BoolResult, ChoiceResult
 from probvenance.runtime import Evaluation
 from probvenance.trace import DecisionTrace
@@ -37,8 +37,14 @@ from probvenance.trace import DecisionTrace
 CALIBRATION_OBSERVATION_FINGERPRINT_VERSION = 1
 """Version of the calibration observation fingerprint payload schema."""
 
-CALIBRATION_DATASET_FINGERPRINT_VERSION = 1
+CALIBRATION_BINDING_FINGERPRINT_VERSION = 1
+"""Version of the calibration binding fingerprint payload schema."""
+
+CALIBRATION_DATASET_FINGERPRINT_VERSION = 2
 """Version of the calibration dataset fingerprint payload schema."""
+
+GROUND_TRUTH_SEMANTICS_FINGERPRINT_VERSION = 1
+"""Version of the ground-truth semantics fingerprint payload schema."""
 
 RENDERING_SEMANTICS_VERSION = 1
 """Version of the centralized rendering-semantics canonical projection."""
@@ -52,8 +58,9 @@ cannot smuggle it (``replace`` re-supplies only the dataclass field values)
 and it is therefore not readable from an instance, not present in
 ``dataclasses.fields()``, and not part of ``repr``, equality, hashing, or
 pickle state. Direct field construction and ``replace`` reconstruction both
-fail the capability check because neither can prove that its fields come
-from one coherent execution lineage.
+fail the capability check because neither passes through the supported
+construction path that requires matching runtime linkage identities between
+the result and the trace.
 """
 
 _BOOL_OUTCOME_ORDER: tuple[str, ...] = ("false", "true")
@@ -184,6 +191,112 @@ class GroundTruthProvenance:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class GroundTruthSemanticsIdentity:
+    """What a ground-truth label MEANS, as a statistical target.
+
+    This is the semantics axis of the ground-truth identity, deliberately
+    separated from :class:`GroundTruthProvenance` (the full label lineage).
+    Two observations may be pooled into one fitting dataset only when their
+    ground truth was established under the SAME semantics, regardless of
+    which specific producer supplied the labels.
+
+    Fields:
+
+    ``labeling_rule``      the rule that established the label (human
+                           adjudication rule, downstream business outcome,
+                           heuristic rule, ...). Two different rules can
+                           assign the same string label while measuring
+                           different statistical targets.
+    ``ambiguity_policy``   how ambiguous cases were handled when the label
+                           was established.
+    ``taxonomy_id``        the candidate taxonomy the label belongs to, or
+                           ``None`` when no taxonomy was declared.
+    ``taxonomy_version``   the taxonomy version, or ``None`` when unknown.
+
+    Deliberately EXCLUDED:
+
+    ``label_source``  different annotators (or other producers) with
+        identical labeling semantics measure the same statistical target
+        and must remain poolable; the specific producer stays in
+        :class:`GroundTruthProvenance` and in the observation identity.
+    ``adjudicated``  this is an existing fit-eligibility gate, not an
+        adjudication-protocol identity; no adjudication-protocol field is
+        derived from ``label_source``.
+
+    The taxonomy pair may be independently ``None`` (a known taxonomy with
+    an unknown version is a real state), so the atomic identity rule is
+    deliberately not applied here, mirroring
+    :class:`GroundTruthProvenance`.
+
+    Construct instances ONLY through :meth:`from_provenance`: the semantics
+    identity is deterministically derived from a provenance, and callers
+    must never hand-declare a second semantics set for one
+    :class:`GroundTruthProvenance`.
+    """
+
+    labeling_rule: str
+    ambiguity_policy: str
+    taxonomy_id: str | None
+    taxonomy_version: int | None
+
+    def __post_init__(self) -> None:
+        _require_non_empty_str("labeling_rule", self.labeling_rule)
+        _require_non_empty_str("ambiguity_policy", self.ambiguity_policy)
+        if self.taxonomy_id is not None:
+            _require_non_empty_str("taxonomy_id", self.taxonomy_id)
+        if self.taxonomy_version is not None and (
+            isinstance(self.taxonomy_version, bool)
+            or not isinstance(self.taxonomy_version, int)
+            or self.taxonomy_version < 1
+        ):
+            raise InvalidDecisionError(
+                "taxonomy_version must be an int >= 1, got "
+                f"{type(self.taxonomy_version).__name__} "
+                f"({self.taxonomy_version!r})"
+            )
+
+    @classmethod
+    def from_provenance(cls, provenance: GroundTruthProvenance) -> GroundTruthSemanticsIdentity:
+        """Deterministically derive the semantics identity from a provenance.
+
+        The single centralized derivation: callers must never hand-declare
+        a second semantics set for one :class:`GroundTruthProvenance`.
+        ``label_source`` is deliberately not carried over (see the class
+        docstring).
+        """
+        return cls(
+            labeling_rule=provenance.labeling_rule,
+            ambiguity_policy=provenance.ambiguity_policy,
+            taxonomy_id=provenance.taxonomy_id,
+            taxonomy_version=provenance.taxonomy_version,
+        )
+
+    def canonical_payload(self) -> dict[str, JSONValue]:
+        """Return the canonical semantic projection (no version key).
+
+        The canonical semantic projection and the versioned fingerprint
+        payload are conceptually separate: this payload carries ONLY the
+        four semantic fields, while :attr:`fingerprint` hashes a payload
+        that additionally carries the fingerprint schema version.
+        """
+        return {
+            "labeling_rule": self.labeling_rule,
+            "ambiguity_policy": self.ambiguity_policy,
+            "taxonomy_id": self.taxonomy_id,
+            "taxonomy_version": self.taxonomy_version,
+        }
+
+    @property
+    def fingerprint(self) -> str:
+        """Versioned fingerprint of the ground-truth semantics identity."""
+        payload: dict[str, JSONValue] = {
+            "v": GROUND_TRUTH_SEMANTICS_FINGERPRINT_VERSION,
+            **self.canonical_payload(),
+        }
+        return fingerprint(payload)
+
+
 class GroundTruthResolutionStatus(StrEnum):
     """Whether a ground-truth record carries a resolved value.
 
@@ -306,6 +419,21 @@ class CalibrationBinding:
                 f"{type(self.rendering_semantics).__name__} "
                 f"({self.rendering_semantics!r})"
             )
+        for key, value in self.rendering_semantics.items():
+            if not isinstance(key, str):
+                raise InvalidDecisionError(
+                    f"rendering_semantics keys must be str, got {type(key).__name__} ({key!r})"
+                )
+            _require_json_value(f"rendering_semantics[{key!r}]", value)
+        if "enable_thinking" in self.rendering_semantics:
+            # Mirrors canonical_rendering_semantics: an int like 1 must not
+            # masquerade as True under Python equality or canonical JSON.
+            enable_thinking = self.rendering_semantics["enable_thinking"]
+            if enable_thinking is not None and not isinstance(enable_thinking, bool):
+                raise InvalidDecisionError(
+                    "rendering_semantics['enable_thinking'] must be None or a bool, got "
+                    f"{type(enable_thinking).__name__} ({enable_thinking!r})"
+                )
         for name in ("task_id", "domain_id", "taxonomy_id"):
             value = getattr(self, name)
             if value is not None:
@@ -387,8 +515,18 @@ class CalibrationBinding:
 
     @property
     def fingerprint(self) -> str:
-        """Deterministic fingerprint of the binding's canonical payload."""
-        return fingerprint(self.canonical_payload())
+        """Versioned representation of the binding identity.
+
+        The binding is a composite identity (formulation identity + source
+        identity + task/domain declarations); the fingerprint is an
+        internal, versioned representation of that identity. It does not
+        replace the component formulation/source identities.
+        """
+        payload: dict[str, JSONValue] = {
+            "v": CALIBRATION_BINDING_FINGERPRINT_VERSION,
+            "binding": self.canonical_payload(),
+        }
+        return fingerprint(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -412,25 +550,26 @@ def _require_coherent_linkage(
     result: BoolResult | ChoiceResult,
     trace: DecisionTrace,
 ) -> None:
-    """Require that a result and trace come from one coherent execution.
+    """Require that a result and trace carry matching runtime linkage identities.
 
     The runtime stamps the same trace id onto the assembled result and the
-    trace it reports, so a mismatch proves the pair was not produced by a
-    single evaluation. Linkage is never inferred from probability values:
-    two different executions can emit identical distributions.
+    trace it reports, so a mismatch means the pair cannot be verified as
+    coming from a single evaluation under the supported construction
+    contract. Linkage is never inferred from probability values: two
+    different executions can emit identical distributions.
     """
     result_linkage = result.trace_id
     if result_linkage is None:
         raise InvalidDecisionError(
             "CalibrationObservation requires a result with execution linkage: "
             "result.trace_id is None while the trace linkage identity is "
-            f"{trace.trace_id!r}, so the pair cannot be proven coherent"
+            f"{trace.trace_id!r}, so the pair cannot be verified"
         )
     if result_linkage != trace.trace_id:
         raise InvalidDecisionError(
-            "CalibrationObservation requires coherent execution lineage: "
-            f"result linkage identity {result_linkage!r} does not match "
-            f"trace linkage identity {trace.trace_id!r}"
+            "CalibrationObservation requires matching runtime linkage "
+            f"identities: result linkage identity {result_linkage!r} does not "
+            f"match trace linkage identity {trace.trace_id!r}"
         )
 
 
@@ -457,17 +596,17 @@ class CalibrationObservation:
     semantic observation.
 
     The only supported construction path is
-    :meth:`CalibrationObservation.from_evaluation`, which proves that the
-    result and trace share one coherent execution lineage before any
+    :meth:`CalibrationObservation.from_evaluation`, which requires matching
+    runtime linkage identities between the result and the trace before any
     provenance is derived. Direct field construction is rejected, and so is
     ``dataclasses.replace`` reconstruction: both rebuild an observation
     through the constructor without the construction capability, and neither
-    can prove that the fields it supplies come from one coherent execution
-    lineage. Lower-level Python escape hatches such as ``object.__new__``,
-    ``copy``, and ``pickle`` are inherent to the language, are not supported
-    construction paths, and are not defended against. A future persistence or
-    reconstruction entry point must be added explicitly and validated
-    separately, and is NOT in scope here.
+    passes through the supported construction path that requires matching
+    runtime linkage identities. Lower-level Python escape hatches such as
+    ``object.__new__``, ``copy``, and ``pickle`` are inherent to the
+    language, are not supported construction paths, and are not defended
+    against. A future persistence or reconstruction entry point must be
+    added explicitly and validated separately, and is NOT in scope here.
     """
 
     decision_family: str
@@ -497,8 +636,9 @@ class CalibrationObservation:
         if _construction_token is not _OBSERVATION_CONSTRUCTION_TOKEN:
             raise InvalidDecisionError(
                 "CalibrationObservation must be constructed via "
-                "CalibrationObservation.from_evaluation(...), which proves that the "
-                "result and trace share one coherent execution lineage"
+                "CalibrationObservation.from_evaluation(...), which requires "
+                "matching runtime linkage identities between the result and "
+                "the trace before calibration provenance is derived"
             )
         object.__setattr__(self, "decision_family", decision_family)
         object.__setattr__(self, "outcome_order", outcome_order)
@@ -778,12 +918,32 @@ def _derive_correct(
 class CalibrationDataset:
     """The observations actually prepared for calibration fitting.
 
-    Every member must be fit-eligible; non-fit-eligible observations
-    (taxonomy miss, unresolved, unadjudicated) are explicitly rejected at
-    construction, never silently filtered. All members must share an
-    identical ``CalibrationBinding`` canonical payload: different exact
-    formulation or source bindings are never silently pooled (INV-23), and
-    shared formulation-family membership never authorises pooling (INV-24).
+    Pooling requires three things, all enforced in ``__post_init__`` so
+    direct construction cannot bypass what :meth:`create` checks:
+
+    1. every member is fit-eligible; non-fit-eligible observations
+       (taxonomy miss, unresolved, unadjudicated) are explicitly rejected,
+       never silently filtered;
+    2. every member's ``CalibrationBinding`` canonical payload is
+       structurally equal to the dataset binding's canonical payload:
+       different exact formulation or source bindings are never silently
+       pooled (INV-23), and shared formulation-family membership never
+       authorises pooling (INV-24);
+    3. every member's :class:`GroundTruthSemanticsIdentity` (derived from
+       its ground-truth provenance) is identical: observations whose ground
+       truth was established under different labeling rules, ambiguity
+       policies, or taxonomies measure different statistical targets and
+       are never pooled, even when the binding matches.
+
+    Full :class:`GroundTruthProvenance` equality is deliberately NOT
+    required: a specific label producer is not part of the statistical
+    target, so different ``label_source`` values may coexist in one dataset
+    while their observation identities remain distinct.
+
+    The probability binding and the ground-truth semantics stay orthogonal:
+    conceptually a fitting population is ``CalibrationBinding +
+    GroundTruthSemanticsIdentity``, but they remain separate classes and
+    the semantics identity is never placed inside the binding.
 
     The dataset fingerprint answers ONLY "which fit-eligible observations
     does this fitting dataset contain?". It does not answer whether the data
@@ -799,18 +959,41 @@ class CalibrationDataset:
             raise InvalidDecisionError(
                 "a calibration fitting dataset must contain at least one observation"
             )
-        binding_fingerprint = self.binding.fingerprint
+        binding_payload = self.binding.canonical_payload()
+        binding_payload_json = canonical_json(binding_payload)
+        dataset_semantics = GroundTruthSemanticsIdentity.from_provenance(
+            self.observations[0].ground_truth.provenance
+        )
+        dataset_semantics_payload = dataset_semantics.canonical_payload()
+        dataset_semantics_payload_json = canonical_json(dataset_semantics_payload)
         rejected: list[str] = []
         for index, observation in enumerate(self.observations):
             if not observation.fit_eligible:
                 rejected.append(
                     f"observation {index}: status {str(observation.status)!r} is not fit-eligible"
                 )
-            if observation.binding.fingerprint != binding_fingerprint:
+            observation_binding_payload = observation.binding.canonical_payload()
+            if canonical_json(observation_binding_payload) != binding_payload_json:
                 rejected.append(
-                    f"observation {index}: binding fingerprint "
-                    f"{observation.binding.fingerprint!r} does not match the "
-                    f"dataset binding fingerprint {binding_fingerprint!r}"
+                    f"observation {index}: binding canonical payload "
+                    f"{observation_binding_payload!r} does not match the "
+                    f"dataset binding canonical payload {binding_payload!r} "
+                    f"(dataset binding fingerprint {self.binding.fingerprint!r}, "
+                    f"observation binding fingerprint "
+                    f"{observation.binding.fingerprint!r})"
+                )
+            observation_semantics = GroundTruthSemanticsIdentity.from_provenance(
+                observation.ground_truth.provenance
+            )
+            observation_semantics_payload = observation_semantics.canonical_payload()
+            if canonical_json(observation_semantics_payload) != dataset_semantics_payload_json:
+                rejected.append(
+                    f"observation {index}: ground-truth semantics identity "
+                    f"{observation_semantics_payload!r} (fingerprint "
+                    f"{observation_semantics.fingerprint!r}) does not match the "
+                    f"dataset ground-truth semantics identity "
+                    f"{dataset_semantics_payload!r} (fingerprint "
+                    f"{dataset_semantics.fingerprint!r})"
                 )
         if rejected:
             raise InvalidDecisionError(
@@ -823,7 +1006,13 @@ class CalibrationDataset:
         cls,
         observations: Sequence[CalibrationObservation],
     ) -> CalibrationDataset:
-        """Build a fitting dataset from fit-eligible, same-binding observations."""
+        """Build a fitting dataset from fit-eligible, same-binding observations.
+
+        The binding is derived from the first observation; every other
+        validation (fit eligibility, binding structural equality,
+        ground-truth semantics equality) is enforced in ``__post_init__``,
+        so this classmethod gains no way to bypass the pooling checks.
+        """
         if not observations:
             raise InvalidDecisionError(
                 "a calibration fitting dataset must contain at least one observation"
@@ -832,19 +1021,43 @@ class CalibrationDataset:
         return cls(binding=binding, observations=tuple(observations))
 
     @property
+    def ground_truth_semantics(self) -> GroundTruthSemanticsIdentity:
+        """The dataset's derived ground-truth semantics identity.
+
+        This is a read-only DERIVED property, not a constructor field: a
+        dataset can never claim semantics A while its observations say B.
+        It is computed deterministically from the observations: because
+        ``__post_init__`` rejects any observation whose derived semantics
+        identity differs, all observations agree by the time this property
+        can be read, so deriving it from the first observation's
+        ground-truth provenance is safe and deterministic.
+        """
+        return GroundTruthSemanticsIdentity.from_provenance(
+            self.observations[0].ground_truth.provenance
+        )
+
+    @property
     def fingerprint(self) -> str:
         """Row-order independent, multiplicity-preserving dataset fingerprint.
 
         Implemented as a hash over the canonical ORDERED list of sorted
-        observation fingerprints: a multiset, not a set hash.
+        observation fingerprints: a multiset, not a set hash. The payload
+        commits the binding fingerprint and the ground-truth semantics
+        fingerprint, each with its own fingerprint schema version.
         """
         observation_fingerprints: list[JSONValue] = [
             observation.fingerprint for observation in self.observations
         ]
         observation_fingerprints.sort(key=str)
+        semantics = self.ground_truth_semantics
         payload: dict[str, JSONValue] = {
             "v": CALIBRATION_DATASET_FINGERPRINT_VERSION,
-            "binding": self.binding.fingerprint,
+            "binding_fingerprint": self.binding.fingerprint,
+            "binding_fingerprint_version": CALIBRATION_BINDING_FINGERPRINT_VERSION,
+            "ground_truth_semantics_fingerprint": semantics.fingerprint,
+            "ground_truth_semantics_fingerprint_version": (
+                GROUND_TRUTH_SEMANTICS_FINGERPRINT_VERSION
+            ),
             "observation_fingerprints": observation_fingerprints,
         }
         return fingerprint(payload)
