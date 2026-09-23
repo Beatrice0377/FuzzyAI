@@ -4,22 +4,31 @@ The assembler is the ONLY place where raw logits become a probability. It
 performs no calibration and never claims calibratedness: every result it
 produces is explicitly ``calibrated=False`` with ``predicted_correctness=None``.
 
-Two entry points exist:
+Two concrete assemblers exist:
 
 - :func:`assemble_bool_probability` for the binary token-logit strategy.
 - :func:`assemble_choice_probability` for the categorical token-logit
   strategy, which maps label-space probabilities back to semantic candidate
   names through the plan's ``candidate_mapping``.
+
+:func:`assemble_probability` selects one of them from a plan. Selection is by
+the plan's FULL ``(strategy, assembler_id, assembler_version)`` declaration,
+never by strategy alone, so a plan cannot execute one implementation while
+declaring another. The set of known implementations is closed: there is no
+registry, no plugin loading, and no fallback.
 """
 
 import math
+from collections.abc import Callable, Mapping
 
 from fuzzyai.diagnostics import (
     BINARY_EVIDENCE_LABELS,
     ChoiceScoringDiagnostics,
+    ScoringDiagnostics,
+    diagnose_bool_evidence,
     diagnose_choice_evidence,
 )
-from fuzzyai.errors import InvalidDecisionError
+from fuzzyai.errors import InvalidDecisionError, UnsupportedAssemblerError
 from fuzzyai.plans import EvidenceKind, InferencePlan, RawEvidence, ScoringStrategy
 from fuzzyai.results import BoolResult, Certainty, ChoiceResult
 
@@ -143,3 +152,91 @@ def assemble_choice_probability(
         calibrated=False,
     )
     return result, diagnostics
+
+
+AssembledProbability = tuple[
+    BoolResult | ChoiceResult, ScoringDiagnostics | ChoiceScoringDiagnostics
+]
+ProbabilityAssembler = Callable[[InferencePlan, RawEvidence, str | None], AssembledProbability]
+
+
+def _assemble_binary_for_plan(
+    _plan: InferencePlan, evidence: RawEvidence, trace_id: str | None
+) -> AssembledProbability:
+    result = assemble_bool_probability(evidence, trace_id=trace_id)
+    return result, diagnose_bool_evidence(evidence)
+
+
+def _assemble_categorical_for_plan(
+    plan: InferencePlan, evidence: RawEvidence, trace_id: str | None
+) -> AssembledProbability:
+    return assemble_choice_probability(evidence, plan=plan, trace_id=trace_id)
+
+
+_ASSEMBLER_IMPLEMENTATIONS: Mapping[tuple[ScoringStrategy, str, int], ProbabilityAssembler] = {
+    (
+        ScoringStrategy.BINARY_TOKEN_LOGITS,
+        BINARY_ASSEMBLER_ID,
+        BINARY_ASSEMBLER_VERSION,
+    ): _assemble_binary_for_plan,
+    (
+        ScoringStrategy.CATEGORICAL_TOKEN_LOGITS,
+        CATEGORICAL_ASSEMBLER_ID,
+        CATEGORICAL_ASSEMBLER_VERSION,
+    ): _assemble_categorical_for_plan,
+}
+
+
+def _supported_assembler_declarations() -> tuple[tuple[str, str, int], ...]:
+    return tuple(
+        (strategy.value, assembler_id, version)
+        for strategy, assembler_id, version in _ASSEMBLER_IMPLEMENTATIONS
+    )
+
+
+def resolve_probability_assembler(
+    *,
+    strategy: ScoringStrategy,
+    assembler_id: str,
+    assembler_version: int,
+) -> ProbabilityAssembler:
+    """Return the one implementation an exact assembler declaration identifies.
+
+    Resolution is by the full ``(strategy, assembler_id, assembler_version)``
+    tuple, never by strategy alone: a known assembler paired with the wrong
+    strategy, or an unsupported version, does not match.
+
+    Raises:
+        UnsupportedAssemblerError: if no implementation matches the tuple.
+    """
+    implementation = _ASSEMBLER_IMPLEMENTATIONS.get((strategy, assembler_id, assembler_version))
+    if implementation is None:
+        raise UnsupportedAssemblerError(
+            "no probability assembler matches the plan declaration: "
+            f"strategy={strategy.value!r}, assembler_id={assembler_id!r}, "
+            f"assembler_version={assembler_version!r}; supported declarations are "
+            f"{_supported_assembler_declarations()}"
+        )
+    return implementation
+
+
+def assemble_probability(
+    plan: InferencePlan,
+    evidence: RawEvidence,
+    *,
+    trace_id: str | None = None,
+) -> AssembledProbability:
+    """Assemble the result and diagnostics the plan's declaration selects.
+
+    The implementation that runs is the one ``plan`` names, so the assembled
+    probability and the recorded provenance cannot disagree.
+
+    Raises:
+        UnsupportedAssemblerError: if the plan's declaration matches nothing.
+    """
+    implementation = resolve_probability_assembler(
+        strategy=plan.strategy,
+        assembler_id=plan.assembler_id,
+        assembler_version=plan.assembler_version,
+    )
+    return implementation(plan, evidence, trace_id)

@@ -30,6 +30,14 @@ class UnsupportedDecisionError(FuzzyAIError):
     """A compiler or runtime does not support this decision type."""
 
 
+class UnsupportedAssemblerError(FuzzyAIError):
+    """No probability assembler matches a plan's declared assembler identity.
+
+    The runtime executes only an implementation whose strategy, assembler id,
+    and assembler version match the plan declaration exactly.
+    """
+
+
 class ScoringLabelError(FuzzyAIError):
     """A scoring label cannot be resolved to exactly one distinct scoring token."""
 

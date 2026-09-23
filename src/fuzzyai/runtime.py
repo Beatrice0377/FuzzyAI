@@ -6,7 +6,9 @@ fallbacks: any unsupported decision or missing capability propagates as-is.
 
 Dispatch is explicit on the decision type: :class:`BoolDecision` takes the
 binary path, :class:`ChoiceDecision` takes the categorical path, and anything
-else is rejected.
+else is rejected. Assembler selection is separate: the plan's declared
+``(strategy, assembler_id, assembler_version)`` tuple selects the exact
+implementation, so what runs is what the plan names.
 """
 
 import uuid
@@ -14,15 +16,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
 
-from fuzzyai.assembler import assemble_bool_probability, assemble_choice_probability
+from fuzzyai.assembler import assemble_probability
 from fuzzyai.backends.base import Backend
 from fuzzyai.compiler import BoolCompiler, ChoiceCompiler
 from fuzzyai.decisions import BoolDecision, ChoiceDecision
-from fuzzyai.diagnostics import (
-    ChoiceScoringDiagnostics,
-    ScoringDiagnostics,
-    diagnose_bool_evidence,
-)
 from fuzzyai.errors import InvalidDecisionError, UnsupportedDecisionError
 from fuzzyai.plans import InferencePlan, RawEvidence
 from fuzzyai.results import BoolResult, ChoiceResult
@@ -86,7 +83,8 @@ class FuzzyAI:
            executed plan's fingerprint — either a DIFFERENT fingerprint or
            none at all — is an ``InvalidDecisionError``.
         5. Assemble the decision result and the scoring diagnostics from the
-           evidence, stamped with the trace id.
+           evidence through the assembler the plan declares, stamped with the
+           trace id.
         6. Build the decision trace.
         7. Return the :class:`Evaluation`.
 
@@ -97,6 +95,8 @@ class FuzzyAI:
                 capability.
             InvalidDecisionError: if the evidence does not carry the plan's
                 fingerprint (missing or mismatched).
+            UnsupportedAssemblerError: if the plan's assembler declaration
+                matches no known implementation.
         """
         # 1. Fresh trace id, never derived from any fingerprint.
         trace_id = str(uuid.uuid4())
@@ -127,20 +127,10 @@ class FuzzyAI:
                 "evidence plan_fingerprint does not match the executed plan: "
                 f"expected {plan.fingerprint!r}, got {evidence.plan_fingerprint!r}"
             )
-        # 5. Assemble the result and the scoring diagnostics, stamped with
-        #    the trace id. The diagnostics are derived from evidence the
-        #    backend already produced — no extra model work, no verdict.
-        if plan.strategy.value == "binary_token_logits":
-            result: BoolResult | ChoiceResult = assemble_bool_probability(
-                evidence, trace_id=trace_id
-            )
-            diagnostics: ScoringDiagnostics | ChoiceScoringDiagnostics = diagnose_bool_evidence(
-                evidence
-            )
-        else:
-            result, diagnostics = assemble_choice_probability(
-                evidence, plan=plan, trace_id=trace_id
-            )
+        # 5. Assemble through the exact implementation the plan declares; an
+        #    unknown or mismatched assembler tuple raises here, before any
+        #    probability or trace exists.
+        result, diagnostics = assemble_probability(plan, evidence, trace_id=trace_id)
         # 6. Build the trace.
         timestamp = datetime.now(UTC).isoformat()
         trace = build_decision_trace(
