@@ -3,11 +3,13 @@
 Status:
 
 ```text
-Calibration semantics:     design proposed (this document)
-CalibrationObservation:    design only, not implemented
-CalibrationBinding:        design only, not implemented
-CalibrationDataset:        design only, not implemented
-CalibrationProfile:        design only, not implemented
+Calibration semantics:     frozen (this document)
+CalibrationObservation:    implemented (src/probvenance/calibration.py)
+CalibrationBinding:        implemented (src/probvenance/calibration.py)
+CalibrationDataset:        implemented (src/probvenance/calibration.py)
+CalibrationProfile:        not implemented
+Evaluation metrics:        not implemented
+Fitting algorithms:        not implemented
 Calibration runtime:       not implemented
 predicted_correctness:     None for every result the runtime can currently produce
 ```

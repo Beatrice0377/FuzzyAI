@@ -347,7 +347,7 @@ evidence-specific) and the execution fingerprint (too concrete).
 
 | Dimension | Decision | Reason |
 |---|---|---|
-| decision family (bool / choice) | include | A bool `[p, 1-p]` and an N-way distribution are different objects with different outcome spaces. |
+| decision family (bool / choice) | include | A bool `[p, 1-p]` and an N-way distribution are different objects with different outcome spaces. Since Phase 4A the family is DECLARED by `InferencePlan` (`decision_family`) and is no longer inferred from the scoring strategy; the plan validates the declared family against an explicit table of legal implemented-strategy/family combinations. |
 | scoring strategy | include | `binary_token_logits`, `categorical_token_logits`, `token_logprobs`, and future `one_vs_rest`, `sampling`, `pairwise` are different mathematical sources even when they emit `{"A": 0.7, "B": 0.3}`. |
 | probability assembler id and version | include | The assembler defines the probability transformation (restricted N-way softmax, binary verbalizer softmax, future OVR normalization or pairwise aggregation). Since Phase 2C.0 it is named independently of the strategy on the plan (`assembler_id`, `assembler_version`) and in the plan fingerprint. |
 | doctrine id and version | include | The doctrine fixes how the model is asked to interpret candidates. It shapes the formulation. |

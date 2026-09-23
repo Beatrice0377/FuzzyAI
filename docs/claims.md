@@ -257,14 +257,15 @@ models, and never need a GPU.
   `tests/test_verbalizers.py::test_exact_continuation_rejects_retokenized_prefix_when_net_delta_is_one`,
   `tests/test_backends_choice.py::test_retokenized_prefix_label_raises_before_forward`,
   `tests/test_backends_transformers.py::test_retokenized_prefix_verbalizer_raises_before_forward`.
-- `[V]` Compiler and probability-assembler provenance are committed by the plan
-  fingerprint and exposed in `DecisionTrace`: `compiler_id`, `compiler_version`,
-  `assembler_id`, and `assembler_version` are explicit on `InferencePlan`,
-  included in the v4 plan fingerprint, and surfaced on the trace and its
-  `to_dict()`. Evidence: `tests/test_plans.py::TestPlanProvenance`. The decision
-  fingerprint is unaffected by construction rather than by test:
-  `src/probvenance/decisions.py` never reads provenance, and both decision payloads
-  remain v1 with no provenance keys.
+- `[V]` Compiler and probability-assembler provenance are committed by the
+  current Plan fingerprint schema and exposed on `DecisionTrace`:
+  `compiler_id`, `compiler_version`, `assembler_id`, and `assembler_version`
+  are explicit on `InferencePlan`, included in the plan fingerprint payload,
+  and surfaced on the trace and its `to_dict()`. Current plan fingerprint
+  schema version = 6. Evidence: `tests/test_plans.py::TestPlanProvenance`. The
+  decision fingerprint is unaffected by construction rather than by test:
+  `src/probvenance/decisions.py` never reads provenance, and both decision
+  payloads remain v1 with no provenance keys.
 
 ### Execution-verified assembler provenance (Phase 2C.1)
 - `[V]` The runtime executes only the probability assembler whose strategy,
@@ -306,6 +307,44 @@ models, and never need a GPU.
 Same formulation identity concerns, and same formulation-family membership, are
 NOT claims that the probabilities are accurate, interchangeable, poolable, or
 calibratable together; see INV-23 and INV-24.
+
+### Calibration data foundation (Phase 4A)
+
+- `[V]` Calibration fitting datasets reject mixed exact bindings and
+  non-fit-eligible observations. A `CalibrationDataset` refuses observations
+  whose status is `taxonomy_miss` or `unresolved` or whose ground-truth
+  provenance is not adjudicated, and refuses observations whose
+  `CalibrationBinding` canonical payload differs from the dataset binding,
+  even when the two traces share an identical formulation-family
+  fingerprint; the rejection names the offending status or binding
+  fingerprint and the excluded count, and nothing is silently filtered.
+  Evidence: `tests/test_calibration.py::TestCalibrationDataset`
+  (`test_taxonomy_miss_inclusion_rejected`,
+  `test_unresolved_inclusion_rejected`,
+  `test_unadjudicated_inclusion_rejected`, `test_mixed_binding_rejected`,
+  `test_mixed_formulation_rejected_even_when_family_matches`,
+  `test_rejection_names_count_and_reason`, `test_empty_dataset_rejected`).
+- `[V]` A `CalibrationObservation`'s status and correctness are
+  deterministically derived from the semantic result and the ground-truth
+  record, not from caller-supplied confidence labels. The construction path
+  accepts no `correct` argument (passing one raises `TypeError`), a resolved
+  Bool ground truth must be a real `bool` (strings and numbers are never
+  coerced), a resolved Choice ground truth outside the declared candidate
+  set derives `taxonomy_miss` with `correct = None` and is retained rather
+  than dropped, and `fit_eligible` consults only the derived status and the
+  adjudication flag, never any scoring diagnostic or threshold. Evidence:
+  `tests/test_calibration.py::TestObservationStatusAndCorrectness`
+  (`test_bool_correct`, `test_bool_wrong`,
+  `test_bool_ground_truth_must_be_real_bool`,
+  `test_choice_correct_and_wrong_by_semantic_name`,
+  `test_taxonomy_miss_retained_not_dropped`, `test_unresolved_truth`,
+  `test_unadjudicated_truth_not_fit_eligible`,
+  `test_caller_cannot_supply_correct`,
+  `test_no_scoring_thresholds_in_fit_eligibility`).
+
+These claims are about the deterministic data model only. They say nothing
+about the quality of any calibration produced from such data; no calibration
+has been fitted, and no calibration-quality claim is made anywhere.
 
 ## Experimental records
 
