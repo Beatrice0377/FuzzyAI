@@ -341,6 +341,26 @@ calibratable together; see INV-23 and INV-24.
   `test_unadjudicated_truth_not_fit_eligible`,
   `test_caller_cannot_supply_correct`,
   `test_no_scoring_thresholds_in_fit_eligibility`).
+- `[V]` Calibration observations are constructed only from provenance-coherent
+  result and trace pairs. `CalibrationObservation.from_evaluation` is the only
+  supported construction path: it requires the result's trace id and the trace's
+  trace id to match before any provenance is derived, it rejects a result whose
+  trace id is missing, it rejects direct field construction, and it rejects
+  `dataclasses.replace` reconstruction with or without changed fields, so an
+  observation cannot be rebuilt with a foreign binding or foreign probabilities.
+  Lower-level Python escape hatches such as `object.__new__`, `copy`, and
+  `pickle` are not supported construction paths and are not defended against.
+  Evidence:
+  `tests/test_calibration.py::TestObservationProvenanceCoherence`
+  (`test_mismatched_pair_rejected`,
+  `test_mismatched_evaluation_wrapper_rejected`,
+  `test_identical_probabilities_still_rejected`,
+  `test_result_without_linkage_rejected`,
+  `test_direct_constructor_rejected`,
+  `test_replace_binding_rejected`,
+  `test_replace_with_no_changes_rejected`,
+  `test_replace_derived_field_rejected`,
+  `test_construction_token_is_not_an_instance_attribute`).
 
 These claims are about the deterministic data model only. They say nothing
 about the quality of any calibration produced from such data; no calibration

@@ -360,6 +360,20 @@ population it belongs to.
 Fields are grouped by role. The grouping matters because not every field is part
 of identity.
 
+An observation may only be constructed through `from_evaluation`. Before any
+provenance is derived, the result and the trace must share a provably coherent
+execution lineage, verified through the runtime trace id that the runtime stamps
+onto both the assembled result and the reported trace. A pair whose linkage
+identities do not match is rejected rather than repaired or warned about, and a
+result without a trace id cannot be proven coherent at all, so it is rejected
+too. Direct field construction of an observation is rejected for the same
+reason: without the trace there is nothing against which coherence could be
+proven. `dataclasses.replace` reconstruction is rejected for the same reason
+again: it rebuilds the observation through the direct constructor, so an
+observation cannot be rebuilt with a foreign binding or foreign probabilities.
+Lower-level Python escape hatches such as `object.__new__`, `copy`, and
+`pickle` are not supported construction paths and are not defended against.
+
 ### 8.1 Required measurement
 
 ```text

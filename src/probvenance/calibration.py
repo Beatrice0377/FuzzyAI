@@ -22,7 +22,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Final
 
 from probvenance.errors import InvalidDecisionError
 from probvenance.fingerprint import JSONValue, fingerprint
@@ -42,6 +42,19 @@ CALIBRATION_DATASET_FINGERPRINT_VERSION = 1
 
 RENDERING_SEMANTICS_VERSION = 1
 """Version of the centralized rendering-semantics canonical projection."""
+
+_OBSERVATION_CONSTRUCTION_TOKEN: Final[object] = object()
+"""Construction capability held only by ``CalibrationObservation.from_evaluation``.
+
+The token is deliberately NOT a dataclass field: it is a keyword-only
+``__init__`` parameter that defaults to ``None``, so ``dataclasses.replace``
+cannot smuggle it (``replace`` re-supplies only the dataclass field values)
+and it is therefore not readable from an instance, not present in
+``dataclasses.fields()``, and not part of ``repr``, equality, hashing, or
+pickle state. Direct field construction and ``replace`` reconstruction both
+fail the capability check because neither can prove that its fields come
+from one coherent execution lineage.
+"""
 
 _BOOL_OUTCOME_ORDER: tuple[str, ...] = ("false", "true")
 """Semantic Bool outcome order, matching the formulation identity order.
@@ -395,6 +408,32 @@ class CalibrationObservationStatus(StrEnum):
     UNRESOLVED = "unresolved"
 
 
+def _require_coherent_linkage(
+    result: BoolResult | ChoiceResult,
+    trace: DecisionTrace,
+) -> None:
+    """Require that a result and trace come from one coherent execution.
+
+    The runtime stamps the same trace id onto the assembled result and the
+    trace it reports, so a mismatch proves the pair was not produced by a
+    single evaluation. Linkage is never inferred from probability values:
+    two different executions can emit identical distributions.
+    """
+    result_linkage = result.trace_id
+    if result_linkage is None:
+        raise InvalidDecisionError(
+            "CalibrationObservation requires a result with execution linkage: "
+            "result.trace_id is None while the trace linkage identity is "
+            f"{trace.trace_id!r}, so the pair cannot be proven coherent"
+        )
+    if result_linkage != trace.trace_id:
+        raise InvalidDecisionError(
+            "CalibrationObservation requires coherent execution lineage: "
+            f"result linkage identity {result_linkage!r} does not match "
+            f"trace linkage identity {trace.trace_id!r}"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class CalibrationObservation:
     """One uncalibrated semantic decision paired with ground truth.
@@ -416,6 +455,19 @@ class CalibrationObservation:
     fingerprint identifies an execution instance, and a deterministic replay
     that yields a different trace id must not thereby become a different
     semantic observation.
+
+    The only supported construction path is
+    :meth:`CalibrationObservation.from_evaluation`, which proves that the
+    result and trace share one coherent execution lineage before any
+    provenance is derived. Direct field construction is rejected, and so is
+    ``dataclasses.replace`` reconstruction: both rebuild an observation
+    through the constructor without the construction capability, and neither
+    can prove that the fields it supplies come from one coherent execution
+    lineage. Lower-level Python escape hatches such as ``object.__new__``,
+    ``copy``, and ``pickle`` are inherent to the language, are not supported
+    construction paths, and are not defended against. A future persistence or
+    reconstruction entry point must be added explicitly and validated
+    separately, and is NOT in scope here.
     """
 
     decision_family: str
@@ -428,6 +480,38 @@ class CalibrationObservation:
     execution_fingerprint: str | None = None
     status: CalibrationObservationStatus = field(init=False)
     correct: bool | None = field(init=False)
+
+    def __init__(
+        self,
+        decision_family: str,
+        outcome_order: tuple[str, ...],
+        probabilities: tuple[tuple[str, float], ...],
+        selected_value: JSONValue,
+        ground_truth: GroundTruthRecord,
+        binding: CalibrationBinding,
+        decision_fingerprint: str,
+        execution_fingerprint: str | None = None,
+        *,
+        _construction_token: object = None,
+    ) -> None:
+        if _construction_token is not _OBSERVATION_CONSTRUCTION_TOKEN:
+            raise InvalidDecisionError(
+                "CalibrationObservation must be constructed via "
+                "CalibrationObservation.from_evaluation(...), which proves that the "
+                "result and trace share one coherent execution lineage"
+            )
+        object.__setattr__(self, "decision_family", decision_family)
+        object.__setattr__(self, "outcome_order", outcome_order)
+        object.__setattr__(self, "probabilities", probabilities)
+        object.__setattr__(self, "selected_value", selected_value)
+        object.__setattr__(self, "ground_truth", ground_truth)
+        object.__setattr__(self, "binding", binding)
+        object.__setattr__(self, "decision_fingerprint", decision_fingerprint)
+        object.__setattr__(self, "execution_fingerprint", execution_fingerprint)
+        # A hand-written __init__ means dataclasses does not call __post_init__
+        # for us, so the field validation and the derivation of status and
+        # correct are invoked explicitly here.
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         _require_non_empty_str("decision_family", self.decision_family)
@@ -521,6 +605,7 @@ class CalibrationObservation:
             raise InvalidDecisionError(
                 f"result must be a BoolResult or ChoiceResult, got {type(result).__name__}"
             )
+        _require_coherent_linkage(result, trace)
 
         binding = CalibrationBinding.from_trace(
             trace,
@@ -563,6 +648,7 @@ class CalibrationObservation:
             binding=binding,
             decision_fingerprint=trace.decision_fingerprint,
             execution_fingerprint=trace.execution_fingerprint,
+            _construction_token=_OBSERVATION_CONSTRUCTION_TOKEN,
         )
 
     @property

@@ -6,6 +6,7 @@ fake backends, so the constructor is exercised against real provenance.
 
 import inspect
 import math
+from dataclasses import fields, replace
 from typing import Any
 
 import pytest
@@ -14,6 +15,7 @@ from probvenance import (
     BackendCapabilities,
     BoolDecision,
     ChoiceDecision,
+    ChoiceResult,
     EvidenceKind,
     InvalidDecisionError,
     Probvenance,
@@ -34,6 +36,7 @@ from probvenance.calibration import (
 )
 from probvenance.errors import ProbvenanceError
 from probvenance.fingerprint import JSONValue
+from probvenance.runtime import Evaluation
 
 # ---------------------------------------------------------------------------
 # Fake backends (deterministic, honest metadata, no model downloads)
@@ -529,18 +532,24 @@ class TestObservationConstruction:
         runtime, _ = make_choice_runtime()
         bool_evaluation = runtime.evaluate_with_trace(make_bool_decision())
         choice_evaluation = runtime.evaluate_with_trace(make_choice_decision())
+        # Align the linkage identities so the coherence gate passes and the
+        # family gate under test is what fires.
+        choice_result = replace(choice_evaluation.result, trace_id=bool_evaluation.trace.trace_id)
         with pytest.raises(InvalidDecisionError, match="BoolResult"):
             CalibrationObservation.from_evaluation(
-                (choice_evaluation.result, bool_evaluation.trace), unresolved_truth()
+                (choice_result, bool_evaluation.trace), unresolved_truth()
             )
 
     def test_choice_family_requires_choice_result(self) -> None:
         runtime, _ = make_choice_runtime()
         bool_evaluation = runtime.evaluate_with_trace(make_bool_decision())
         choice_evaluation = runtime.evaluate_with_trace(make_choice_decision())
+        # Align the linkage identities so the coherence gate passes and the
+        # family gate under test is what fires.
+        bool_result = replace(bool_evaluation.result, trace_id=choice_evaluation.trace.trace_id)
         with pytest.raises(InvalidDecisionError, match="ChoiceResult"):
             CalibrationObservation.from_evaluation(
-                (bool_evaluation.result, choice_evaluation.trace), unresolved_truth()
+                (bool_result, choice_evaluation.trace), unresolved_truth()
             )
 
     def test_probabilities_are_order_preserving_pairs(self) -> None:
@@ -557,6 +566,7 @@ class TestObservationConstruction:
             certainty=Certainty.from_probabilities([0.5, 0.5]),
             method="token_logits",
             probability_true=0.5,
+            trace_id=evaluation.trace.trace_id,
         )
         observation = CalibrationObservation.from_evaluation(
             (tie_result, evaluation.trace), resolved_truth(True)
@@ -570,6 +580,151 @@ class TestObservationConstruction:
         payload = observation.canonical_payload()
         assert "execution_fingerprint" not in payload
         assert "trace_id" not in payload
+
+
+class TestObservationProvenanceCoherence:
+    def test_coherent_evaluation_accepted(self) -> None:
+        runtime, _ = make_choice_runtime()
+        evaluation = runtime.evaluate_with_trace(make_choice_decision())
+        observation = CalibrationObservation.from_evaluation(evaluation, resolved_truth("shipping"))
+        assert observation.decision_family == "choice"
+        assert observation.selected_value == "shipping"
+
+    def test_mismatched_pair_rejected(self) -> None:
+        runtime, _ = make_choice_runtime()
+        decision = make_choice_decision()
+        first = runtime.evaluate_with_trace(decision)
+        second = runtime.evaluate_with_trace(decision)
+        assert first.trace.trace_id != second.trace.trace_id
+        with pytest.raises(InvalidDecisionError, match="coherent execution lineage"):
+            CalibrationObservation.from_evaluation(
+                (first.result, second.trace), resolved_truth("shipping")
+            )
+
+    def test_mismatched_evaluation_wrapper_rejected(self) -> None:
+        runtime, _ = make_choice_runtime()
+        decision = make_choice_decision()
+        first = runtime.evaluate_with_trace(decision)
+        second = runtime.evaluate_with_trace(decision)
+        with pytest.raises(InvalidDecisionError, match="coherent execution lineage"):
+            CalibrationObservation.from_evaluation(
+                Evaluation(first.result, second.trace), resolved_truth("shipping")
+            )
+
+    def test_identical_probabilities_still_rejected(self) -> None:
+        # Linkage is never inferred from probability values: two executions of
+        # the same decision can emit identical distributions, and the
+        # cross-pairing must still be rejected because the trace ids differ.
+        runtime, _ = make_choice_runtime()
+        decision = make_choice_decision()
+        first = runtime.evaluate_with_trace(decision)
+        second = runtime.evaluate_with_trace(decision)
+        assert isinstance(first.result, ChoiceResult)
+        assert isinstance(second.result, ChoiceResult)
+        assert first.result.probabilities == second.result.probabilities
+        assert first.trace.trace_id != second.trace.trace_id
+        with pytest.raises(InvalidDecisionError, match="coherent execution lineage"):
+            CalibrationObservation.from_evaluation(
+                (first.result, second.trace), resolved_truth("shipping")
+            )
+
+    def test_result_without_linkage_rejected(self) -> None:
+        runtime, _ = make_choice_runtime()
+        evaluation = runtime.evaluate_with_trace(make_choice_decision())
+        unlinked_result = replace(evaluation.result, trace_id=None)
+        with pytest.raises(InvalidDecisionError, match="cannot be proven coherent"):
+            CalibrationObservation.from_evaluation(
+                (unlinked_result, evaluation.trace), resolved_truth("shipping")
+            )
+
+    def test_direct_constructor_rejected(self) -> None:
+        observation = choice_observation()
+        with pytest.raises(InvalidDecisionError, match="from_evaluation"):
+            CalibrationObservation(
+                decision_family=observation.decision_family,
+                outcome_order=observation.outcome_order,
+                probabilities=observation.probabilities,
+                selected_value=observation.selected_value,
+                ground_truth=observation.ground_truth,
+                binding=observation.binding,
+                decision_fingerprint=observation.decision_fingerprint,
+                execution_fingerprint=observation.execution_fingerprint,
+            )
+
+    def test_replace_binding_rejected(self) -> None:
+        runtime, _ = make_choice_runtime()
+        evaluation = runtime.evaluate_with_trace(make_choice_decision())
+        observation = CalibrationObservation.from_evaluation(evaluation, resolved_truth("shipping"))
+        second_backend = FakeCategoricalBackend(model="other-model")
+        second_runtime, _ = make_choice_runtime(second_backend)
+        second = second_runtime.evaluate_with_trace(make_choice_decision())
+        foreign_binding = CalibrationBinding.from_trace(second.trace)
+        assert observation.binding != foreign_binding
+        # Replacing only the binding is the exact Frankenstein combination the
+        # coherence round exists to prevent: probabilities and
+        # decision_fingerprint from execution A, binding (and therefore the
+        # model/revision/rendering provenance) from execution B.
+        with pytest.raises(InvalidDecisionError, match="from_evaluation"):
+            replace(observation, binding=foreign_binding)
+
+    def test_replace_with_no_changes_rejected(self) -> None:
+        observation = choice_observation()
+        # No changed fields at all: the guard lives on the constructor itself,
+        # not on any particular field change.
+        with pytest.raises(InvalidDecisionError, match="from_evaluation"):
+            replace(observation)
+
+    def test_replace_derived_field_rejected(self) -> None:
+        observation = choice_observation()
+        with pytest.raises(InvalidDecisionError, match="from_evaluation"):
+            replace(observation, probabilities=observation.probabilities)
+
+    def test_construction_token_is_not_an_instance_attribute(self) -> None:
+        observation = choice_observation()
+        assert not hasattr(observation, "_construction_token")
+        assert "_construction_token" not in {f.name for f in fields(CalibrationObservation)}
+
+    def test_replay_same_fingerprint_different_trace_id(self) -> None:
+        runtime, _ = make_choice_runtime()
+        decision = make_choice_decision()
+        first = runtime.evaluate_with_trace(decision)
+        second = runtime.evaluate_with_trace(decision)
+        assert first.trace.trace_id != second.trace.trace_id
+        obs_first = CalibrationObservation.from_evaluation(first, resolved_truth("shipping"))
+        obs_second = CalibrationObservation.from_evaluation(second, resolved_truth("shipping"))
+        assert obs_first.fingerprint == obs_second.fingerprint
+
+    def test_error_names_both_linkage_identities(self) -> None:
+        runtime, _ = make_choice_runtime()
+        decision = make_choice_decision()
+        first = runtime.evaluate_with_trace(decision)
+        second = runtime.evaluate_with_trace(decision)
+        with pytest.raises(InvalidDecisionError) as exc_info:
+            CalibrationObservation.from_evaluation(
+                (first.result, second.trace), resolved_truth("shipping")
+            )
+        message = str(exc_info.value)
+        result_linkage = first.result.trace_id
+        assert result_linkage is not None
+        assert result_linkage in message
+        assert second.trace.trace_id in message
+
+    def test_error_type_is_frozen_taxonomy(self) -> None:
+        runtime, _ = make_choice_runtime()
+        decision = make_choice_decision()
+        first = runtime.evaluate_with_trace(decision)
+        second = runtime.evaluate_with_trace(decision)
+        with pytest.raises(InvalidDecisionError):
+            CalibrationObservation.from_evaluation(
+                (first.result, second.trace), resolved_truth("shipping")
+            )
+        import probvenance.errors
+
+        assert "InvalidDecisionError" in dir(probvenance.errors)
+        assert not any(
+            name.endswith("LinkageError") or name.endswith("CoherenceError")
+            for name in dir(probvenance.errors)
+        )
 
 
 class TestObservationFingerprint:
