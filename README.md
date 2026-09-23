@@ -135,6 +135,11 @@ question:
   configuration the plan actually ran under
 - trace id: which single execution this was
 
+Every evaluated probability is additionally traceable to an explicit probability
+formulation identity and formulation-family identity (see
+`docs/probability-semantics-identity.md`); neither names a model, a tokenizer, or
+an input.
+
 The execution fingerprint payload covers the plan fingerprint, backend type,
 backend implementation version, model identifier, model revision, tokenizer
 identifier, tokenizer revision, runtime version, dtype, rendering config,

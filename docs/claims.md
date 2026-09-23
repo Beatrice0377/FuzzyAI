@@ -282,6 +282,26 @@ models, and never need a GPU.
   `tests/test_trace.py::TestPlanFingerprintVersion`,
   `tests/test_plans.py::TestPlanFingerprintVersion`.
 
+### Probability formulation identity (Phase 2D)
+
+- `[V]` Probvenance deterministically derives an exact probability formulation
+  fingerprint that excludes instance evidence while committing the semantic
+  outcome space, the scoring representation, the compiler, doctrine, strategy,
+  and probability assembler identity. Evidence:
+  `tests/test_probability_identity.py::TestPayloadShape`,
+  `tests/test_probability_identity.py::TestEvidenceExclusion`.
+- `[V]` Formulation-family fingerprints intentionally collapse the
+  representation-specific differences defined by the frozen family contract
+  (candidate names, candidate descriptions, and the candidate-to-label
+  assignment) while preserving mechanism-level dimensions including arity.
+  Evidence:
+  `tests/test_probability_identity.py::TestChoiceRepresentation`,
+  `tests/test_probability_identity.py::TestBoolRepresentation`.
+
+Same formulation identity concerns, and same formulation-family membership, are
+NOT claims that the probabilities are accurate, interchangeable, poolable, or
+calibratable together; see INV-23 and INV-24.
+
 ## Experimental records
 
 Single-session observations, each reported with the conditions under which it

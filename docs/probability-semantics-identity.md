@@ -3,19 +3,22 @@
 Status:
 
 ```text
-Probability identity semantics:  design contract frozen
-Runtime fingerprint objects:     not yet implemented
-Calibration:                     not implemented
+Probability identity semantics:            design contract frozen
+Runtime ProbabilityFormulationFingerprint: implemented
+Runtime FormulationFamilyFingerprint:      implemented
+Comparability policy:                      not implemented
+Calibration:                               not implemented
 ```
 
-The identity and fingerprint concepts defined here are not implemented: no runtime
-class, no public API, and no fingerprint defined here exists in
-`src/probvenance/` yet. The one
-part that is now real is the compiler and assembler provenance carried on
-`InferencePlan` and `DecisionTrace`, which Phase 2C.0 added; where this document
-shows those identifiers they match the runtime. This document answers which
-probabilities may be treated as the same kind of object, and which merely come
-from the same decision.
+Both runtime identities are derived from an `InferencePlan` alone and are exposed
+as read-only plan properties and on `DecisionTrace`; see
+`src/probvenance/probability_identity.py`. They are derived values and are
+deliberately not part of any fingerprint payload. No comparability policy, no
+pooling policy, and no calibration exist: the identities say which formulation
+produced a probability, never whether two probabilities may be treated alike.
+Where this document shows compiler and assembler identifiers and versions they
+match the runtime. This document answers which probabilities may be treated as
+the same kind of object, and which merely come from the same decision.
 
 ## 1. Motivation
 

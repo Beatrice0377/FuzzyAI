@@ -104,7 +104,8 @@ strategy, the doctrine, the compiler version, and the scoring representation or
 plan family. It should NOT be bound to a single plan fingerprint, which would be
 too fine-grained and would break on any irrelevant plan change. The formulation
 identity and family definitions are designed in
-`docs/probability-semantics-identity.md` (Phase 2C-Design).
+`docs/probability-semantics-identity.md` (Phase 2C-Design) and materialized as
+runtime fingerprints in Phase 2D. Calibration itself remains future work.
 
 ## Phase 5: policy layer
 

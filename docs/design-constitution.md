@@ -236,35 +236,46 @@ numbers.
 
 ### Probability formulation identity
 
-These five invariants are frozen as normative design rules. Four of them have no
-runtime enforcement point, because no runtime API implements probability-identity
-comparison yet; they bind the design and any future API rather than a current code
-path, and they are marked as such. INV-27 does have an enforcement point.
+These five invariants are frozen as normative design rules. Phase 2D
+materialized both formulation identities in the runtime, which gives INV-25 and
+INV-27 real enforcement points. INV-23, INV-24 and INV-26 still bind the design
+rather than a code path, because no pooling, calibration, or source-identity API
+exists yet; each invariant below states its own current enforcement level.
 
 - **INV-23 (cross-formulation probabilities are not interchangeable).**
   Probabilities from different probability formulation identities must not be
   silently treated as interchangeable, directly pooled, or assumed to share
   calibration. Explicit cross-formulation evaluation is allowed when both
   identities and the comparison method are preserved. Enforcement: design
-  contract only. The explicit-comparison clause is exactly what
+  contract only. Phase 2D made the identities this rule refers to derivable,
+  which is a prerequisite for enforcement, not enforcement itself. The
+  explicit-comparison clause is exactly what
   `experiments/choice_signal/REPORT.md` does when it reports total variation
   between two formulation identities while preserving both.
 - **INV-24 (formulation family membership is not automatic compatibility).**
   Formulation family membership does not imply automatic interchangeability,
   automatic pooling, or calibration compatibility. The word is `automatic`:
   explicit comparison remains permitted, so this rule must never be read as
-  "cannot be compared". Enforcement: design contract only.
+  "cannot be compared". Enforcement: design contract only. The runtime exposes a
+  formulation-family fingerprint but applies no pooling or compatibility policy
+  to it.
 - **INV-25 (formulation identity excludes instance evidence).** Probability
   formulation identity excludes instance evidence, meaning the `question` and
   `context` of a decision, while including the semantic outcome space and the
   scoring representation. Evidence decides the probability value; it does not
-  decide what the probability means. Enforcement: design contract only.
+  decide what the probability means. Enforcement: runtime-enforced by
+  construction. `probability_formulation_payload` is built from plan fields only,
+  so `question` and `context` cannot enter it, and
+  `tests/test_probability_identity.py` asserts both their absence and that two
+  decisions differing only in evidence share one formulation fingerprint.
 - **INV-26 (unknown identity values are explicit unknowns).** Unknown
   probability-identity values are explicit unknowns and must not match, default
   to, or be interpreted as concrete values. An absent model revision is neither a
   wildcard nor equal to a concrete revision, and an absent scoring-relevant
   rendering key is not equal to a concrete setting. Enforcement: design contract
-  only.
+  only; the source axis has no runtime identity yet. The one case Phase 2D does
+  materialize is an absent doctrine version, which the formulation payload
+  records as an explicit `None` instead of defaulting it to a plausible value.
 - **INV-27 (assembler identity and version are part of formulation identity).**
   The probability assembler identity and version are part of probability
   formulation identity, because two assemblers under one scoring strategy may
@@ -274,7 +285,9 @@ path, and they are marked as such. INV-27 does have an enforcement point.
   implementation and raises `UnsupportedAssemblerError` otherwise, so a recorded
   `assembler_id` cannot describe a transformation the runtime did not perform.
   `tests/test_assembler_dispatch.py` covers the valid, unknown,
-  mismatched-strategy, and unsupported-version cases.
+  mismatched-strategy, and unsupported-version cases; Phase 2D additionally
+  commits the assembler identity and version inside the formulation fingerprint,
+  so a changed assembler is visible there too.
 
 ### Probability comparability vocabulary (normative, descriptive only)
 

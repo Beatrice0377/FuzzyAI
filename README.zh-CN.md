@@ -73,6 +73,8 @@ print(evaluation.trace.execution_fingerprint)
 - execution fingerprint（执行指纹）：该 plan 实际运行时所处的执行环境与渲染配置
 - trace id：这是哪一次单独的执行
 
+此外，每个被评估的概率还可追溯到一个显式的 probability formulation identity（概率表述身份）与 formulation-family identity（表述族身份），见 `docs/probability-semantics-identity.md`；两者都不包含模型、tokenizer 或输入。
+
 execution fingerprint 的 payload 覆盖：plan fingerprint、backend 类型、backend 实现版本、模型标识、模型 revision、tokenizer 标识、tokenizer revision、运行时版本、dtype、渲染配置（rendering config）、input fingerprint，以及解析出的 positive/negative token id。同一个 plan 运行两次，会得到两个 trace id 与一个 execution fingerprint。影响概率语义的渲染配置（例如模型的 thinking 模式）会进入 execution fingerprint 与 trace，但刻意不进入与 provider 无关的 `InferencePlan`。
 
 decision 的 context 只会被渲染进 user prompt 作为证据（evidence），永远不会进入 system prompt。这是一条结构性放置规则，不是 prompt-injection（提示注入）安全性声明。
