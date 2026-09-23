@@ -419,8 +419,9 @@ the correct/ordinary-error distinction into the derived `correct` boolean on
 `RESOLVED` observations, and represents ambiguity as `UNRESOLVED`.
 
 `selected_value` is the value after the runtime's deterministic tie-break
-(section 17.3). The observation records the selection the system actually made; it
-never re-runs the tie-break.
+(section 17.3). The observation records the selection carried by the supplied
+runtime-linked result; it never re-runs the tie-break. Linkage does not attest
+execution origin (section 17.3).
 
 ### 8.2 Binding metadata
 
