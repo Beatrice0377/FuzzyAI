@@ -904,7 +904,19 @@ uncalibrated selected semantic probability for a pre-calibration run, or
 Brier = mean((p_i - y_i)^2)
 ```
 
-Range `[0, 1]`, lower is better. It is a proper scoring rule.
+Range `[0, 1]`, lower is better.
+
+Propriety is a property of the interpretation, not of the formula alone. Brier is
+a proper scoring rule when its input is read as a probability forecast of the
+scored binary target, that is, when `p_i` is claimed to estimate
+`P(Y_correct = 1)`; propriety then says a forecaster minimizes the expected score
+by reporting its true belief. It says nothing about whether a particular input
+already carries that meaning. Phase 4B.1 deliberately does not grant that
+interpretation to the uncalibrated selected semantic probability (section 14.0):
+there the same formula is used as a pre-calibration diagnostic baseline against
+winner correctness, its value does not establish that the raw score already means
+predicted correctness, and it must not be reported as calibration-quality
+evidence.
 
 Caveat: Brier is affected by both calibration and discrimination (refinement). A
 model with poor discrimination but a well-fitted calibration can achieve a
@@ -919,7 +931,8 @@ For binary correctness:
 log_loss = -mean( y * log(p) + (1 - y) * log(1 - p) )
 ```
 
-Properties: proper scoring rule, punishing on confident errors far more than
+Properties: proper scoring rule under the same forecast interpretation as section
+14.1, punishing on confident errors far more than
 Brier. The numerical treatment of `p = 0` and `p = 1` is a real implementation
 concern and is explicitly deferred. This document does not fix an epsilon policy.
 
