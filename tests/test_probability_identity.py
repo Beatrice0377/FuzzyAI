@@ -33,6 +33,7 @@ from probvenance.doctrine import (
 )
 from probvenance.fingerprint import JSONValue, canonical_json
 from probvenance.plans import (
+    DECISION_FAMILY_CHOICE,
     PLAN_FINGERPRINT_VERSION,
     CandidateLabelMapping,
     EvidenceKind,
@@ -360,9 +361,19 @@ class TestExactFormulationBasics:
             strategy=ScoringStrategy.TOKEN_LOGPROBS,
             positive_verbalizer=None,
             negative_verbalizer=None,
+            compiler_id=None,
+            compiler_version=None,
+            assembler_id=None,
+            assembler_version=None,
+            doctrine_id=None,
+            doctrine_version=None,
         )
-        assert probability_formulation_payload(other)["decision_family"] == "unknown"
+        assert probability_formulation_payload(other)["decision_family"] == "bool"
         assert probability_formulation_payload(other)["outcome_space"] is None
+        assert probability_formulation_payload(other)["compiler"] == {
+            "id": None,
+            "version": None,
+        }
         assert probability_formulation_fingerprint(plan) != probability_formulation_fingerprint(
             other
         )
@@ -384,8 +395,8 @@ class TestExactFormulationBasics:
         }
 
     def test_plan_fingerprint_schema_is_not_bumped_by_derived_identities(self) -> None:
-        assert PLAN_FINGERPRINT_VERSION == 5
-        assert bool_plan().fingerprint_version == 5
+        assert PLAN_FINGERPRINT_VERSION == 6
+        assert bool_plan().fingerprint_version == 6
 
     def test_doctrine_block_records_the_real_identity_and_version(self) -> None:
         assert probability_formulation_payload(bool_plan())["doctrine"] == {
@@ -638,3 +649,102 @@ class TestTraceExposure:
             "calibratable",
         ):
             assert forbidden not in payload
+
+
+class TestDeclaredDecisionFamily:
+    def test_payload_reads_the_declared_family(self) -> None:
+        assert probability_formulation_payload(bool_plan())["decision_family"] == (
+            bool_plan().decision_family
+        )
+        assert probability_formulation_payload(choice_plan())["decision_family"] == (
+            choice_plan().decision_family
+        )
+        assert formulation_family_payload(bool_plan())["decision_family"] == (
+            bool_plan().decision_family
+        )
+
+    def test_declared_family_is_part_of_the_plan_fingerprint(self) -> None:
+        plan = replace(
+            bool_plan(),
+            strategy=ScoringStrategy.TOKEN_LOGPROBS,
+            positive_verbalizer=None,
+            negative_verbalizer=None,
+            compiler_id=None,
+            compiler_version=None,
+            assembler_id=None,
+            assembler_version=None,
+            doctrine_id=None,
+            doctrine_version=None,
+        )
+        other = replace(plan, decision_family=DECISION_FAMILY_CHOICE)
+        assert other.fingerprint != plan.fingerprint
+
+    def test_plan_fingerprint_version_is_6(self) -> None:
+        assert PLAN_FINGERPRINT_VERSION == 6
+
+
+# Pinned before the decision_family field was added (plan fingerprint v5 era).
+# The formulation and family payloads for legal Bool and Choice plans must be
+# byte-identical across that change, so both schema versions stay 2 and these
+# SHA-256 values must never move.
+PINNED_BOOL_FORMULATION_FP = "9107772fa13f350024f9639a3b0eee119268524b63762caedd1c7118feb9f8a4"
+PINNED_BOOL_FAMILY_FP = "c792a2f40c2ed5d8502534ed6d9d4377aa79079df589ab5a9f4e88e946000bb8"
+PINNED_CHOICE_FORMULATION_FP = "623ef98477f5474c6d25bd2faffac7702083a3caf91e4fdeb08e51188305d488"
+PINNED_CHOICE_FAMILY_FP = "36e8a74111c8d01ba1ee3c32201595707dfd79fbeb159f41202d7e9e674f8ec6"
+
+
+class TestPinnedFormulationFingerprints:
+    def test_bool_formulation_fingerprint_is_pinned(self) -> None:
+        assert bool_plan().probability_formulation_fingerprint == PINNED_BOOL_FORMULATION_FP
+
+    def test_bool_family_fingerprint_is_pinned(self) -> None:
+        assert bool_plan().formulation_family_fingerprint == PINNED_BOOL_FAMILY_FP
+
+    def test_choice_formulation_fingerprint_is_pinned(self) -> None:
+        assert choice_plan().probability_formulation_fingerprint == PINNED_CHOICE_FORMULATION_FP
+
+    def test_choice_family_fingerprint_is_pinned(self) -> None:
+        assert choice_plan().formulation_family_fingerprint == PINNED_CHOICE_FAMILY_FP
+
+    def test_formulation_schema_versions_stay_2(self) -> None:
+        assert PROBABILITY_FORMULATION_FINGERPRINT_VERSION == 2
+        assert FORMULATION_FAMILY_FINGERPRINT_VERSION == 2
+
+
+class TestUnknownIdentityCanonicalForm:
+    def _unknown_plan(self) -> InferencePlan:
+        return replace(
+            bool_plan(),
+            strategy=ScoringStrategy.TOKEN_LOGPROBS,
+            positive_verbalizer=None,
+            negative_verbalizer=None,
+            compiler_id=None,
+            compiler_version=None,
+            assembler_id=None,
+            assembler_version=None,
+            doctrine_id=None,
+            doctrine_version=None,
+        )
+
+    def test_unknown_party_is_explicit_null_never_omitted(self) -> None:
+        payload = probability_formulation_payload(self._unknown_plan())
+        assert payload["compiler"] == {"id": None, "version": None}
+        assert payload["assembler"] == {"id": None, "version": None}
+        assert payload["doctrine"] == {"doctrine_id": None, "version": None}
+        assert "compiler" in payload
+        assert "assembler" in payload
+        assert "doctrine" in payload
+
+    def test_unknown_party_never_uses_sentinels(self) -> None:
+        serialized = canonical_json(probability_formulation_payload(self._unknown_plan()))
+        assert '"unknown"' not in serialized
+        assert '"id": ""' not in serialized
+        assert '"version": 0' not in serialized
+        assert '"version": -1' not in serialized
+
+    def test_family_payload_unknown_party_is_explicit_null(self) -> None:
+        payload = formulation_family_payload(self._unknown_plan())
+        assert payload["compiler"] == {"id": None, "version": None}
+        assert payload["assembler"] == {"id": None, "version": None}
+        assert payload["doctrine"] == {"doctrine_id": None, "version": None}
+        assert payload["arity"] == 2

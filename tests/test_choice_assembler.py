@@ -151,6 +151,7 @@ class TestTieBreakFollowsSemanticOrder:
             decision_fingerprint=base.decision_fingerprint,
             strategy=base.strategy,
             prompt=base.prompt,
+            decision_family=base.decision_family,
             targets=labels,
             system_prompt=base.system_prompt,
             doctrine_id=base.doctrine_id,

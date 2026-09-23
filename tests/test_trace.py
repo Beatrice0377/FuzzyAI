@@ -23,6 +23,7 @@ from probvenance import (
 from probvenance.assembler import BINARY_ASSEMBLER_ID, BINARY_ASSEMBLER_VERSION
 from probvenance.compiler import BINARY_COMPILER_ID, BINARY_COMPILER_VERSION
 from probvenance.doctrine import BINARY_DOCTRINE_VERSION
+from probvenance.plans import DECISION_FAMILY_BOOL
 
 TIMESTAMP = "2026-01-01T00:00:00+00:00"
 
@@ -49,6 +50,7 @@ def make_plan(**overrides: Any) -> InferencePlan:
         "decision_fingerprint": "a" * 64,
         "strategy": ScoringStrategy.BINARY_TOKEN_LOGITS,
         "prompt": "Question: Q?\nAnswer yes or no.",
+        "decision_family": DECISION_FAMILY_BOOL,
         "system_prompt": "System instructions.",
         "positive_verbalizer": "yes",
         "negative_verbalizer": "no",
@@ -502,6 +504,19 @@ class TestToDict:
     def test_to_dict_includes_doctrine_version(self) -> None:
         trace = build_trace()
         assert trace.to_dict()["doctrine_version"] == BINARY_DOCTRINE_VERSION
+
+    def test_decision_family_is_populated_from_the_plan(self) -> None:
+        trace = build_trace()
+        assert trace.decision_family == DECISION_FAMILY_BOOL
+
+    def test_to_dict_includes_decision_family(self) -> None:
+        trace = build_trace()
+        assert trace.to_dict()["decision_family"] == DECISION_FAMILY_BOOL
+
+    def test_doctrine_id_mirrors_the_plan_without_sentinel(self) -> None:
+        trace = build_trace()
+        assert trace.doctrine_id == "binary-semantic-judgment-v1"
+        assert trace.to_dict()["doctrine_id"] == "binary-semantic-judgment-v1"
 
     def test_none_fields_survive_json(self) -> None:
         metadata = {"positive_token_id": 1, "negative_token_id": 2}

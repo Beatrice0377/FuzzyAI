@@ -33,7 +33,13 @@ from probvenance.errors import (
     UnsupportedCapabilityError,
     UnsupportedDecisionError,
 )
-from probvenance.plans import CandidateLabelMapping, InferencePlan, ScoringStrategy
+from probvenance.plans import (
+    DECISION_FAMILY_BOOL,
+    DECISION_FAMILY_CHOICE,
+    CandidateLabelMapping,
+    InferencePlan,
+    ScoringStrategy,
+)
 
 BINARY_COMPILER_ID = "bool-compiler"
 BINARY_COMPILER_VERSION = 1
@@ -128,6 +134,7 @@ class BoolCompiler:
             decision_fingerprint=decision.fingerprint,
             strategy=ScoringStrategy.BINARY_TOKEN_LOGITS,
             prompt=user_prompt,
+            decision_family=DECISION_FAMILY_BOOL,
             targets=(),
             system_prompt=system_prompt,
             positive_verbalizer=self._positive_verbalizer,
@@ -222,6 +229,7 @@ class ChoiceCompiler:
             decision_fingerprint=decision.fingerprint,
             strategy=ScoringStrategy.CATEGORICAL_TOKEN_LOGITS,
             prompt=user_prompt,
+            decision_family=DECISION_FAMILY_CHOICE,
             targets=targets,
             system_prompt=system_prompt,
             doctrine_id=self._doctrine.doctrine_id,

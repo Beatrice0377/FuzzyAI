@@ -87,7 +87,8 @@ class DecisionTrace:
     formulation_family_fingerprint: str
     formulation_family_fingerprint_version: int
     scoring_strategy: str
-    doctrine_id: str
+    decision_family: str
+    doctrine_id: str | None
     doctrine_version: int | None
     positive_verbalizer: str
     negative_verbalizer: str
@@ -112,10 +113,10 @@ class DecisionTrace:
     rendering_config: Mapping[str, JSONValue] = field(default_factory=dict)
     candidate_mapping: tuple[CandidateLabelMapping, ...] = ()
     resolved_target_token_ids: tuple[tuple[str, int], ...] = ()
-    compiler_id: str = ""
-    compiler_version: int = 0
-    assembler_id: str = ""
-    assembler_version: int = 0
+    compiler_id: str | None = None
+    compiler_version: int | None = None
+    assembler_id: str | None = None
+    assembler_version: int | None = None
 
     def to_dict(self) -> dict[str, JSONValue]:
         """A JSON-compatible plain dict of every field (evidence nested)."""
@@ -132,6 +133,7 @@ class DecisionTrace:
             "formulation_family_fingerprint": self.formulation_family_fingerprint,
             "formulation_family_fingerprint_version": self.formulation_family_fingerprint_version,
             "scoring_strategy": self.scoring_strategy,
+            "decision_family": self.decision_family,
             "doctrine_id": self.doctrine_id,
             "doctrine_version": self.doctrine_version,
             "positive_verbalizer": self.positive_verbalizer,
@@ -417,7 +419,8 @@ def build_decision_trace(
         formulation_family_fingerprint=plan.formulation_family_fingerprint,
         formulation_family_fingerprint_version=plan.formulation_family_fingerprint_version,
         scoring_strategy=str(plan.strategy.value),
-        doctrine_id=plan.doctrine_id if plan.doctrine_id is not None else "none",
+        decision_family=plan.decision_family,
+        doctrine_id=plan.doctrine_id,
         doctrine_version=plan.doctrine_version,
         positive_verbalizer=plan.positive_verbalizer
         if plan.positive_verbalizer is not None

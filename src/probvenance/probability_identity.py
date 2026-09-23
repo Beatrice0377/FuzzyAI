@@ -32,8 +32,14 @@ Two boundaries this module exists to protect:
   poolability, or calibration compatibility (INV-23, INV-24).
 """
 
+from probvenance.errors import InvalidDecisionError
 from probvenance.fingerprint import JSONValue, fingerprint
-from probvenance.plans import InferencePlan, ScoringStrategy
+from probvenance.plans import (
+    DECISION_FAMILY_BOOL,
+    DECISION_FAMILY_CHOICE,
+    InferencePlan,
+    ScoringStrategy,
+)
 
 # Bump when the canonical payload shape changes. The two identities evolve
 # independently, so they carry separate versions.
@@ -41,9 +47,8 @@ from probvenance.plans import InferencePlan, ScoringStrategy
 PROBABILITY_FORMULATION_FINGERPRINT_VERSION = 2
 FORMULATION_FAMILY_FINGERPRINT_VERSION = 2
 
-_BOOL_DECISION_FAMILY = "bool"
-_CHOICE_DECISION_FAMILY = "choice"
-_UNKNOWN_DECISION_FAMILY = "unknown"
+_BOOL_DECISION_FAMILY = DECISION_FAMILY_BOOL
+_CHOICE_DECISION_FAMILY = DECISION_FAMILY_CHOICE
 
 # The Bool outcome space is fixed: Omega = {False, True}. It is rendered as
 # explicit semantic outcome names so the payload never depends on Python class
@@ -55,39 +60,56 @@ _BOOL_OUTCOMES: tuple[str, ...] = ("false", "true")
 _BOOL_ARITY = 2
 
 
-def _decision_family(strategy: ScoringStrategy) -> str:
-    """The decision family a strategy produces, or ``unknown`` without one."""
-    if strategy is ScoringStrategy.BINARY_TOKEN_LOGITS:
-        return _BOOL_DECISION_FAMILY
-    if strategy is ScoringStrategy.CATEGORICAL_TOKEN_LOGITS:
-        return _CHOICE_DECISION_FAMILY
-    return _UNKNOWN_DECISION_FAMILY
+def _identity_party(identifier: str | None, version: int | None) -> dict[str, JSONValue]:
+    """An ``{id, version}`` block, explicit in both the concrete and unknown form.
 
-
-def _identity_party(identifier: str, version: int) -> dict[str, JSONValue] | None:
-    """An ``{id, version}`` block, or ``None`` when the plan declares nothing.
-
-    An undeclared identity is an explicit unknown (INV-26). It is never
-    rendered as an empty identifier or a zero version, which would claim a
-    concrete identity the plan does not have.
+    An undeclared identity is an explicit unknown (INV-26): ``{"id": None,
+    "version": None}``. It is never omitted, never rendered as an empty
+    identifier or a zero version, and never a sentinel string, which would
+    claim a concrete identity the plan does not have. Half-known states are
+    rejected here as defence in depth; the plan already rejects them.
     """
-    if not identifier:
-        return None
+    if (identifier is None) != (version is None):
+        raise InvalidDecisionError(
+            "identity party must be atomic (both id and version, or neither), got "
+            f"id={identifier!r}, version={version!r}"
+        )
+    if identifier is None:
+        return {"id": None, "version": None}
+    if not isinstance(identifier, str) or not identifier.strip():
+        raise InvalidDecisionError(
+            f"identity party id must be a non-empty string, got {identifier!r}"
+        )
+    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        raise InvalidDecisionError(f"identity party version must be an int >= 1, got {version!r}")
     return {"id": identifier, "version": version}
 
 
-def _doctrine_block(plan: InferencePlan) -> dict[str, JSONValue] | None:
+def _doctrine_block(plan: InferencePlan) -> dict[str, JSONValue]:
     """The doctrine identity block: id and version, both explicit.
 
     Doctrine is a probability-formulation-relevant contract, so its identity and
     its revision are separate plan fields and both enter the payload. The version
     is never derived from the id string, even though the shipped ids happen to be
-    version-suffixed. A plan with no doctrine contributes no block, and a
-    declared id without a version keeps the explicit unknown (INV-26).
+    version-suffixed. A plan with no doctrine contributes the explicit unknown
+    block (INV-26); the key is never omitted.
     """
+    if (plan.doctrine_id is None) != (plan.doctrine_version is None):
+        raise InvalidDecisionError(
+            "doctrine identity must be atomic (both id and version, or neither), got "
+            f"doctrine_id={plan.doctrine_id!r}, "
+            f"doctrine_version={plan.doctrine_version!r}"
+        )
     if plan.doctrine_id is None:
-        return None
-    return {"doctrine_id": plan.doctrine_id, "version": plan.doctrine_version}
+        return {"doctrine_id": None, "version": None}
+    if not isinstance(plan.doctrine_id, str) or not plan.doctrine_id.strip():
+        raise InvalidDecisionError(
+            f"doctrine_id must be a non-empty string, got {plan.doctrine_id!r}"
+        )
+    version = plan.doctrine_version
+    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        raise InvalidDecisionError(f"doctrine_version must be an int >= 1, got {version!r}")
+    return {"doctrine_id": plan.doctrine_id, "version": version}
 
 
 def _bool_outcome_space() -> dict[str, JSONValue]:
@@ -147,10 +169,14 @@ def _choice_scoring_representation(plan: InferencePlan) -> dict[str, JSONValue]:
 
 
 def _family_arity(plan: InferencePlan) -> int | None:
-    """Candidate cardinality for the family identity, or ``None`` if unknown."""
-    if plan.strategy is ScoringStrategy.BINARY_TOKEN_LOGITS:
+    """Candidate cardinality for the family identity, or ``None`` if unknown.
+
+    Branches on the DECLARED decision family, not on the strategy: the family
+    is a plan property, and arity is a property of the outcome space.
+    """
+    if plan.decision_family == _BOOL_DECISION_FAMILY:
         return _BOOL_ARITY
-    if plan.strategy is ScoringStrategy.CATEGORICAL_TOKEN_LOGITS:
+    if plan.decision_family == _CHOICE_DECISION_FAMILY:
         return len(plan.candidate_mapping)
     return None
 
@@ -181,7 +207,7 @@ def probability_formulation_payload(plan: InferencePlan) -> dict[str, JSONValue]
     return {
         "v": PROBABILITY_FORMULATION_FINGERPRINT_VERSION,
         "kind": "probability_formulation",
-        "decision_family": _decision_family(strategy),
+        "decision_family": plan.decision_family,
         "strategy": str(strategy),
         "assembler": _identity_party(plan.assembler_id, plan.assembler_version),
         "doctrine": _doctrine_block(plan),
@@ -207,7 +233,7 @@ def formulation_family_payload(plan: InferencePlan) -> dict[str, JSONValue]:
     return {
         "v": FORMULATION_FAMILY_FINGERPRINT_VERSION,
         "kind": "formulation_family",
-        "decision_family": _decision_family(plan.strategy),
+        "decision_family": plan.decision_family,
         "strategy": str(plan.strategy),
         "assembler": _identity_party(plan.assembler_id, plan.assembler_version),
         "doctrine": _doctrine_block(plan),

@@ -28,29 +28,58 @@ class ScoringStrategy(StrEnum):
     TOKEN_LOGPROBS = "token_logprobs"
 
 
+# Decision families. The family is DECLARED on the plan (by the compiler or the
+# caller), never inferred from the scoring strategy: a strategy describes how a
+# backend scores, while the family describes what the outcome space is.
+DECISION_FAMILY_BOOL = "bool"
+DECISION_FAMILY_CHOICE = "choice"
+DECISION_FAMILIES: tuple[str, ...] = (DECISION_FAMILY_BOOL, DECISION_FAMILY_CHOICE)
+
+# Legal implemented-strategy/family combinations. This is an explicit table, not
+# an inference rule: a future strategy (for example one_vs_rest_binary_logits
+# declaring "choice") is a data change here, not a rewrite.
+_IMPLEMENTED_STRATEGY_FAMILIES: dict[ScoringStrategy, str] = {
+    ScoringStrategy.BINARY_TOKEN_LOGITS: DECISION_FAMILY_BOOL,
+    ScoringStrategy.CATEGORICAL_TOKEN_LOGITS: DECISION_FAMILY_CHOICE,
+}
+
 # Strategies that have a real compiler and probability assembler today. Plans
 # using these MUST declare which one produced them; an unimplemented strategy
 # has no compiler yet, so it declares no provenance.
-_STRATEGIES_WITH_PROVENANCE: frozenset[ScoringStrategy] = frozenset(
-    {ScoringStrategy.BINARY_TOKEN_LOGITS, ScoringStrategy.CATEGORICAL_TOKEN_LOGITS}
-)
+_STRATEGIES_WITH_PROVENANCE: frozenset[ScoringStrategy] = frozenset(_IMPLEMENTED_STRATEGY_FAMILIES)
 
 # Bump when the canonical fingerprint payload changes shape; never hash across versions.
-PLAN_FINGERPRINT_VERSION = 5
+PLAN_FINGERPRINT_VERSION = 6
 
 
-def _require_positive_int(value: object, field_name: str) -> None:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+def _require_atomic_party(identifier: object, version: object, party: str) -> None:
+    """Enforce the atomic identity contract for one implementation party.
+
+    A versioned implementation identity (compiler, assembler, doctrine) is
+    either fully concrete or fully unknown; half-known states are rejected.
+    This deliberately does NOT apply to model/tokenizer ids and revisions:
+    a known model with an unknown revision is a real provenance state.
+    """
+    id_field = f"{party}_id"
+    version_field = f"{party}_version"
+    id_known = identifier is not None
+    version_known = version is not None
+    if id_known != version_known:
         raise InvalidDecisionError(
-            f"{field_name} must be a positive int, got {type(value).__name__} ({value!r})"
+            f"{id_field} and {version_field} must be set together (atomic identity), "
+            f"got {id_field}={identifier!r}, {version_field}={version!r}"
         )
-
-
-def _require_non_empty_str(value: object, field_name: str) -> None:
-    if not isinstance(value, str) or not value.strip():
-        raise InvalidDecisionError(
-            f"{field_name} must be a non-empty string, got {type(value).__name__} ({value!r})"
-        )
+    if id_known:
+        if not isinstance(identifier, str) or not identifier.strip():
+            raise InvalidDecisionError(
+                f"{id_field} must be None or a non-empty string, got "
+                f"{type(identifier).__name__} ({identifier!r})"
+            )
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            raise InvalidDecisionError(
+                f"{version_field} must be None or an int >= 1, got "
+                f"{type(version).__name__} ({version!r})"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +131,7 @@ class InferencePlan:
     decision_fingerprint: str
     strategy: ScoringStrategy
     prompt: str
+    decision_family: str
     targets: tuple[str, ...] = ()
     required_capabilities: BackendCapabilities = field(default_factory=BackendCapabilities.none)
     system_prompt: str | None = None
@@ -111,10 +141,10 @@ class InferencePlan:
     doctrine_version: int | None = None
     label_scheme_id: str | None = None
     candidate_mapping: tuple[CandidateLabelMapping, ...] = ()
-    compiler_id: str = ""
-    compiler_version: int = 0
-    assembler_id: str = ""
-    assembler_version: int = 0
+    compiler_id: str | None = None
+    compiler_version: int | None = None
+    assembler_id: str | None = None
+    assembler_version: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.decision_fingerprint, str) or not self.decision_fingerprint:
@@ -126,6 +156,21 @@ class InferencePlan:
             raise InvalidDecisionError(
                 f"strategy must be a ScoringStrategy, got {type(self.strategy).__name__} "
                 f"({self.strategy!r})"
+            )
+        if not isinstance(self.decision_family, str) or not self.decision_family.strip():
+            raise InvalidDecisionError(
+                "decision_family must be a non-empty string, got "
+                f"{type(self.decision_family).__name__} ({self.decision_family!r})"
+            )
+        if self.decision_family not in DECISION_FAMILIES:
+            raise InvalidDecisionError(
+                f"decision_family must be one of {DECISION_FAMILIES}, got {self.decision_family!r}"
+            )
+        expected_family = _IMPLEMENTED_STRATEGY_FAMILIES.get(self.strategy)
+        if expected_family is not None and self.decision_family != expected_family:
+            raise InvalidDecisionError(
+                f"decision_family {self.decision_family!r} is not compatible with "
+                f"strategy {self.strategy.value!r}, expected {expected_family!r}"
             )
         if not isinstance(self.prompt, str) or not self.prompt.strip():
             raise InvalidDecisionError(f"prompt must be a non-empty string, got {self.prompt!r}")
@@ -222,15 +267,26 @@ class InferencePlan:
                 f"{ScoringStrategy.CATEGORICAL_TOKEN_LOGITS.value} strategy, got "
                 f"{len(self.candidate_mapping)} entries"
             )
+        # Implementation identity parties are atomic: both concrete or both
+        # unknown, never half-known. Doctrine id and version are separate
+        # declared fields; never parse a version out of the id string.
+        _require_atomic_party(self.compiler_id, self.compiler_version, "compiler")
+        _require_atomic_party(self.assembler_id, self.assembler_version, "assembler")
+        _require_atomic_party(self.doctrine_id, self.doctrine_version, "doctrine")
         if self.strategy in _STRATEGIES_WITH_PROVENANCE:
-            _require_non_empty_str(self.compiler_id, "compiler_id")
-            _require_positive_int(self.compiler_version, "compiler_version")
-            _require_non_empty_str(self.assembler_id, "assembler_id")
-            _require_positive_int(self.assembler_version, "assembler_version")
-            # Doctrine id and version are separate declared fields; never parse
-            # a version out of the id string.
-            _require_non_empty_str(self.doctrine_id, "doctrine_id")
-            _require_positive_int(self.doctrine_version, "doctrine_version")
+            for party, id_field, version_field in (
+                ("compiler", "compiler_id", "compiler_version"),
+                ("assembler", "assembler_id", "assembler_version"),
+                ("doctrine", "doctrine_id", "doctrine_version"),
+            ):
+                identifier = getattr(self, id_field)
+                version = getattr(self, version_field)
+                if identifier is None or version is None:
+                    raise InvalidDecisionError(
+                        f"{party} identity must be concrete for the "
+                        f"{self.strategy.value!r} strategy, got "
+                        f"{id_field}={identifier!r}, {version_field}={version!r}"
+                    )
 
     def _validate_categorical_mapping(self) -> None:
         mapping = self.candidate_mapping
@@ -282,6 +338,7 @@ class InferencePlan:
                 "kind": "inference_plan",
                 "decision_fingerprint": self.decision_fingerprint,
                 "strategy": str(self.strategy),
+                "decision_family": self.decision_family,
                 "prompt": self.prompt,
                 "system_prompt": self.system_prompt,
                 "targets": list(self.targets),

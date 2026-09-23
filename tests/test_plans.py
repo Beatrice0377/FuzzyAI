@@ -35,6 +35,7 @@ from probvenance.doctrine import (
     CATEGORICAL_DOCTRINE_ID,
     CATEGORICAL_DOCTRINE_VERSION,
 )
+from probvenance.plans import DECISION_FAMILY_BOOL, DECISION_FAMILY_CHOICE
 
 
 def make_plan(**overrides: Any) -> InferencePlan:
@@ -42,6 +43,7 @@ def make_plan(**overrides: Any) -> InferencePlan:
         "decision_fingerprint": "a" * 64,
         "strategy": ScoringStrategy.BINARY_TOKEN_LOGITS,
         "prompt": "Answer yes or no.",
+        "decision_family": DECISION_FAMILY_BOOL,
         "positive_verbalizer": "yes",
         "negative_verbalizer": "no",
         "doctrine_id": BINARY_DOCTRINE_ID,
@@ -132,14 +134,22 @@ class TestInferencePlanVerbalizerValidation:
             make_plan(positive_verbalizer="yes", negative_verbalizer="yes")
 
     @pytest.mark.parametrize(
-        "strategy",
-        [ScoringStrategy.CATEGORICAL_TOKEN_LOGITS, ScoringStrategy.TOKEN_LOGPROBS],
+        ("strategy", "family"),
+        [
+            (ScoringStrategy.CATEGORICAL_TOKEN_LOGITS, DECISION_FAMILY_CHOICE),
+            (ScoringStrategy.TOKEN_LOGPROBS, DECISION_FAMILY_BOOL),
+        ],
     )
     def test_verbalizers_rejected_for_non_binary_strategies(
-        self, strategy: ScoringStrategy
+        self, strategy: ScoringStrategy, family: str
     ) -> None:
         with pytest.raises(InvalidDecisionError, match="only meaningful"):
-            make_plan(strategy=strategy, positive_verbalizer="yes", negative_verbalizer="no")
+            make_plan(
+                strategy=strategy,
+                decision_family=family,
+                positive_verbalizer="yes",
+                negative_verbalizer="no",
+            )
 
     def test_non_binary_strategy_without_verbalizers_allowed(self) -> None:
         plan = make_plan(
@@ -148,6 +158,7 @@ class TestInferencePlanVerbalizerValidation:
             negative_verbalizer=None,
             system_prompt=None,
             doctrine_id=None,
+            doctrine_version=None,
         )
         assert plan.positive_verbalizer is None
         assert plan.negative_verbalizer is None
@@ -179,7 +190,7 @@ class TestInferencePlanVerbalizerValidation:
     def test_system_prompt_change_changes_fingerprint(self) -> None:
         assert make_plan().fingerprint != make_plan(system_prompt="Other instructions.").fingerprint
 
-    def test_fingerprint_v5_commits_provenance(self) -> None:
+    def test_fingerprint_v6_commits_provenance(self) -> None:
         plan = make_plan(system_prompt="S", positive_verbalizer="yes", negative_verbalizer="no")
         assert len(plan.fingerprint) == 64
         assert plan.fingerprint != make_plan(system_prompt="S", compiler_version=2).fingerprint
@@ -318,6 +329,7 @@ def make_categorical_plan(**overrides: Any) -> InferencePlan:
         "decision_fingerprint": "b" * 64,
         "strategy": ScoringStrategy.CATEGORICAL_TOKEN_LOGITS,
         "prompt": "Answer with one label.",
+        "decision_family": DECISION_FAMILY_CHOICE,
         "targets": ("A", "B", "C"),
         "label_scheme_id": "categorical-labels-v1",
         "doctrine_id": CATEGORICAL_DOCTRINE_ID,
@@ -339,6 +351,7 @@ class TestPlanProvenance:
                 decision_fingerprint="a" * 64,
                 strategy=ScoringStrategy.BINARY_TOKEN_LOGITS,
                 prompt="Answer.",
+                decision_family=DECISION_FAMILY_BOOL,
                 positive_verbalizer="yes",
                 negative_verbalizer="no",
             )
@@ -406,8 +419,10 @@ class TestPlanProvenance:
             decision_fingerprint="a" * 64,
             strategy=ScoringStrategy.TOKEN_LOGPROBS,
             prompt="Answer.",
+            decision_family=DECISION_FAMILY_BOOL,
         )
-        assert plan.compiler_id == ""
+        assert plan.compiler_id is None
+        assert plan.compiler_version is None
         assert len(plan.fingerprint) == 64
 
 
@@ -511,3 +526,154 @@ class TestCategoricalPlanValidation:
         mutable: Any = plan
         with pytest.raises(AttributeError):
             mutable.targets = ("B", "A", "C")
+
+
+class TestDecisionFamily:
+    def test_bool_compiler_declares_bool_family(self) -> None:
+        assert make_plan().decision_family == DECISION_FAMILY_BOOL
+
+    def test_choice_compiler_declares_choice_family(self) -> None:
+        assert make_categorical_plan().decision_family == DECISION_FAMILY_CHOICE
+
+    def test_unknown_family_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="decision_family"):
+            make_plan(decision_family="unknown")
+
+    def test_empty_family_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="decision_family"):
+            make_plan(decision_family="  ")
+
+    def test_non_string_family_rejected(self) -> None:
+        bad_family: Any = 7
+        with pytest.raises(InvalidDecisionError, match="decision_family"):
+            make_plan(decision_family=bad_family)
+
+    def test_binary_strategy_with_choice_family_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="not compatible"):
+            make_plan(decision_family=DECISION_FAMILY_CHOICE)
+
+    def test_categorical_strategy_with_bool_family_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="not compatible"):
+            make_categorical_plan(decision_family=DECISION_FAMILY_BOOL)
+
+    def test_token_logprobs_must_declare_family_explicitly(self) -> None:
+        plan = make_plan(
+            strategy=ScoringStrategy.TOKEN_LOGPROBS,
+            decision_family=DECISION_FAMILY_BOOL,
+            positive_verbalizer=None,
+            negative_verbalizer=None,
+            system_prompt=None,
+            doctrine_id=None,
+            doctrine_version=None,
+            compiler_id=None,
+            compiler_version=None,
+            assembler_id=None,
+            assembler_version=None,
+        )
+        assert plan.decision_family == DECISION_FAMILY_BOOL
+
+    def test_token_logprobs_accepts_choice_family(self) -> None:
+        plan = make_plan(
+            strategy=ScoringStrategy.TOKEN_LOGPROBS,
+            decision_family=DECISION_FAMILY_CHOICE,
+            positive_verbalizer=None,
+            negative_verbalizer=None,
+            system_prompt=None,
+            doctrine_id=None,
+            doctrine_version=None,
+            compiler_id=None,
+            compiler_version=None,
+            assembler_id=None,
+            assembler_version=None,
+        )
+        assert plan.decision_family == DECISION_FAMILY_CHOICE
+
+    def test_missing_family_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="decision_family"):
+            make_plan(decision_family=None)
+
+    def test_family_change_changes_plan_fingerprint(self) -> None:
+        plan = make_plan(
+            strategy=ScoringStrategy.TOKEN_LOGPROBS,
+            decision_family=DECISION_FAMILY_BOOL,
+            positive_verbalizer=None,
+            negative_verbalizer=None,
+            system_prompt=None,
+            doctrine_id=None,
+            doctrine_version=None,
+            compiler_id=None,
+            compiler_version=None,
+            assembler_id=None,
+            assembler_version=None,
+        )
+        other = make_plan(
+            strategy=ScoringStrategy.TOKEN_LOGPROBS,
+            decision_family=DECISION_FAMILY_CHOICE,
+            positive_verbalizer=None,
+            negative_verbalizer=None,
+            system_prompt=None,
+            doctrine_id=None,
+            doctrine_version=None,
+            compiler_id=None,
+            compiler_version=None,
+            assembler_id=None,
+            assembler_version=None,
+        )
+        assert plan.fingerprint != other.fingerprint
+
+    def test_plan_fingerprint_version_is_6(self) -> None:
+        assert PLAN_FINGERPRINT_VERSION == 6
+        assert make_plan().fingerprint_version == 6
+
+
+_ATOMIC_PARTIES = (
+    ("compiler_id", "compiler_version"),
+    ("assembler_id", "assembler_version"),
+    ("doctrine_id", "doctrine_version"),
+)
+
+
+class TestAtomicIdentityParties:
+    @pytest.mark.parametrize(("id_field", "version_field"), _ATOMIC_PARTIES)
+    def test_unknown_party_accepted(self, id_field: str, version_field: str) -> None:
+        plan = make_plan(
+            strategy=ScoringStrategy.TOKEN_LOGPROBS,
+            positive_verbalizer=None,
+            negative_verbalizer=None,
+            system_prompt=None,
+            **{id_field: None, version_field: None},
+        )
+        assert getattr(plan, id_field) is None
+        assert getattr(plan, version_field) is None
+
+    @pytest.mark.parametrize(("id_field", "version_field"), _ATOMIC_PARTIES)
+    def test_concrete_party_accepted(self, id_field: str, version_field: str) -> None:
+        plan = make_plan(**{id_field: "foo", version_field: 1})
+        assert getattr(plan, id_field) == "foo"
+        assert getattr(plan, version_field) == 1
+
+    @pytest.mark.parametrize(("id_field", "version_field"), _ATOMIC_PARTIES)
+    @pytest.mark.parametrize(
+        "bad_pair",
+        [
+            ("foo", None),
+            (None, 1),
+            ("", 1),
+            ("  ", 1),
+            ("foo", 0),
+            ("foo", -1),
+            ("foo", True),
+        ],
+    )
+    def test_half_known_or_invalid_party_rejected(
+        self, id_field: str, version_field: str, bad_pair: tuple[Any, Any]
+    ) -> None:
+        with pytest.raises(InvalidDecisionError):
+            make_plan(**dict(zip((id_field, version_field), bad_pair, strict=True)))
+
+    @pytest.mark.parametrize(("id_field", "version_field"), _ATOMIC_PARTIES)
+    def test_implemented_strategy_requires_concrete_parties(
+        self, id_field: str, version_field: str
+    ) -> None:
+        with pytest.raises(InvalidDecisionError, match=id_field):
+            make_plan(**{id_field: None, version_field: None})

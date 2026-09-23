@@ -22,6 +22,7 @@ from probvenance.compiler import CATEGORICAL_COMPILER_ID, CATEGORICAL_COMPILER_V
 from probvenance.doctrine import CATEGORICAL_DOCTRINE_ID, CATEGORICAL_DOCTRINE_VERSION
 from probvenance.errors import ScoringLabelError, UnsupportedCapabilityError
 from probvenance.plans import (
+    DECISION_FAMILY_CHOICE,
     CandidateLabelMapping,
     EvidenceKind,
     InferencePlan,
@@ -181,6 +182,7 @@ def make_choice_plan(targets: tuple[str, ...]) -> InferencePlan:
         decision_fingerprint="dfp",
         strategy=ScoringStrategy.CATEGORICAL_TOKEN_LOGITS,
         prompt="Which bucket?",
+        decision_family=DECISION_FAMILY_CHOICE,
         system_prompt="Be terse.",
         targets=targets,
         label_scheme_id="categorical-labels-v1",
@@ -297,6 +299,7 @@ def test_wrong_strategy_raises(monkeypatch: pytest.MonkeyPatch) -> None:
         decision_fingerprint="dfp",
         strategy=ScoringStrategy.TOKEN_LOGPROBS,
         prompt="Is it so?",
+        decision_family=DECISION_FAMILY_CHOICE,
     )
     with pytest.raises(UnsupportedCapabilityError):
         backend.execute(plan)

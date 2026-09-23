@@ -78,6 +78,7 @@ class PermutedChoiceCompiler(ChoiceCompiler):
             decision_fingerprint=natural.decision_fingerprint,
             strategy=natural.strategy,
             prompt=prompt,
+            decision_family=natural.decision_family,
             targets=self._labels,
             system_prompt=natural.system_prompt,
             doctrine_id=natural.doctrine_id,

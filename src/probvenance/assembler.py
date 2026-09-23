@@ -197,8 +197,8 @@ def _supported_assembler_declarations() -> tuple[tuple[str, str, int], ...]:
 def resolve_probability_assembler(
     *,
     strategy: ScoringStrategy,
-    assembler_id: str,
-    assembler_version: int,
+    assembler_id: str | None,
+    assembler_version: int | None,
 ) -> ProbabilityAssembler:
     """Return the one implementation an exact assembler declaration identifies.
 
@@ -206,9 +206,22 @@ def resolve_probability_assembler(
     tuple, never by strategy alone: a known assembler paired with the wrong
     strategy, or an unsupported version, does not match.
 
+    An undeclared assembler identity is an explicit unknown (INV-26). It is
+    rejected as-is rather than coerced into a sentinel such as an empty id or a
+    zero version, because a sentinel would be indistinguishable from a real
+    declaration that merely failed to match.
+
     Raises:
-        UnsupportedAssemblerError: if no implementation matches the tuple.
+        UnsupportedAssemblerError: if the declaration is an unknown identity, or
+            if no implementation matches the tuple.
     """
+    if assembler_id is None or assembler_version is None:
+        raise UnsupportedAssemblerError(
+            "the plan declares no probability assembler identity: "
+            f"strategy={strategy.value!r}, assembler_id={assembler_id!r}, "
+            f"assembler_version={assembler_version!r}; supported declarations are "
+            f"{_supported_assembler_declarations()}"
+        )
     implementation = _ASSEMBLER_IMPLEMENTATIONS.get((strategy, assembler_id, assembler_version))
     if implementation is None:
         raise UnsupportedAssemblerError(

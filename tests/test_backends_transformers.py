@@ -23,7 +23,12 @@ from probvenance.diagnostics import diagnose_bool_evidence
 from probvenance.doctrine import BINARY_DOCTRINE_ID, BINARY_DOCTRINE_VERSION
 from probvenance.errors import UnsupportedCapabilityError, VerbalizerError
 from probvenance.fingerprint import JSONValue
-from probvenance.plans import EvidenceKind, InferencePlan, ScoringStrategy
+from probvenance.plans import (
+    DECISION_FAMILY_BOOL,
+    EvidenceKind,
+    InferencePlan,
+    ScoringStrategy,
+)
 
 
 class FakeTokenized:
@@ -190,6 +195,7 @@ def make_plan() -> InferencePlan:
         decision_fingerprint="dfp",
         strategy=ScoringStrategy.BINARY_TOKEN_LOGITS,
         prompt="Is it so?",
+        decision_family=DECISION_FAMILY_BOOL,
         system_prompt="Be terse.",
         positive_verbalizer="yes",
         negative_verbalizer="no",
@@ -417,6 +423,7 @@ def test_execute_rejects_non_binary_strategy(backend: TransformersBackend) -> No
         decision_fingerprint="dfp",
         strategy=ScoringStrategy.TOKEN_LOGPROBS,
         prompt="Is it so?",
+        decision_family=DECISION_FAMILY_BOOL,
     )
     with pytest.raises(UnsupportedCapabilityError):
         backend.execute(plan)
@@ -429,6 +436,7 @@ def test_execute_rejects_multi_token_verbalizer_before_forward(
         decision_fingerprint="dfp",
         strategy=ScoringStrategy.BINARY_TOKEN_LOGITS,
         prompt="Is it so?",
+        decision_family=DECISION_FAMILY_BOOL,
         system_prompt="Be terse.",
         positive_verbalizer="absolutely yes",
         negative_verbalizer="no",
