@@ -1,8 +1,16 @@
 # Probability Semantics Identity and Formulation Families
 
-Status: design proposal, Phase 2C-Design, amended by Phase 2C.0. The identity and
-fingerprint concepts defined here are not implemented: no runtime class, no
-public API, and no fingerprint defined here exists in `src/probvenance/` yet. The one
+Status:
+
+```text
+Probability identity semantics:  design contract frozen
+Runtime fingerprint objects:     not yet implemented
+Calibration:                     not implemented
+```
+
+The identity and fingerprint concepts defined here are not implemented: no runtime
+class, no public API, and no fingerprint defined here exists in
+`src/probvenance/` yet. The one
 part that is now real is the compiler and assembler provenance carried on
 `InferencePlan` and `DecisionTrace`, which Phase 2C.0 added; where this document
 shows those identifiers they match the runtime. This document answers which
@@ -815,10 +823,11 @@ ScoringFormulationFingerprint          rejected: "scoring" narrows it to the
 FormulationFamilyFingerprint           adopted (family)
 ```
 
-## 13. Proposed future invariants
+## 13. Frozen design invariants
 
-Listed for review. **None of these is written into
-`docs/design-constitution.md`.** That requires a separate review.
+These are frozen into `docs/design-constitution.md` as INV-23 through INV-27.
+They are normative design rules; only INV-27 has a runtime enforcement point,
+because no runtime API implements probability-identity comparison yet.
 
 ```text
 P1  Probabilities from different probability formulation identities must not be
@@ -850,8 +859,7 @@ rule that keeps the formulation evidence-independent. P5 closes the gap that a
 plan names the strategy but not the transformation; the runtime carries a real
 assembler identity and version AND executes only when the declared tuple matches
 a known implementation, so that provenance is execution-verified rather than
-declarative. That is stronger engineering support, but promotion to a
-Constitution invariant still awaits the next review.
+declarative. That stronger support is why it is now frozen as INV-27.
 
 ## 14. Non-goals
 

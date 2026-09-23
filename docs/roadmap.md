@@ -14,6 +14,10 @@ and Phase 2C.0 closed scoring-continuation correctness plus compiler and
 assembler provenance. Anything below not marked as delivered is not
 implemented.
 
+The project was renamed from FuzzyAI to Probvenance before any package release,
+to avoid a naming collision and to better reflect the probability plus
+provenance focus.
+
 ## Phase 2: first real inference path
 
 Phase 2A delivered the Bool path end-to-end, Phase 2A.1 added the

@@ -234,6 +234,66 @@ numbers.
   asserts that permuted labels with legal-looking pairs are rejected rather than
   reordered.
 
+### Probability formulation identity
+
+These five invariants are frozen as normative design rules. Four of them have no
+runtime enforcement point, because no runtime API implements probability-identity
+comparison yet; they bind the design and any future API rather than a current code
+path, and they are marked as such. INV-27 does have an enforcement point.
+
+- **INV-23 (cross-formulation probabilities are not interchangeable).**
+  Probabilities from different probability formulation identities must not be
+  silently treated as interchangeable, directly pooled, or assumed to share
+  calibration. Explicit cross-formulation evaluation is allowed when both
+  identities and the comparison method are preserved. Enforcement: design
+  contract only. The explicit-comparison clause is exactly what
+  `experiments/choice_signal/REPORT.md` does when it reports total variation
+  between two formulation identities while preserving both.
+- **INV-24 (formulation family membership is not automatic compatibility).**
+  Formulation family membership does not imply automatic interchangeability,
+  automatic pooling, or calibration compatibility. The word is `automatic`:
+  explicit comparison remains permitted, so this rule must never be read as
+  "cannot be compared". Enforcement: design contract only.
+- **INV-25 (formulation identity excludes instance evidence).** Probability
+  formulation identity excludes instance evidence, meaning the `question` and
+  `context` of a decision, while including the semantic outcome space and the
+  scoring representation. Evidence decides the probability value; it does not
+  decide what the probability means. Enforcement: design contract only.
+- **INV-26 (unknown identity values are explicit unknowns).** Unknown
+  probability-identity values are explicit unknowns and must not match, default
+  to, or be interpreted as concrete values. An absent model revision is neither a
+  wildcard nor equal to a concrete revision, and an absent scoring-relevant
+  rendering key is not equal to a concrete setting. Enforcement: design contract
+  only.
+- **INV-27 (assembler identity and version are part of formulation identity).**
+  The probability assembler identity and version are part of probability
+  formulation identity, because two assemblers under one scoring strategy may
+  apply different normalizations and so produce different probability semantics.
+  Enforcement: execution-verified. `resolve_probability_assembler` runs a plan
+  only when its `(strategy, assembler_id, assembler_version)` matches a known
+  implementation and raises `UnsupportedAssemblerError` otherwise, so a recorded
+  `assembler_id` cannot describe a transformation the runtime did not perform.
+  `tests/test_assembler_dispatch.py` covers the valid, unknown,
+  mismatched-strategy, and unsupported-version cases.
+
+### Probability comparability vocabulary (normative, descriptive only)
+
+Two independent axes describe how two probabilities relate:
+
+```text
+FormulationRelation:  exact | family | decision_family | different
+SourceRelation:       exact | different | unknown
+```
+
+A `(FormulationRelation, SourceRelation)` pair states a fact about the two
+identities. It deliberately does not answer `can_compare`, `can_pool`, or
+`can_share_calibration`; those need a use-case-specific policy and evidence, and
+no such policy exists yet. The axes are independent, so neither pair is globally
+"more comparable" than another: `(family, exact)` and `(exact, different)` differ
+in kind, not in degree. There is deliberately no `compatible` relation. This
+vocabulary is normative in the design documents and is not implemented as a
+runtime enum or API.
+
 ---
 
 ## 4. Architecture Principles
