@@ -1,16 +1,20 @@
-"""Pure verbalizer helpers for token-logit backends.
+"""Pure continuation and verbalizer helpers for token-logit backends.
 
 These helpers are deliberately free of any torch/transformers import so they
-are unit-testable with a fake tokenizer, no network, and no GPU. They encode
-the Phase 2A verbalizer contract:
+are unit-testable with a fake tokenizer, no network, and no GPU. They serve both
+scoring paths: binary verbalizers and categorical scoring labels.
 
-- A verbalizer is valid only if appending it to the REAL rendered prefix adds
-  EXACTLY ONE token. The check is performed against the concatenated text
-  (``tokenizer(prefix + verbalizer)``), never as
-  ``tokenizer(prefix) + tokenizer(verbalizer)``, because BPE boundary effects
-  are exactly what is being validated.
+- A scoring label (verbalizer or categorical label) is valid only if it
+  preserves the REAL rendered prefix tokenization exactly and appends exactly
+  one token: ``tokenizer(prefix + label) == tokenizer(prefix) + [label_token]``.
+  A net delta of one token is NOT sufficient; a retokenized prefix is rejected
+  even when the count happens to work out. The check is performed against the
+  concatenated text (``tokenizer(prefix + label)``), never as
+  ``tokenizer(prefix) + tokenizer(label)``, because BPE boundary effects are
+  exactly what is being validated.
 - The positive and negative verbalizers must resolve to DISTINCT token ids.
-- Any violation raises :class:`~fuzzyai.errors.VerbalizerError`. There is no
+- Any violation raises a scoring-label error (``VerbalizerError`` for
+  verbalizers, ``ScoringLabelError`` for categorical labels). There is no
   silent fallback, no truncation, and no multi-token logit summing.
 """
 
@@ -18,7 +22,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
-from fuzzyai.errors import VerbalizerError
+from fuzzyai.errors import ScoringLabelError, VerbalizerError
 from fuzzyai.fingerprint import JSONValue
 
 
@@ -126,57 +130,101 @@ def render_input_text(
     return user_prompt
 
 
-def _as_id_list(input_ids: object) -> list[object]:
-    """Narrow the protocol's ``object`` field to an iterable for ``list()``.
+def _as_int_ids(
+    input_ids: object,
+    *,
+    label_descriptor: str,
+    error_type: type[ScoringLabelError],
+) -> list[int]:
+    """Narrow an ``input_ids`` field to a list of plain ints, or raise.
 
-    Raises :class:`VerbalizerError` (instead of ``TypeError``) when the
-    tokenizer produced something that is not iterable of ints, so every
-    tokenizer misbehaviour surfaces as the contract's error type.
+    ``error_type`` is one of the scoring-label error classes so every tokenizer
+    misbehaviour surfaces as the contract's error type rather than ``TypeError``.
     """
     if not isinstance(input_ids, Iterable):
-        raise VerbalizerError(
-            f"tokenizer input_ids is not iterable, got {type(input_ids).__name__}; "
-            f"Phase 2A requires a single scoring token per verbalizer"
+        raise error_type(
+            f"{label_descriptor} produced a non-iterable token id container "
+            f"({type(input_ids).__name__}); a single scoring token is required"
         )
-    return list(input_ids)
+    validated: list[int] = []
+    for token_id in input_ids:
+        if isinstance(token_id, bool) or not isinstance(token_id, int):
+            raise error_type(
+                f"{label_descriptor} tokenized to a non-int token id "
+                f"({type(token_id).__name__}); a single scoring token is required"
+            )
+        validated.append(token_id)
+    return validated
 
 
-def _resolve_single_token(
+def resolve_exact_single_token_continuation(
     tokenizer: SupportsChatTemplate,
     *,
     prefix_text: str,
-    verbalizer: str,
-    role: str,
-    prefix_ids: list[object],
+    label_text: str,
+    label_descriptor: str,
+    prefix_ids: list[int] | None = None,
+    error_type: type[ScoringLabelError] = ScoringLabelError,
 ) -> int:
-    """Resolve one verbalizer to exactly one continuation token after ``prefix_text``.
+    """Resolve one scoring label to the single token it appends to the prefix.
 
-    The token count delta is computed against the CONCATENATED text
-    (``prefix_text + verbalizer``), never as separate encodings, so BPE
-    boundary effects are part of the validation.
+    A label is a valid single-token continuation only when tokenizing
+    ``prefix_text + label_text`` reproduces the prefix token sequence exactly
+    and appends exactly one token::
+
+        full_ids == prefix_ids + [full_ids[-1]]
+
+    A net delta of one token is NOT sufficient. A tokenizer can retokenize the
+    tail of the prefix while still landing on
+    ``len(full_ids) == len(prefix_ids) + 1``; the final id is then not a
+    next-token continuation of the original prefix and must be rejected.
+
+    Execution-only: this knows nothing about decisions, strategies, doctrines,
+    or assemblers. ``label_descriptor`` is used only in error messages, for
+    example ``"scoring label 'A'"`` or ``"verbalizer 'yes' (positive)"``.
+
+    Raises:
+        error_type: on empty ids, non-int ids, a delta other than one, or a
+            continuation that does not preserve the rendered prefix
+            tokenization. Nothing is truncated, skipped, or re-encoded.
     """
-    full_ids = _as_id_list(tokenizer(prefix_text + verbalizer, add_special_tokens=False).input_ids)
+    if prefix_ids is None:
+        prefix_ids = _as_int_ids(
+            tokenizer(prefix_text, add_special_tokens=False).input_ids,
+            label_descriptor="rendered prefix",
+            error_type=error_type,
+        )
+    if prefix_text and not prefix_ids:
+        raise error_type(
+            "the rendered prefix tokenized to an empty id sequence although the "
+            "prefix text is non-empty; an exact single-token continuation cannot "
+            "be verified"
+        )
+    full_ids = _as_int_ids(
+        tokenizer(prefix_text + label_text, add_special_tokens=False).input_ids,
+        label_descriptor=label_descriptor,
+        error_type=error_type,
+    )
     if len(full_ids) == 0:
-        raise VerbalizerError(
-            f"verbalizer {verbalizer!r} ({role}) tokenized to an empty id sequence for the "
-            f"concatenated prefix; Phase 2A requires a single scoring token"
+        raise error_type(
+            f"{label_descriptor} tokenized to an empty id sequence for the "
+            f"concatenated prefix; a single scoring token is required"
         )
-    validated_ids: list[int] = []
-    for token_id in full_ids:
-        if isinstance(token_id, bool) or not isinstance(token_id, int):
-            raise VerbalizerError(
-                f"verbalizer {verbalizer!r} ({role}) tokenized to a non-int token id "
-                f"({type(token_id).__name__}); Phase 2A requires a single scoring token"
-            )
-        validated_ids.append(token_id)
-    added = len(validated_ids) - len(prefix_ids)
+    added = len(full_ids) - len(prefix_ids)
     if added != 1:
-        raise VerbalizerError(
-            f"verbalizer {verbalizer!r} ({role}) produced {added} additional token(s) after the "
-            f"rendered prefix (prefix has {len(prefix_ids)} tokens, concatenated text has "
-            f"{len(validated_ids)}); Phase 2A requires a single scoring token"
+        raise error_type(
+            f"{label_descriptor} produced {added} additional token(s) after the rendered "
+            f"prefix (prefix has {len(prefix_ids)} tokens, concatenated text has "
+            f"{len(full_ids)}); a single scoring token is required"
         )
-    return validated_ids[-1]
+    if full_ids[:-1] != prefix_ids:
+        raise error_type(
+            f"{label_descriptor} is not an exact single-token continuation: the "
+            f"concatenated text has {len(full_ids)} tokens against a {len(prefix_ids)}-token "
+            f"prefix, but its first {len(prefix_ids)} token ids do not reproduce the rendered "
+            f"prefix tokenization; a single scoring token is required"
+        )
+    return full_ids[-1]
 
 
 def resolve_verbalizers(
@@ -188,24 +236,34 @@ def resolve_verbalizers(
 ) -> VerbalizerTokens:
     """Resolve each verbalizer to exactly one continuation token after the prefix.
 
+    Both verbalizers are resolved through
+    :func:`resolve_exact_single_token_continuation`, so each must preserve the
+    rendered prefix tokenization exactly and append exactly one token.
+
     Raises :class:`~fuzzyai.errors.VerbalizerError` for any violation: zero or
-    multiple added tokens, empty ids, non-int ids, or identical positive and
-    negative token ids.
+    multiple added tokens, a retokenized prefix, empty ids, non-int ids, or
+    identical positive and negative token ids.
     """
-    prefix_ids = _as_id_list(tokenizer(prefix_text, add_special_tokens=False).input_ids)
-    positive_token_id = _resolve_single_token(
-        tokenizer,
-        prefix_text=prefix_text,
-        verbalizer=positive_verbalizer,
-        role="positive",
-        prefix_ids=prefix_ids,
+    prefix_ids = _as_int_ids(
+        tokenizer(prefix_text, add_special_tokens=False).input_ids,
+        label_descriptor="rendered prefix",
+        error_type=VerbalizerError,
     )
-    negative_token_id = _resolve_single_token(
+    positive_token_id = resolve_exact_single_token_continuation(
         tokenizer,
         prefix_text=prefix_text,
-        verbalizer=negative_verbalizer,
-        role="negative",
+        label_text=positive_verbalizer,
+        label_descriptor=f"verbalizer {positive_verbalizer!r} (positive)",
         prefix_ids=prefix_ids,
+        error_type=VerbalizerError,
+    )
+    negative_token_id = resolve_exact_single_token_continuation(
+        tokenizer,
+        prefix_text=prefix_text,
+        label_text=negative_verbalizer,
+        label_descriptor=f"verbalizer {negative_verbalizer!r} (negative)",
+        prefix_ids=prefix_ids,
+        error_type=VerbalizerError,
     )
     if positive_token_id == negative_token_id:
         raise VerbalizerError(

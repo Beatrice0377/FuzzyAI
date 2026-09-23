@@ -7,9 +7,10 @@ from fuzzyai.backends.verbalizers import (
     TokenizedText,
     VerbalizerTokens,
     render_input_text,
+    resolve_exact_single_token_continuation,
     resolve_verbalizers,
 )
-from fuzzyai.errors import VerbalizerError
+from fuzzyai.errors import ScoringLabelError, VerbalizerError
 
 # Independent copy of the contract's reserved keys: the test must fail if the
 # implementation's reserved set silently shrinks.
@@ -322,3 +323,117 @@ def test_protocols_are_structural() -> None:
     tokenizer: SupportsChatTemplate = make_tokenizer()
     tokenized: TokenizedText = tokenizer("x")
     assert tokenized.input_ids is not None
+
+
+class ScriptedTokenizer:
+    chat_template: str | None = None
+
+    def __init__(self, sequences: dict[str, list[int]]) -> None:
+        self._sequences = sequences
+        self.calls: list[str] = []
+
+    def __call__(self, text: str, *, add_special_tokens: bool = True) -> FakeTokenized:
+        self.calls.append(text)
+        return FakeTokenized(list(self._sequences.get(text, [])))
+
+    def apply_chat_template(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        tokenize: bool = True,
+        add_generation_prompt: bool = False,
+        **kwargs: object,
+    ) -> str:
+        return ""
+
+
+RETOKENIZED_PREFIX = [10, 20, 30]
+RETOKENIZED_FULL = [10, 99, 40, 50]
+
+
+def test_exact_continuation_accepts_preserved_prefix() -> None:
+    tokenizer = ScriptedTokenizer({"P": [1, 2, 3], "Px": [1, 2, 3, 4]})
+    token_id = resolve_exact_single_token_continuation(
+        tokenizer, prefix_text="P", label_text="x", label_descriptor="scoring label 'x'"
+    )
+    assert token_id == 4
+
+
+def test_exact_continuation_rejects_zero_delta() -> None:
+    tokenizer = ScriptedTokenizer({"P": [1, 2, 3], "Px": [1, 2, 3]})
+    with pytest.raises(ScoringLabelError, match="0 additional"):
+        resolve_exact_single_token_continuation(
+            tokenizer, prefix_text="P", label_text="x", label_descriptor="scoring label 'x'"
+        )
+
+
+def test_exact_continuation_rejects_empty_prefix_for_non_empty_text() -> None:
+    class EmptyPrefixTokenizer:
+        chat_template: str | None = None
+
+        def __call__(self, text: str, *, add_special_tokens: bool = True) -> FakeTokenized:
+            return FakeTokenized([])
+
+        def apply_chat_template(
+            self,
+            messages: list[dict[str, str]],
+            *,
+            tokenize: bool = True,
+            add_generation_prompt: bool = False,
+            **kwargs: object,
+        ) -> str:
+            return ""
+
+    with pytest.raises(ScoringLabelError, match="empty id sequence"):
+        resolve_exact_single_token_continuation(
+            EmptyPrefixTokenizer(),
+            prefix_text="P",
+            label_text="x",
+            label_descriptor="scoring label 'x'",
+        )
+
+
+def test_exact_continuation_rejects_multi_token_delta() -> None:
+    tokenizer = ScriptedTokenizer({"P": [1, 2, 3], "Px": [1, 2, 3, 4, 5]})
+    with pytest.raises(ScoringLabelError, match="2 additional"):
+        resolve_exact_single_token_continuation(
+            tokenizer, prefix_text="P", label_text="x", label_descriptor="scoring label 'x'"
+        )
+
+
+def test_exact_continuation_rejects_retokenized_prefix_when_net_delta_is_one() -> None:
+    tokenizer = ScriptedTokenizer({"P": RETOKENIZED_PREFIX, "Px": RETOKENIZED_FULL})
+    full_ids = tokenizer("Px").input_ids
+    prefix_ids = tokenizer("P").input_ids
+    assert isinstance(full_ids, list)
+    assert isinstance(prefix_ids, list)
+    # The trap this test exists for: the net delta is exactly +1, which the
+    # previous length-only check accepted, yet the prefix was retokenized.
+    assert len(full_ids) - len(prefix_ids) == 1
+    assert full_ids[:-1] != prefix_ids
+    with pytest.raises(ScoringLabelError, match="exact single-token continuation"):
+        resolve_exact_single_token_continuation(
+            tokenizer, prefix_text="P", label_text="x", label_descriptor="scoring label 'x'"
+        )
+
+
+def test_exact_continuation_uses_the_requested_error_type() -> None:
+    tokenizer = ScriptedTokenizer({"P": RETOKENIZED_PREFIX, "Pyes": RETOKENIZED_FULL})
+    with pytest.raises(VerbalizerError, match="exact single-token continuation"):
+        resolve_exact_single_token_continuation(
+            tokenizer,
+            prefix_text="P",
+            label_text="yes",
+            label_descriptor="verbalizer 'yes' (positive)",
+            error_type=VerbalizerError,
+        )
+
+
+def test_resolve_verbalizers_rejects_a_retokenized_prefix() -> None:
+    tokenizer = ScriptedTokenizer(
+        {"P": RETOKENIZED_PREFIX, "Pyes": RETOKENIZED_FULL, "Pno": [10, 20, 30, 7]}
+    )
+    with pytest.raises(VerbalizerError, match="exact single-token continuation"):
+        resolve_verbalizers(
+            tokenizer, prefix_text="P", positive_verbalizer="yes", negative_verbalizer="no"
+        )

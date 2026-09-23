@@ -15,8 +15,10 @@ pytest.importorskip("transformers")
 
 import torch
 
+from fuzzyai.assembler import CATEGORICAL_ASSEMBLER_ID, CATEGORICAL_ASSEMBLER_VERSION
 from fuzzyai.backends.transformers import TransformersBackend
 from fuzzyai.capabilities import BackendCapabilities
+from fuzzyai.compiler import CATEGORICAL_COMPILER_ID, CATEGORICAL_COMPILER_VERSION
 from fuzzyai.errors import ScoringLabelError, UnsupportedCapabilityError
 from fuzzyai.plans import (
     CandidateLabelMapping,
@@ -181,6 +183,10 @@ def make_choice_plan(targets: tuple[str, ...]) -> InferencePlan:
         system_prompt="Be terse.",
         targets=targets,
         label_scheme_id="categorical-labels-v1",
+        compiler_id=CATEGORICAL_COMPILER_ID,
+        compiler_version=CATEGORICAL_COMPILER_VERSION,
+        assembler_id=CATEGORICAL_ASSEMBLER_ID,
+        assembler_version=CATEGORICAL_ASSEMBLER_VERSION,
         candidate_mapping=tuple(
             CandidateLabelMapping(
                 candidate_index=i,
@@ -329,3 +335,22 @@ def test_metadata_carries_full_vocabulary_statistics(
     assert metadata["rendered_input"] == "Be terse.\n\nWhich bucket?"
     assert metadata["rendering_config"] == {}
     assert metadata["backend_version"] == "1"
+
+
+class RetokenizingTokenizer(FakeTokenizer):
+    """Appending a scoring label retokenizes the prefix tail, net delta still +1."""
+
+    def _tokenize(self, text: str) -> list[int]:
+        if text.endswith(("A", "B", "C", "D", "E")):
+            return [11, 99, 88, 44]
+        return [11, 22, 33]
+
+
+def test_retokenized_prefix_label_raises_before_forward(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = make_backend(monkeypatch, tokenizer=RetokenizingTokenizer())
+    plan = make_choice_plan(("A", "B", "C"))
+    with pytest.raises(ScoringLabelError, match="exact single-token continuation"):
+        backend.execute(plan)
+    assert backend._model.forward_calls == 0

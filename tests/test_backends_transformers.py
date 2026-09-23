@@ -15,8 +15,10 @@ pytest.importorskip("transformers")
 
 import torch
 
+from fuzzyai.assembler import BINARY_ASSEMBLER_ID, BINARY_ASSEMBLER_VERSION
 from fuzzyai.backends.transformers import TRANSFORMERS_BACKEND_VERSION, TransformersBackend
 from fuzzyai.capabilities import BackendCapabilities
+from fuzzyai.compiler import BINARY_COMPILER_ID, BINARY_COMPILER_VERSION
 from fuzzyai.diagnostics import diagnose_bool_evidence
 from fuzzyai.errors import UnsupportedCapabilityError, VerbalizerError
 from fuzzyai.fingerprint import JSONValue
@@ -190,6 +192,10 @@ def make_plan() -> InferencePlan:
         system_prompt="Be terse.",
         positive_verbalizer="yes",
         negative_verbalizer="no",
+        compiler_id=BINARY_COMPILER_ID,
+        compiler_version=BINARY_COMPILER_VERSION,
+        assembler_id=BINARY_ASSEMBLER_ID,
+        assembler_version=BINARY_ASSEMBLER_VERSION,
     )
 
 
@@ -423,10 +429,42 @@ def test_execute_rejects_multi_token_verbalizer_before_forward(
         system_prompt="Be terse.",
         positive_verbalizer="absolutely yes",
         negative_verbalizer="no",
+        compiler_id=BINARY_COMPILER_ID,
+        compiler_version=BINARY_COMPILER_VERSION,
+        assembler_id=BINARY_ASSEMBLER_ID,
+        assembler_version=BINARY_ASSEMBLER_VERSION,
     )
     with pytest.raises(VerbalizerError):
         backend.execute(plan)
     assert backend._model.forward_calls == 0
+
+
+class RetokenizingTokenizer(FakeTokenizer):
+    """Appending a verbalizer retokenizes the prefix tail, net delta still +1."""
+
+    def _tokenize(self, text: str) -> list[int]:
+        if text.endswith(("yes", "no")):
+            return [11, 99, 88, 44]
+        return [11, 22, 33]
+
+
+def test_retokenized_prefix_verbalizer_raises_before_forward(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tokenizer = RetokenizingTokenizer()
+    model = FakeModel(tokenizer._vocab)
+    monkeypatch.setattr(
+        "fuzzyai.backends.transformers.AutoTokenizer.from_pretrained",
+        lambda *a, **kw: tokenizer,
+    )
+    monkeypatch.setattr(
+        "fuzzyai.backends.transformers.AutoModelForCausalLM.from_pretrained",
+        lambda *a, **kw: model,
+    )
+    backend = TransformersBackend("fake/model", device="cpu")
+    with pytest.raises(VerbalizerError, match="exact single-token continuation"):
+        backend.execute(make_plan())
+    assert model.forward_calls == 0
 
 
 def test_verbalizer_resolution_is_cached(backend: TransformersBackend) -> None:

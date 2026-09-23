@@ -12,8 +12,9 @@ from typing import Any
 
 from fuzzyai.backends.verbalizers import (
     VerbalizerTokens,
-    _as_id_list,
+    _as_int_ids,
     render_input_text,
+    resolve_exact_single_token_continuation,
     resolve_verbalizers,
 )
 from fuzzyai.capabilities import BackendCapabilities
@@ -151,12 +152,13 @@ class TransformersBackend:
         """Resolve every categorical scoring label to one continuation token.
 
         The rendered prefix is the SAME text the forward pass will see. Each
-        label must add EXACTLY ONE token to that prefix (checked against the
-        concatenated text, so BPE boundary effects are part of the validation)
-        and all resolved token ids must be pairwise DISTINCT. Any violation
-        raises :class:`ScoringLabelError` naming the offending label; there is
-        no fallback, no skipping, and no re-mapping. This runs entirely before
-        the forward pass, so an invalid label never costs a model call.
+        label must preserve that prefix tokenization exactly and append exactly
+        one token (checked against the concatenated text, so BPE boundary
+        effects are part of the validation), and all resolved token ids must be
+        pairwise DISTINCT. Any violation raises :class:`ScoringLabelError`
+        naming the offending label; there is no fallback, no skipping, and no
+        re-mapping. This runs entirely before the forward pass, so an invalid
+        label never costs a model call.
         """
         if plan.system_prompt is None:
             raise ScoringLabelError(
@@ -169,33 +171,26 @@ class TransformersBackend:
             user_prompt=plan.prompt,
             template_kwargs=self._chat_template_kwargs,
         )
-        prefix_ids = _as_id_list(self._tokenizer(prefix_text, add_special_tokens=False).input_ids)
+        # Validation tokenizes the prefix without special tokens purely to compare
+        # id sequences; the forward pass below encodes with
+        # add_special_tokens=not used_chat_template. The asymmetry is harmless here
+        # because the validated continuation is a tail position of the same text.
+        prefix_ids = _as_int_ids(
+            self._tokenizer(prefix_text, add_special_tokens=False).input_ids,
+            label_descriptor="rendered prefix",
+            error_type=ScoringLabelError,
+        )
         resolved: list[tuple[str, int]] = []
         seen: dict[int, str] = {}
         for label in plan.targets:
-            full_ids = _as_id_list(
-                self._tokenizer(prefix_text + label, add_special_tokens=False).input_ids
+            token_id = resolve_exact_single_token_continuation(
+                self._tokenizer,
+                prefix_text=prefix_text,
+                label_text=label,
+                label_descriptor=f"scoring label {label!r}",
+                prefix_ids=prefix_ids,
+                error_type=ScoringLabelError,
             )
-            validated_ids: list[int] = []
-            for token_id in full_ids:
-                if isinstance(token_id, bool) or not isinstance(token_id, int):
-                    raise ScoringLabelError(
-                        f"scoring label {label!r} tokenized to a non-int token id "
-                        f"({type(token_id).__name__}); the "
-                        f"{ScoringStrategy.CATEGORICAL_TOKEN_LOGITS.value} strategy "
-                        "requires a single scoring token per label"
-                    )
-                validated_ids.append(token_id)
-            added = len(validated_ids) - len(prefix_ids)
-            if added != 1:
-                raise ScoringLabelError(
-                    f"scoring label {label!r} produced {added} additional token(s) after the "
-                    f"rendered prefix (prefix has {len(prefix_ids)} tokens, concatenated text "
-                    f"has {len(validated_ids)}); the "
-                    f"{ScoringStrategy.CATEGORICAL_TOKEN_LOGITS.value} strategy requires a "
-                    "single scoring token per label"
-                )
-            token_id = validated_ids[-1]
             collision = seen.get(token_id)
             if collision is not None:
                 raise ScoringLabelError(
