@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from fuzzyai import (
+    PLAN_FINGERPRINT_VERSION,
     Backend,
     BackendCapabilities,
     CandidateLabelMapping,
@@ -174,6 +175,19 @@ class TestInferencePlanVerbalizerValidation:
         plan = make_plan(system_prompt="S", positive_verbalizer="yes", negative_verbalizer="no")
         assert len(plan.fingerprint) == 64
         assert plan.fingerprint != make_plan(system_prompt="S", compiler_version=2).fingerprint
+
+
+class TestPlanFingerprintVersion:
+    def test_fingerprint_version_is_the_schema_constant(self) -> None:
+        assert make_plan().fingerprint_version == PLAN_FINGERPRINT_VERSION
+        assert make_categorical_plan().fingerprint_version == PLAN_FINGERPRINT_VERSION
+
+    def test_changing_the_schema_version_changes_the_fingerprint(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        before = make_plan().fingerprint
+        monkeypatch.setattr("fuzzyai.plans.PLAN_FINGERPRINT_VERSION", PLAN_FINGERPRINT_VERSION + 1)
+        assert make_plan().fingerprint != before
 
 
 class TestRawEvidence:

@@ -400,8 +400,12 @@ The layering below is the proven design. Phase 2A wired the Bool path
 end-to-end: `BoolCompiler`, `TransformersBackend` (optional extra), and
 `assemble_bool_probability` and `assemble_choice_probability` now connect
 `BoolDecision` and `ChoiceDecision` to their results plus a `DecisionTrace`,
-under the `FuzzyAI` facade. Calibration and all other backends remain future
-work.
+under the `FuzzyAI` facade. Assembler selection is execution-truthful: the
+facade runs only the implementation named by the plan's
+`(strategy, assembler_id, assembler_version)` declaration and rejects a plan
+that names no known implementation, so a recorded `assembler_id` cannot
+describe a transformation the runtime did not perform. Calibration and all
+other backends remain future work.
 
 ```
 DecisionSpec

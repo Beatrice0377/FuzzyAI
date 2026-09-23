@@ -8,7 +8,12 @@ the categorical doctrine, choice scoring diagnostics, the choice assembler,
 and runtime dispatch on the decision type.
 """
 
-from fuzzyai.assembler import assemble_bool_probability, assemble_choice_probability
+from fuzzyai.assembler import (
+    assemble_bool_probability,
+    assemble_choice_probability,
+    assemble_probability,
+    resolve_probability_assembler,
+)
 from fuzzyai.backends import Backend
 from fuzzyai.capabilities import BackendCapabilities
 from fuzzyai.compiler import (
@@ -44,12 +49,14 @@ from fuzzyai.errors import (
     InvalidDecisionError,
     InvalidProbabilityError,
     ScoringLabelError,
+    UnsupportedAssemblerError,
     UnsupportedCapabilityError,
     UnsupportedDecisionError,
     VerbalizerError,
 )
 from fuzzyai.fingerprint import JSONValue, canonical_json, fingerprint
 from fuzzyai.plans import (
+    PLAN_FINGERPRINT_VERSION,
     CandidateLabelMapping,
     EvidenceKind,
     InferencePlan,
@@ -79,6 +86,7 @@ __all__ = [
     "CATEGORICAL_LABELS",
     "CATEGORICAL_LABEL_SCHEME_ID",
     "CATEGORICAL_SEMANTIC_JUDGMENT_V1",
+    "PLAN_FINGERPRINT_VERSION",
     "Backend",
     "BackendCapabilities",
     "BoolCompiler",
@@ -108,11 +116,13 @@ __all__ = [
     "ScoringDoctrine",
     "ScoringLabelError",
     "ScoringStrategy",
+    "UnsupportedAssemblerError",
     "UnsupportedCapabilityError",
     "UnsupportedDecisionError",
     "VerbalizerError",
     "assemble_bool_probability",
     "assemble_choice_probability",
+    "assemble_probability",
     "build_decision_trace",
     "canonical_json",
     "diagnose_bool_evidence",
@@ -120,5 +130,6 @@ __all__ = [
     "fingerprint",
     "normalized_entropy",
     "probability_margin",
+    "resolve_probability_assembler",
     "scoring_label_mass",
 ]

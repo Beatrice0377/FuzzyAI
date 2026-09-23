@@ -266,6 +266,22 @@ models, and never need a GPU.
   `src/fuzzyai/decisions.py` never reads provenance, and both decision payloads
   remain v1 with no provenance keys.
 
+### Execution-verified assembler provenance (Phase 2C.1)
+- `[V]` The runtime executes only the probability assembler whose strategy,
+  assembler identity, and assembler version exactly match the plan declaration.
+  An unknown id, a known id paired with the wrong strategy, an unsupported
+  version, and any plan whose declaration matches no implementation are all
+  rejected before a probability result or trace is produced. This is NOT a claim
+  that arbitrary third-party assemblers are supported: the set of
+  implementations is closed, with no registry, plugin loading, or fallback.
+  Evidence: `tests/test_assembler_dispatch.py`.
+- `[V]` A decision trace records the plan-fingerprint schema version its
+  `plan_fingerprint` was computed under (`plan_fingerprint_version`), taken from
+  the plan's own schema version rather than hardcoded in the trace module, so a
+  stored hash self-describes its version. Evidence:
+  `tests/test_trace.py::TestPlanFingerprintVersion`,
+  `tests/test_plans.py::TestPlanFingerprintVersion`.
+
 ## Experimental records
 
 Single-session observations, each reported with the conditions under which it

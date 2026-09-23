@@ -8,6 +8,7 @@ import pytest
 
 from fuzzyai import (
     BINARY_EVIDENCE_LABELS,
+    PLAN_FINGERPRINT_VERSION,
     DecisionTrace,
     EvidenceKind,
     InferencePlan,
@@ -114,6 +115,19 @@ def build_trace(**overrides: Any) -> DecisionTrace:
             )
     kwargs.update(overrides)
     return build_decision_trace(**kwargs)
+
+
+class TestPlanFingerprintVersion:
+    def test_trace_carries_the_plan_schema_version(self) -> None:
+        plan = make_plan()
+        trace = build_trace(plan=plan)
+        assert trace.plan_fingerprint_version == plan.fingerprint_version
+        assert trace.plan_fingerprint_version == PLAN_FINGERPRINT_VERSION
+
+    def test_to_dict_includes_plan_fingerprint_version(self) -> None:
+        trace = build_trace()
+        assert trace.to_dict()["plan_fingerprint_version"] == trace.plan_fingerprint_version
+        assert trace.to_dict()["plan_fingerprint_version"] == PLAN_FINGERPRINT_VERSION
 
 
 class TestDecisionTraceFields:

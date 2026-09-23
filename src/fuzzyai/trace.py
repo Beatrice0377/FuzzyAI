@@ -65,7 +65,9 @@ class DecisionTrace:
     unused). ``candidate_mapping`` mirrors the plan's mapping.
     ``compiler_id`` / ``compiler_version`` and ``assembler_id`` /
     ``assembler_version`` mirror the plan's provenance, so lineage is readable
-    without looking up historical code.
+    without looking up historical code. ``plan_fingerprint_version`` records
+    which canonical payload schema produced ``plan_fingerprint``, so a stored
+    hash self-describes its version instead of needing historical code.
     ``probability_true`` is the binary ``P(True)`` and ``None`` for
     categorical decisions, which have no true/false outcome space.
     """
@@ -74,6 +76,7 @@ class DecisionTrace:
     timestamp: str
     decision_fingerprint: str
     plan_fingerprint: str
+    plan_fingerprint_version: int
     scoring_strategy: str
     doctrine_id: str
     positive_verbalizer: str
@@ -111,6 +114,7 @@ class DecisionTrace:
             "timestamp": self.timestamp,
             "decision_fingerprint": self.decision_fingerprint,
             "plan_fingerprint": self.plan_fingerprint,
+            "plan_fingerprint_version": self.plan_fingerprint_version,
             "scoring_strategy": self.scoring_strategy,
             "doctrine_id": self.doctrine_id,
             "positive_verbalizer": self.positive_verbalizer,
@@ -388,6 +392,7 @@ def build_decision_trace(
         timestamp=timestamp,
         decision_fingerprint=decision_fingerprint,
         plan_fingerprint=plan.fingerprint,
+        plan_fingerprint_version=plan.fingerprint_version,
         scoring_strategy=str(plan.strategy.value),
         doctrine_id=plan.doctrine_id if plan.doctrine_id is not None else "none",
         positive_verbalizer=plan.positive_verbalizer

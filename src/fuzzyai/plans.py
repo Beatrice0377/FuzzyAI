@@ -35,6 +35,9 @@ _STRATEGIES_WITH_PROVENANCE: frozenset[ScoringStrategy] = frozenset(
     {ScoringStrategy.BINARY_TOKEN_LOGITS, ScoringStrategy.CATEGORICAL_TOKEN_LOGITS}
 )
 
+# Bump when the canonical fingerprint payload changes shape; never hash across versions.
+PLAN_FINGERPRINT_VERSION = 4
+
 
 def _require_positive_int(value: object, field_name: str) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -252,11 +255,16 @@ class InferencePlan:
                 )
 
     @property
+    def fingerprint_version(self) -> int:
+        """Schema version of the canonical payload :attr:`fingerprint` hashes."""
+        return PLAN_FINGERPRINT_VERSION
+
+    @property
     def fingerprint(self) -> str:
         """Stable SHA-256 fingerprint of this plan's semantic content."""
         return fingerprint(
             {
-                "v": 4,
+                "v": PLAN_FINGERPRINT_VERSION,
                 "kind": "inference_plan",
                 "decision_fingerprint": self.decision_fingerprint,
                 "strategy": str(self.strategy),

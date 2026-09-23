@@ -826,8 +826,8 @@ P1  Probabilities from different probability formulation identities must not be
     calibration. Explicit cross-formulation evaluation is allowed when both
     identities and the comparison method are preserved.
 
-P2  Formulation family membership does not imply probability comparability,
-    poolability, or shared calibration.
+P2  Formulation family membership does not imply automatic interchangeability,
+    automatic pooling, or calibration compatibility.
 
 P3  Probability formulation identity excludes instance evidence (question and
     context) while including the semantic outcome space and the scoring
@@ -847,9 +847,11 @@ blind pooling, and default shared calibration; it does not forbid explicit
 comparison, which is exactly what Phase 2B.1 does when it reports total
 variation between two formulation identities while preserving both. P3 is the
 rule that keeps the formulation evidence-independent. P5 closes the gap that a
-plan names the strategy but not the transformation; the runtime now carries a
-real assembler identity and version, which is engineering support and not yet
-proof.
+plan names the strategy but not the transformation; the runtime carries a real
+assembler identity and version AND executes only when the declared tuple matches
+a known implementation, so that provenance is execution-verified rather than
+declarative. That is stronger engineering support, but promotion to a
+Constitution invariant still awaits the next review.
 
 ## 14. Non-goals
 
