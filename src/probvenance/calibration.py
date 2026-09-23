@@ -19,9 +19,12 @@ imported into ``probvenance/__init__.py``; the module is importable as
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Any, Final
 
 from probvenance.errors import InvalidDecisionError
@@ -107,10 +110,22 @@ def canonical_rendering_semantics(
 
 
 def _require_json_value(name: str, value: Any) -> None:
-    """Reject values that cannot appear in a canonical JSON payload."""
-    if value is None or isinstance(value, (bool, int, float, str)):
+    """Reject values outside the canonical JSON domain.
+
+    The accepted domain is exactly the canonical JSON domain: ``None``,
+    ``bool``, ``int``, finite ``float``, ``str``, ``list``, and ``dict``
+    with ``str`` keys. Tuples and non-finite floats (``nan``, ``inf``,
+    ``-inf``) are rejected because they cannot be canonicalized by
+    :func:`probvenance.fingerprint.canonical_json`, so accepting them here
+    would allow constructing a value whose fingerprint is not computable.
+    """
+    if value is None or isinstance(value, (bool, int, str)):
         return
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise InvalidDecisionError(f"{name} must be a finite float, got {value!r}")
+        return
+    if isinstance(value, list):
         for item in value:
             _require_json_value(f"{name}[]", item)
         return
@@ -434,6 +449,13 @@ class CalibrationBinding:
                     "rendering_semantics['enable_thinking'] must be None or a bool, got "
                     f"{type(enable_thinking).__name__} ({enable_thinking!r})"
                 )
+        if "v" in self.rendering_semantics:
+            version = self.rendering_semantics["v"]
+            if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+                raise InvalidDecisionError(
+                    "rendering_semantics['v'] must be an int >= 1, got "
+                    f"{type(version).__name__} ({version!r})"
+                )
         for name in ("task_id", "domain_id", "taxonomy_id"):
             value = getattr(self, name)
             if value is not None:
@@ -448,6 +470,11 @@ class CalibrationBinding:
                 f"{type(self.taxonomy_version).__name__} "
                 f"({self.taxonomy_version!r})"
             )
+        object.__setattr__(
+            self,
+            "rendering_semantics",
+            MappingProxyType(deepcopy(dict(self.rendering_semantics))),
+        )
 
     @classmethod
     def from_trace(

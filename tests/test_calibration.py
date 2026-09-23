@@ -473,6 +473,91 @@ class TestCalibrationBinding:
         }
 
 
+class TestBindingImmutabilityAndFingerprintability:
+    def test_mutating_original_input_mapping_does_not_alter_binding(self) -> None:
+        source = {"v": 1, "enable_thinking": False}
+        binding = hand_bound_binding(rendering_semantics=source)
+        before = binding.fingerprint
+        source["enable_thinking"] = True
+        assert binding.fingerprint == before
+        assert binding.rendering_semantics["enable_thinking"] is False
+
+    def test_exposed_rendering_semantics_cannot_mutate_binding(self) -> None:
+        binding = hand_bound_binding(rendering_semantics={"v": 1, "enable_thinking": False})
+        before = binding.fingerprint
+        with pytest.raises(TypeError):
+            binding.rendering_semantics["enable_thinking"] = True
+        assert binding.fingerprint == before
+
+    def test_binding_fingerprint_stable_across_lifetime(self) -> None:
+        source = {"v": 1, "enable_thinking": False}
+        binding = hand_bound_binding(rendering_semantics=source)
+        before = binding.fingerprint
+        with pytest.raises(TypeError):
+            binding.rendering_semantics["enable_thinking"] = True
+        with pytest.raises(TypeError):
+            binding.rendering_semantics["v"] = 2
+        source["enable_thinking"] = True
+        source["v"] = 2
+        assert binding.fingerprint == before
+
+    def test_observation_fingerprint_stable_under_binding_mutation_attempt(self) -> None:
+        observation = choice_observation()
+        before = observation.fingerprint
+        with pytest.raises(TypeError):
+            observation.binding.rendering_semantics["enable_thinking"] = True
+        assert observation.fingerprint == before
+
+    def test_dataset_fingerprint_stable_under_binding_mutation_attempt(self) -> None:
+        observations = [choice_observation(), choice_observation()]
+        dataset = CalibrationDataset.create(observations)
+        before = dataset.fingerprint
+        for observation in dataset.observations:
+            with pytest.raises(TypeError):
+                observation.binding.rendering_semantics["enable_thinking"] = True
+        assert dataset.fingerprint == before
+
+    @pytest.mark.parametrize(
+        "extra",
+        [(1, 2), float("nan"), float("inf"), float("-inf")],
+    )
+    def test_non_canonicalizable_rendering_semantics_rejected(self, extra: Any) -> None:
+        with pytest.raises(InvalidDecisionError):
+            hand_bound_binding(rendering_semantics={"v": 1, "extra": extra})
+
+    @pytest.mark.parametrize(
+        "semantics",
+        [
+            {"v": 1},
+            {"v": 1, "enable_thinking": True},
+            {"v": 1, "enable_thinking": None},
+        ],
+    )
+    def test_accepted_semantics_are_fingerprintable(self, semantics: dict[str, Any]) -> None:
+        binding = hand_bound_binding(rendering_semantics=semantics)
+        assert binding.fingerprint
+
+    def test_version_bool_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="rendering_semantics\\['v'\\]"):
+            hand_bound_binding(rendering_semantics={"v": True, "enable_thinking": False})
+
+    def test_version_one_accepted_and_fingerprintable(self) -> None:
+        binding = hand_bound_binding(rendering_semantics={"v": 1, "enable_thinking": False})
+        assert binding.fingerprint
+
+    def test_version_zero_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="rendering_semantics\\['v'\\]"):
+            hand_bound_binding(rendering_semantics={"v": 0, "enable_thinking": False})
+
+    def test_replace_yields_immutable_fingerprintable_binding(self) -> None:
+        binding = hand_bound_binding(rendering_semantics={"v": 1, "enable_thinking": False})
+        replaced = replace(binding, model="other")
+        assert replaced.model == "other"
+        assert replaced.fingerprint
+        with pytest.raises(TypeError):
+            replaced.rendering_semantics["enable_thinking"] = True
+
+
 # ---------------------------------------------------------------------------
 # Observation status and derived correctness (Parts G, H)
 # ---------------------------------------------------------------------------
@@ -971,16 +1056,15 @@ class TestCalibrationDataset:
         # MUST-FIX regression: Python dict equality conflates True == 1, so
         # the dataset check compares canonical JSON strings, not objects. A
         # forged "v": True rendering key is dict-equal to the real "v": 1
-        # projection yet yields a different binding fingerprint.
+        # projection yet yields a different binding fingerprint. The
+        # masquerade is now closed one layer earlier: binding construction
+        # itself rejects "v": True, so it can never reach the dataset check.
         observation = choice_observation()
-        forged = hand_bound_binding(
-            base=observation.binding,
-            rendering_semantics={"v": True, "enable_thinking": None},
-        )
-        assert observation.binding.canonical_payload() == forged.canonical_payload()
-        assert observation.binding.fingerprint != forged.fingerprint
-        with pytest.raises(InvalidDecisionError, match="binding canonical payload"):
-            CalibrationDataset(binding=forged, observations=(observation,))
+        with pytest.raises(InvalidDecisionError, match="rendering_semantics\\['v'\\]"):
+            hand_bound_binding(
+                base=observation.binding,
+                rendering_semantics={"v": True, "enable_thinking": None},
+            )
 
     def test_enable_thinking_int_binding_rejected_before_dataset_layer(self) -> None:
         # The audit counterexample binding cannot even reach the dataset
