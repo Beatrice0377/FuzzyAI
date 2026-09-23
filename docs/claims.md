@@ -286,10 +286,15 @@ models, and never need a GPU.
 
 - `[V]` Probvenance deterministically derives an exact probability formulation
   fingerprint that excludes instance evidence while committing the semantic
-  outcome space, the scoring representation, the compiler, doctrine, strategy,
-  and probability assembler identity. Evidence:
+  outcome space, the scoring representation, the compiler identity and version,
+  the doctrine identity AND version, the strategy, and the probability assembler
+  identity and version. Both built-in Bool and Choice doctrines commit an
+  explicit version: the version is a declared plan field and is never parsed out
+  of the doctrine id string. Evidence:
   `tests/test_probability_identity.py::TestPayloadShape`,
-  `tests/test_probability_identity.py::TestEvidenceExclusion`.
+  `tests/test_probability_identity.py::TestEvidenceExclusion`,
+  `tests/test_probability_identity.py::TestExactFormulationBasics::test_doctrine_block_records_the_real_identity_and_version`,
+  `tests/test_compiler.py::TestBoolCompilerInit::test_doctrine_version_comes_from_metadata_not_the_id`.
 - `[V]` Formulation-family fingerprints intentionally collapse the
   representation-specific differences defined by the frozen family contract
   (candidate names, candidate descriptions, and the candidate-to-label

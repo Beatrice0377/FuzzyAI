@@ -22,6 +22,7 @@ from probvenance import (
 )
 from probvenance.assembler import BINARY_ASSEMBLER_ID, BINARY_ASSEMBLER_VERSION
 from probvenance.compiler import BINARY_COMPILER_ID, BINARY_COMPILER_VERSION
+from probvenance.doctrine import BINARY_DOCTRINE_VERSION
 
 TIMESTAMP = "2026-01-01T00:00:00+00:00"
 
@@ -52,6 +53,7 @@ def make_plan(**overrides: Any) -> InferencePlan:
         "positive_verbalizer": "yes",
         "negative_verbalizer": "no",
         "doctrine_id": "binary-semantic-judgment-v1",
+        "doctrine_version": BINARY_DOCTRINE_VERSION,
         "compiler_id": BINARY_COMPILER_ID,
         "compiler_version": BINARY_COMPILER_VERSION,
         "assembler_id": BINARY_ASSEMBLER_ID,
@@ -142,6 +144,7 @@ class TestDecisionTraceFields:
         assert trace.plan_fingerprint == evidence.plan_fingerprint
         assert trace.scoring_strategy == "binary_token_logits"
         assert trace.doctrine_id == "binary-semantic-judgment-v1"
+        assert trace.doctrine_version == BINARY_DOCTRINE_VERSION
         assert trace.positive_verbalizer == "yes"
         assert trace.negative_verbalizer == "no"
         assert trace.positive_token_id == 9642
@@ -495,6 +498,10 @@ class TestToDict:
         decoded = json.loads(json.dumps(trace.to_dict()))
         for key, value in trace.to_dict().items():
             assert decoded[key] == value
+
+    def test_to_dict_includes_doctrine_version(self) -> None:
+        trace = build_trace()
+        assert trace.to_dict()["doctrine_version"] == BINARY_DOCTRINE_VERSION
 
     def test_none_fields_survive_json(self) -> None:
         metadata = {"positive_token_id": 1, "negative_token_id": 2}

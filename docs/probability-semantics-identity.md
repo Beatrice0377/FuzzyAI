@@ -17,7 +17,9 @@ deliberately not part of any fingerprint payload. No comparability policy, no
 pooling policy, and no calibration exist: the identities say which formulation
 produced a probability, never whether two probabilities may be treated alike.
 Where this document shows compiler and assembler identifiers and versions they
-match the runtime. This document answers which probabilities may be treated as
+match the runtime. The doctrine identity matches too: a plan carries
+`doctrine_id` and `doctrine_version` as separate declared fields, both enter the
+formulation identity, and no version is ever inferred from the id string. This document answers which probabilities may be treated as
 the same kind of object, and which merely come from the same decision.
 
 ## 1. Motivation

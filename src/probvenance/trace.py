@@ -88,6 +88,7 @@ class DecisionTrace:
     formulation_family_fingerprint_version: int
     scoring_strategy: str
     doctrine_id: str
+    doctrine_version: int | None
     positive_verbalizer: str
     negative_verbalizer: str
     positive_token_id: int
@@ -132,6 +133,7 @@ class DecisionTrace:
             "formulation_family_fingerprint_version": self.formulation_family_fingerprint_version,
             "scoring_strategy": self.scoring_strategy,
             "doctrine_id": self.doctrine_id,
+            "doctrine_version": self.doctrine_version,
             "positive_verbalizer": self.positive_verbalizer,
             "negative_verbalizer": self.negative_verbalizer,
             "positive_token_id": self.positive_token_id,
@@ -416,6 +418,7 @@ def build_decision_trace(
         formulation_family_fingerprint_version=plan.formulation_family_fingerprint_version,
         scoring_strategy=str(plan.strategy.value),
         doctrine_id=plan.doctrine_id if plan.doctrine_id is not None else "none",
+        doctrine_version=plan.doctrine_version,
         positive_verbalizer=plan.positive_verbalizer
         if plan.positive_verbalizer is not None
         else "none",

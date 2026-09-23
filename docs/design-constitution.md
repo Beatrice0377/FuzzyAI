@@ -273,9 +273,11 @@ exists yet; each invariant below states its own current enforcement level.
   to, or be interpreted as concrete values. An absent model revision is neither a
   wildcard nor equal to a concrete revision, and an absent scoring-relevant
   rendering key is not equal to a concrete setting. Enforcement: design contract
-  only; the source axis has no runtime identity yet. The one case Phase 2D does
-  materialize is an absent doctrine version, which the formulation payload
-  records as an explicit `None` instead of defaulting it to a plausible value.
+  only; the source axis has no runtime identity yet. Phase 2D.1 did not weaken
+  this rule: a built-in doctrine version is now a real declared plan field that
+  the formulation identity commits, so it is no longer an unknown case at all,
+  while every genuinely absent value remains an explicit unknown rather than a
+  default.
 - **INV-27 (assembler identity and version are part of formulation identity).**
   The probability assembler identity and version are part of probability
   formulation identity, because two assemblers under one scoring strategy may

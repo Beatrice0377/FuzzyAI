@@ -154,6 +154,7 @@ class TestTieBreakFollowsSemanticOrder:
             targets=labels,
             system_prompt=base.system_prompt,
             doctrine_id=base.doctrine_id,
+            doctrine_version=base.doctrine_version,
             label_scheme_id=base.label_scheme_id,
             candidate_mapping=tuple(
                 type(entry)(

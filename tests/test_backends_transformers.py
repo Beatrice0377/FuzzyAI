@@ -20,6 +20,7 @@ from probvenance.backends.transformers import TRANSFORMERS_BACKEND_VERSION, Tran
 from probvenance.capabilities import BackendCapabilities
 from probvenance.compiler import BINARY_COMPILER_ID, BINARY_COMPILER_VERSION
 from probvenance.diagnostics import diagnose_bool_evidence
+from probvenance.doctrine import BINARY_DOCTRINE_ID, BINARY_DOCTRINE_VERSION
 from probvenance.errors import UnsupportedCapabilityError, VerbalizerError
 from probvenance.fingerprint import JSONValue
 from probvenance.plans import EvidenceKind, InferencePlan, ScoringStrategy
@@ -192,6 +193,8 @@ def make_plan() -> InferencePlan:
         system_prompt="Be terse.",
         positive_verbalizer="yes",
         negative_verbalizer="no",
+        doctrine_id=BINARY_DOCTRINE_ID,
+        doctrine_version=BINARY_DOCTRINE_VERSION,
         compiler_id=BINARY_COMPILER_ID,
         compiler_version=BINARY_COMPILER_VERSION,
         assembler_id=BINARY_ASSEMBLER_ID,
@@ -429,6 +432,8 @@ def test_execute_rejects_multi_token_verbalizer_before_forward(
         system_prompt="Be terse.",
         positive_verbalizer="absolutely yes",
         negative_verbalizer="no",
+        doctrine_id=BINARY_DOCTRINE_ID,
+        doctrine_version=BINARY_DOCTRINE_VERSION,
         compiler_id=BINARY_COMPILER_ID,
         compiler_version=BINARY_COMPILER_VERSION,
         assembler_id=BINARY_ASSEMBLER_ID,

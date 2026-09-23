@@ -6,6 +6,7 @@ import pytest
 
 from probvenance import (
     BINARY_DOCTRINE_ID,
+    BINARY_DOCTRINE_VERSION,
     BINARY_SEMANTIC_JUDGMENT_V1,
     BackendCapabilities,
     BoolCompiler,
@@ -58,6 +59,21 @@ class TestBoolCompilerInit:
         assert compiler.positive_verbalizer == "affirm"
         assert compiler.negative_verbalizer == "deny"
 
+    def test_doctrine_version_comes_from_metadata_not_the_id(self) -> None:
+        doctrine = ScoringDoctrine(
+            doctrine_id="semantic-judgment-v9",
+            version=3,
+            system_prompt="Fixed.",
+            user_template=(
+                "Q: {question}\nC: {context}\nA: {positive_verbalizer}/{negative_verbalizer}"
+            ),
+        )
+        plan = BoolCompiler(doctrine=doctrine).compile(
+            make_decision(), BackendCapabilities(binary_token_logits=True)
+        )
+        assert plan.doctrine_id == "semantic-judgment-v9"
+        assert plan.doctrine_version == 3
+
     def test_non_doctrine_rejected(self) -> None:
         bad_doctrine: Any = "not a doctrine"
         with pytest.raises(InvalidDecisionError, match="ScoringDoctrine"):
@@ -88,6 +104,7 @@ class TestBoolCompilerCompile:
         assert plan.positive_verbalizer == "yes"
         assert plan.negative_verbalizer == "no"
         assert plan.doctrine_id == BINARY_DOCTRINE_ID
+        assert plan.doctrine_version == BINARY_DOCTRINE_VERSION
         assert plan.required_capabilities == BackendCapabilities(binary_token_logits=True)
 
     def test_plan_prompt_contains_question_context_and_verbalizers(self) -> None:

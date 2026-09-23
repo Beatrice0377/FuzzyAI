@@ -37,8 +37,9 @@ from probvenance.plans import InferencePlan, ScoringStrategy
 
 # Bump when the canonical payload shape changes. The two identities evolve
 # independently, so they carry separate versions.
-PROBABILITY_FORMULATION_FINGERPRINT_VERSION = 1
-FORMULATION_FAMILY_FINGERPRINT_VERSION = 1
+# Version 2 commits a real doctrine version; v1 could only record an unknown.
+PROBABILITY_FORMULATION_FINGERPRINT_VERSION = 2
+FORMULATION_FAMILY_FINGERPRINT_VERSION = 2
 
 _BOOL_DECISION_FAMILY = "bool"
 _CHOICE_DECISION_FAMILY = "choice"
@@ -76,23 +77,17 @@ def _identity_party(identifier: str, version: int) -> dict[str, JSONValue] | Non
 
 
 def _doctrine_block(plan: InferencePlan) -> dict[str, JSONValue] | None:
-    """The doctrine identity block, with an explicitly unknown version.
+    """The doctrine identity block: id and version, both explicit.
 
-    ``InferencePlan`` carries ``doctrine_id`` but no separate doctrine version,
-    while ``docs/probability-semantics-identity.md`` names doctrine id AND
-    version as a formulation dimension. Rather than defaulting the version to a
-    plausible-looking ``1`` (forbidden by INV-26), the version is recorded as an
-    explicit unknown. The doctrine ids this project ships are version-suffixed
-    (``binary-semantic-judgment-v1``, ``categorical-semantic-judgment-v1``), so
-    the concrete identity is still pinned in practice.
-
-    This is a genuine gap between the frozen design and the runtime contract and
-    is reported as such; closing it would require carrying a doctrine version on
-    the plan, which would change the plan fingerprint schema.
+    Doctrine is a probability-formulation-relevant contract, so its identity and
+    its revision are separate plan fields and both enter the payload. The version
+    is never derived from the id string, even though the shipped ids happen to be
+    version-suffixed. A plan with no doctrine contributes no block, and a
+    declared id without a version keeps the explicit unknown (INV-26).
     """
     if plan.doctrine_id is None:
         return None
-    return {"doctrine_id": plan.doctrine_id, "version": None}
+    return {"doctrine_id": plan.doctrine_id, "version": plan.doctrine_version}
 
 
 def _bool_outcome_space() -> dict[str, JSONValue]:

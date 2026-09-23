@@ -27,6 +27,10 @@ from probvenance.compiler import (
 )
 from probvenance.decisions import BoolDecision, ChoiceDecision
 from probvenance.diagnostics import diagnose_bool_evidence
+from probvenance.doctrine import (
+    BINARY_DOCTRINE_VERSION,
+    CATEGORICAL_DOCTRINE_VERSION,
+)
 from probvenance.fingerprint import JSONValue, canonical_json
 from probvenance.plans import (
     PLAN_FINGERPRINT_VERSION,
@@ -242,8 +246,8 @@ class TestPayloadShape:
         assert payload["v"] == FORMULATION_FAMILY_FINGERPRINT_VERSION
 
     def test_versions_are_independent_constants(self) -> None:
-        assert PROBABILITY_FORMULATION_FINGERPRINT_VERSION == 1
-        assert FORMULATION_FAMILY_FINGERPRINT_VERSION == 1
+        assert PROBABILITY_FORMULATION_FINGERPRINT_VERSION == 2
+        assert FORMULATION_FAMILY_FINGERPRINT_VERSION == 2
 
     def test_bool_outcome_space_is_explicit_and_ordered(self) -> None:
         payload = probability_formulation_payload(bool_plan())
@@ -380,14 +384,40 @@ class TestExactFormulationBasics:
         }
 
     def test_plan_fingerprint_schema_is_not_bumped_by_derived_identities(self) -> None:
-        assert PLAN_FINGERPRINT_VERSION == 4
-        assert bool_plan().fingerprint_version == 4
+        assert PLAN_FINGERPRINT_VERSION == 5
+        assert bool_plan().fingerprint_version == 5
 
-    def test_doctrine_version_is_an_explicit_unknown_not_a_default(self) -> None:
+    def test_doctrine_block_records_the_real_identity_and_version(self) -> None:
         assert probability_formulation_payload(bool_plan())["doctrine"] == {
             "doctrine_id": "binary-semantic-judgment-v1",
-            "version": None,
+            "version": BINARY_DOCTRINE_VERSION,
         }
+        assert probability_formulation_payload(choice_plan())["doctrine"] == {
+            "doctrine_id": "categorical-semantic-judgment-v1",
+            "version": CATEGORICAL_DOCTRINE_VERSION,
+        }
+
+    def test_doctrine_version_change_moves_every_formulation_identity(self) -> None:
+        plan = bool_plan()
+        bumped = replace(plan, doctrine_version=BINARY_DOCTRINE_VERSION + 1)
+
+        assert bumped.decision_fingerprint == plan.decision_fingerprint
+        assert bumped.fingerprint != plan.fingerprint
+        assert probability_formulation_fingerprint(bumped) != probability_formulation_fingerprint(
+            plan
+        )
+        assert formulation_family_fingerprint(bumped) != formulation_family_fingerprint(plan)
+
+    def test_doctrine_id_change_moves_every_formulation_identity(self) -> None:
+        plan = bool_plan()
+        renamed = replace(plan, doctrine_id="other-doctrine")
+
+        assert renamed.decision_fingerprint == plan.decision_fingerprint
+        assert renamed.fingerprint != plan.fingerprint
+        assert probability_formulation_fingerprint(renamed) != probability_formulation_fingerprint(
+            plan
+        )
+        assert formulation_family_fingerprint(renamed) != formulation_family_fingerprint(plan)
 
 
 class TestEvidenceExclusion:

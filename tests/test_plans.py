@@ -29,6 +29,12 @@ from probvenance.compiler import (
     CATEGORICAL_COMPILER_ID,
     CATEGORICAL_COMPILER_VERSION,
 )
+from probvenance.doctrine import (
+    BINARY_DOCTRINE_ID,
+    BINARY_DOCTRINE_VERSION,
+    CATEGORICAL_DOCTRINE_ID,
+    CATEGORICAL_DOCTRINE_VERSION,
+)
 
 
 def make_plan(**overrides: Any) -> InferencePlan:
@@ -38,6 +44,8 @@ def make_plan(**overrides: Any) -> InferencePlan:
         "prompt": "Answer yes or no.",
         "positive_verbalizer": "yes",
         "negative_verbalizer": "no",
+        "doctrine_id": BINARY_DOCTRINE_ID,
+        "doctrine_version": BINARY_DOCTRINE_VERSION,
         "compiler_id": BINARY_COMPILER_ID,
         "compiler_version": BINARY_COMPILER_VERSION,
         "assembler_id": BINARY_ASSEMBLER_ID,
@@ -171,7 +179,7 @@ class TestInferencePlanVerbalizerValidation:
     def test_system_prompt_change_changes_fingerprint(self) -> None:
         assert make_plan().fingerprint != make_plan(system_prompt="Other instructions.").fingerprint
 
-    def test_fingerprint_v4_commits_provenance(self) -> None:
+    def test_fingerprint_v5_commits_provenance(self) -> None:
         plan = make_plan(system_prompt="S", positive_verbalizer="yes", negative_verbalizer="no")
         assert len(plan.fingerprint) == 64
         assert plan.fingerprint != make_plan(system_prompt="S", compiler_version=2).fingerprint
@@ -312,6 +320,8 @@ def make_categorical_plan(**overrides: Any) -> InferencePlan:
         "prompt": "Answer with one label.",
         "targets": ("A", "B", "C"),
         "label_scheme_id": "categorical-labels-v1",
+        "doctrine_id": CATEGORICAL_DOCTRINE_ID,
+        "doctrine_version": CATEGORICAL_DOCTRINE_VERSION,
         "candidate_mapping": CATEGORICAL_MAPPING,
         "compiler_id": CATEGORICAL_COMPILER_ID,
         "compiler_version": CATEGORICAL_COMPILER_VERSION,
@@ -356,6 +366,34 @@ class TestPlanProvenance:
 
     def test_assembler_version_changes_plan_fingerprint(self) -> None:
         assert make_plan().fingerprint != make_plan(assembler_version=2).fingerprint
+
+    def test_missing_doctrine_id_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="doctrine_id"):
+            make_plan(doctrine_id=None)
+
+    def test_missing_doctrine_version_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="doctrine_version"):
+            make_plan(doctrine_version=None)
+
+    def test_non_positive_doctrine_version_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="doctrine_version"):
+            make_plan(doctrine_version=0)
+
+    def test_boolean_doctrine_version_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="doctrine_version"):
+            make_plan(doctrine_version=True)
+
+    def test_doctrine_version_changes_plan_fingerprint(self) -> None:
+        assert make_plan().fingerprint != make_plan(doctrine_version=2).fingerprint
+
+    def test_categorical_doctrine_version_committed(self) -> None:
+        plan = make_categorical_plan()
+        assert plan.doctrine_id == CATEGORICAL_DOCTRINE_ID
+        assert plan.doctrine_version == CATEGORICAL_DOCTRINE_VERSION
+        assert (
+            make_categorical_plan().fingerprint
+            != make_categorical_plan(doctrine_version=2).fingerprint
+        )
 
     def test_categorical_provenance_committed(self) -> None:
         plan = make_categorical_plan()

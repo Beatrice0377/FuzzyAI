@@ -7,6 +7,7 @@ import pytest
 from probvenance import (
     CATEGORICAL_COMPILER_VERSION,
     CATEGORICAL_DOCTRINE_ID,
+    CATEGORICAL_DOCTRINE_VERSION,
     CATEGORICAL_LABEL_SCHEME_ID,
     CATEGORICAL_LABELS,
     CATEGORICAL_SEMANTIC_JUDGMENT_V1,
@@ -76,6 +77,7 @@ class TestCompilePlan:
         assert plan.decision_fingerprint == decision.fingerprint
         assert plan.strategy is ScoringStrategy.CATEGORICAL_TOKEN_LOGITS
         assert plan.doctrine_id == CATEGORICAL_DOCTRINE_ID
+        assert plan.doctrine_version == CATEGORICAL_DOCTRINE_VERSION
         assert plan.label_scheme_id == CATEGORICAL_LABEL_SCHEME_ID
         assert plan.required_capabilities == BackendCapabilities(categorical_token_logits=True)
         assert plan.positive_verbalizer is None
@@ -191,6 +193,7 @@ class TestMappingIdentity:
             targets=labels,
             system_prompt=natural.system_prompt,
             doctrine_id=natural.doctrine_id,
+            doctrine_version=natural.doctrine_version,
             label_scheme_id=natural.label_scheme_id,
             candidate_mapping=tuple(
                 CandidateLabelMapping(

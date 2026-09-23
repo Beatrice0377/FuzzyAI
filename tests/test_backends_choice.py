@@ -19,6 +19,7 @@ from probvenance.assembler import CATEGORICAL_ASSEMBLER_ID, CATEGORICAL_ASSEMBLE
 from probvenance.backends.transformers import TransformersBackend
 from probvenance.capabilities import BackendCapabilities
 from probvenance.compiler import CATEGORICAL_COMPILER_ID, CATEGORICAL_COMPILER_VERSION
+from probvenance.doctrine import CATEGORICAL_DOCTRINE_ID, CATEGORICAL_DOCTRINE_VERSION
 from probvenance.errors import ScoringLabelError, UnsupportedCapabilityError
 from probvenance.plans import (
     CandidateLabelMapping,
@@ -183,6 +184,8 @@ def make_choice_plan(targets: tuple[str, ...]) -> InferencePlan:
         system_prompt="Be terse.",
         targets=targets,
         label_scheme_id="categorical-labels-v1",
+        doctrine_id=CATEGORICAL_DOCTRINE_ID,
+        doctrine_version=CATEGORICAL_DOCTRINE_VERSION,
         compiler_id=CATEGORICAL_COMPILER_ID,
         compiler_version=CATEGORICAL_COMPILER_VERSION,
         assembler_id=CATEGORICAL_ASSEMBLER_ID,

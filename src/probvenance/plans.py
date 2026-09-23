@@ -36,7 +36,7 @@ _STRATEGIES_WITH_PROVENANCE: frozenset[ScoringStrategy] = frozenset(
 )
 
 # Bump when the canonical fingerprint payload changes shape; never hash across versions.
-PLAN_FINGERPRINT_VERSION = 4
+PLAN_FINGERPRINT_VERSION = 5
 
 
 def _require_positive_int(value: object, field_name: str) -> None:
@@ -108,6 +108,7 @@ class InferencePlan:
     positive_verbalizer: str | None = None
     negative_verbalizer: str | None = None
     doctrine_id: str | None = None
+    doctrine_version: int | None = None
     label_scheme_id: str | None = None
     candidate_mapping: tuple[CandidateLabelMapping, ...] = ()
     compiler_id: str = ""
@@ -155,6 +156,15 @@ class InferencePlan:
         ):
             raise InvalidDecisionError(
                 f"doctrine_id must be None or a non-empty string, got {self.doctrine_id!r}"
+            )
+        if self.doctrine_version is not None and (
+            isinstance(self.doctrine_version, bool)
+            or not isinstance(self.doctrine_version, int)
+            or self.doctrine_version < 1
+        ):
+            raise InvalidDecisionError(
+                "doctrine_version must be None or an int >= 1, got "
+                f"{type(self.doctrine_version).__name__} ({self.doctrine_version!r})"
             )
         if self.strategy is ScoringStrategy.BINARY_TOKEN_LOGITS:
             if (
@@ -217,6 +227,10 @@ class InferencePlan:
             _require_positive_int(self.compiler_version, "compiler_version")
             _require_non_empty_str(self.assembler_id, "assembler_id")
             _require_positive_int(self.assembler_version, "assembler_version")
+            # Doctrine id and version are separate declared fields; never parse
+            # a version out of the id string.
+            _require_non_empty_str(self.doctrine_id, "doctrine_id")
+            _require_positive_int(self.doctrine_version, "doctrine_version")
 
     def _validate_categorical_mapping(self) -> None:
         mapping = self.candidate_mapping
@@ -274,6 +288,7 @@ class InferencePlan:
                 "positive_verbalizer": self.positive_verbalizer,
                 "negative_verbalizer": self.negative_verbalizer,
                 "doctrine_id": self.doctrine_id,
+                "doctrine_version": self.doctrine_version,
                 "label_scheme_id": self.label_scheme_id,
                 "candidate_mapping": [asdict(entry) for entry in self.candidate_mapping],
                 "required_capabilities": asdict(self.required_capabilities),
