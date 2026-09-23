@@ -13,8 +13,8 @@ TRUE bound to the other surface label).
 
 from dataclasses import dataclass
 
-from fuzzyai.compiler import BoolCompiler
-from fuzzyai.doctrine import BINARY_SEMANTIC_JUDGMENT_V1, ScoringDoctrine
+from probvenance.compiler import BoolCompiler
+from probvenance.doctrine import BINARY_SEMANTIC_JUDGMENT_V1, ScoringDoctrine
 
 __all__ = [
     "DOCTRINE_KEYS",

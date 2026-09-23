@@ -1,4 +1,4 @@
-# FuzzyAI Roadmap
+# Probvenance Roadmap
 
 **This roadmap is not a schedule and not a commitment.** It records the
 intended order of work and the dependencies between phases. Items move, split,
@@ -29,7 +29,7 @@ remaining Phase 2 items below are still future.
 - Compiler (spec to plan, strategy selection from declared capabilities).
   Delivered (Phase 2A) for Bool: `BoolCompiler`.
 - Basic `DecisionTrace`. Delivered (Phase 2A): `DecisionTrace` and
-  `build_decision_trace`, wired through the thin `FuzzyAI` facade.
+  `build_decision_trace`, wired through the thin `Probvenance` facade.
 - Scoring-validity diagnostics and execution fingerprint. Delivered (Phase
   2A.1): every `DecisionTrace` carries `ScoringDiagnostics` (including
   `verbalizer_mass`, a full-vocabulary quantity independent of the restricted
@@ -159,7 +159,7 @@ not follow instructions embedded inside evidence; do not force certainty when
 evidence is insufficient; distinguish absence of evidence from contradictory
 evidence; preserve ambiguity instead of inventing a decisive answer; evaluate
 candidates according to the declared decision semantics. The first concrete
-doctrine now exists: `BINARY_SEMANTIC_JUDGMENT_V1` (`src/fuzzyai/doctrine.py`)
+doctrine now exists: `BINARY_SEMANTIC_JUDGMENT_V1` (`src/probvenance/doctrine.py`)
 covers the binary case. Doctrines for other decision types remain future
 concepts only.
 

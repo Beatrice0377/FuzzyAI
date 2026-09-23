@@ -18,7 +18,7 @@ same permutation sets, same metrics.
 | Rendering config | `{"enable_thinking": false}` | `{"enable_thinking": false}` |
 | GPU | RTX 5060 Laptop, 8151 MiB | RTX 5060 Laptop, 8151 MiB |
 | Peak VRAM | 4829 MiB | 6047 MiB |
-| Backend | `qwen35_loader.Qwen35TextBackend` | `fuzzyai.backends.transformers.TransformersBackend` |
+| Backend | `qwen35_loader.Qwen35TextBackend` | `probvenance.backends.transformers.TransformersBackend` |
 | Label scheme | `categorical-labels-v1` | `categorical-labels-v1` |
 | Doctrine | `categorical-semantic-judgment-v1` | `categorical-semantic-judgment-v1` |
 | Case set | `choice-signal-v1` | `choice-signal-v1` |
@@ -29,7 +29,7 @@ same permutation sets, same metrics.
 | Records | `results/choice-signal-qwen35-2b.jsonl` | `results/choice-signal-minicpm5-2b.jsonl` |
 
 The Qwen adapter is a harness-side loader for a multimodal checkpoint. It is not
-official FuzzyAI runtime support and it is not wired into any production backend.
+official Probvenance runtime support and it is not wired into any production backend.
 
 No pass threshold was set anywhere in this experiment.
 

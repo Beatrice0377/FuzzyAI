@@ -24,7 +24,7 @@ semantic primitive: the same prompt formulation and the same labels produced
 usable signal on some models and none on others. Newer small models tested here
 did show sufficient semantic sensitivity under specific formulations to justify
 further investigation of multi-class decisions. That justifies a next round; it
-does not constitute a quality claim about any model or about FuzzyAI.
+does not constitute a quality claim about any model or about Probvenance.
 
 ## 2. Case set
 
@@ -78,7 +78,7 @@ with status `ok`; no probe was rejected.
 candidate tokens. It is what separates a scoring-position failure from a
 semantic failure. "Low-mass" below means `verbalizer_mass < 0.5`. That figure is
 an experimental analysis cutoff chosen to group this report's own results: it is
-not a FuzzyAI threshold, not an API contract, and nothing in the runtime applies
+not a Probvenance threshold, not an API contract, and nothing in the runtime applies
 it, exposes a validity verdict, or rejects a probe because of it.
 
 | model | doctrine | low-mass probes | mass_min |
@@ -168,7 +168,7 @@ embeds an instruction against the evidence:
 LFM2.5-1.2B follows the embedded instruction. MiniCPM5-2B and Qwen3.5-2B
 follow the evidence. This is an observation about three small models on four
 hand-written probes, taken with no ground-truth dataset and sample size 4. It
-is **not** a prompt-injection safety claim, and FuzzyAI makes no such claim
+is **not** a prompt-injection safety claim, and Probvenance makes no such claim
 anywhere.
 
 ## 7. Contrast groups - the sharpest instrument

@@ -21,7 +21,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from fuzzyai import (
+from probvenance import (
     CATEGORICAL_LABEL_SCHEME_ID,
     CATEGORICAL_LABELS,
     CATEGORICAL_SEMANTIC_JUDGMENT_V1,
@@ -29,10 +29,10 @@ from fuzzyai import (
     ChoiceCompiler,
     ChoiceDecision,
     ChoiceScoringDiagnostics,
-    FuzzyAI,
     InferencePlan,
+    Probvenance,
 )
-from fuzzyai.fingerprint import fingerprint
+from probvenance.fingerprint import fingerprint
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_CASES = HERE / "cases.json"
@@ -197,7 +197,7 @@ def evaluate(
     decision: ChoiceDecision,
     labels: tuple[str, ...] | None,
 ) -> Any:
-    ai = FuzzyAI(
+    ai = Probvenance(
         backend=backend,
         choice_compiler=PermutedChoiceCompiler(labels),
         capture_rendered_input=True,
@@ -285,7 +285,7 @@ def parse_chat_template_kwargs(raw: str | None) -> dict[str, Any] | None:
 
 def load_backend_factory(name: str | None) -> Any:
     if name is None:
-        from fuzzyai.backends.transformers import TransformersBackend
+        from probvenance.backends.transformers import TransformersBackend
 
         return TransformersBackend
     module_name, separator, attribute = name.partition(":")

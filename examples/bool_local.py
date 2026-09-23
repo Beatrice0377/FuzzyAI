@@ -1,7 +1,7 @@
 """Local boolean demo against a Hugging Face causal LM (Phase 2A slice).
 
 Runs a six-case matrix of low-risk, local-only demo decisions through the real
-FuzzyAI vertical slice:
+Probvenance vertical slice:
 
     BoolDecision -> BoolCompiler -> InferencePlan -> TransformersBackend
         -> RawEvidence -> assemble_bool_probability -> BoolResult
@@ -27,7 +27,7 @@ Usage:
     uv run --extra transformers python examples/bool_local.py            # all cases
     uv run --extra transformers python examples/bool_local.py --case true
     uv run --extra transformers python examples/bool_local.py --case true --case false
-    FUZZYAI_MODEL=Qwen/Qwen3-0.6B uv run --extra transformers python examples/bool_local.py
+    PROBVENANCE_MODEL=Qwen/Qwen3-0.6B uv run --extra transformers python examples/bool_local.py
 """
 
 from __future__ import annotations
@@ -35,11 +35,11 @@ from __future__ import annotations
 import argparse
 import os
 
-from fuzzyai.decisions import BoolDecision
-from fuzzyai.runtime import FuzzyAI
+from probvenance.decisions import BoolDecision
+from probvenance.runtime import Probvenance
 
 try:
-    from fuzzyai.backends.transformers import TransformersBackend
+    from probvenance.backends.transformers import TransformersBackend
 except ImportError as exc:  # pragma: no cover - only hit without the extra
     raise SystemExit(
         "This demo needs the optional transformers extra: uv sync --extra transformers"
@@ -98,7 +98,7 @@ def _device_report() -> str:
     )
 
 
-def _run_decision(ai: FuzzyAI, case_name: str, decision: BoolDecision) -> None:
+def _run_decision(ai: Probvenance, case_name: str, decision: BoolDecision) -> None:
     evaluation = ai.evaluate_with_trace(decision)
     result = evaluation.result
     trace = evaluation.trace
@@ -126,8 +126,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--model",
-        default=os.environ.get("FUZZYAI_MODEL", DEFAULT_MODEL),
-        help="Hugging Face model id (env: FUZZYAI_MODEL, default: %(default)s)",
+        default=os.environ.get("PROBVENANCE_MODEL", DEFAULT_MODEL),
+        help="Hugging Face model id (env: PROBVENANCE_MODEL, default: %(default)s)",
     )
     parser.add_argument(
         "--case",
@@ -147,7 +147,7 @@ def main() -> None:
         action="store_true",
         help=(
             "leave the model's default thinking mode on "
-            "(env: FUZZYAI_ENABLE_THINKING=1); the default disables it"
+            "(env: PROBVENANCE_ENABLE_THINKING=1); the default disables it"
         ),
     )
     args = parser.parse_args()
@@ -156,7 +156,7 @@ def main() -> None:
     # token after the generation prompt, pushing both verbalizer logits into the
     # vanishing tail, so the two-way P(True) becomes tail noise. Disabling the
     # thinking block pre-fills an empty one and the model answers directly.
-    enable_thinking = args.thinking or os.environ.get("FUZZYAI_ENABLE_THINKING", "") in (
+    enable_thinking = args.thinking or os.environ.get("PROBVENANCE_ENABLE_THINKING", "") in (
         "1",
         "true",
         "yes",
@@ -180,7 +180,7 @@ def main() -> None:
         args.model,
         chat_template_kwargs={"enable_thinking": enable_thinking},
     )
-    ai = FuzzyAI(backend=backend)
+    ai = Probvenance(backend=backend)
     selected = args.cases if args.cases else list(CASE_MATRIX)
     for case_name in selected:
         _run_decision(ai, case_name, CASE_MATRIX[case_name])

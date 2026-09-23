@@ -17,8 +17,8 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from fuzzyai.errors import InvalidDecisionError, InvalidProbabilityError
-from fuzzyai.plans import EvidenceKind, InferencePlan, RawEvidence, ScoringStrategy
+from probvenance.errors import InvalidDecisionError, InvalidProbabilityError
+from probvenance.plans import EvidenceKind, InferencePlan, RawEvidence, ScoringStrategy
 
 #: The two binary scoring labels, in canonical (declaration) order.
 BINARY_EVIDENCE_LABELS = ("false", "true")

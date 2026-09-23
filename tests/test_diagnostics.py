@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from fuzzyai import (
+from probvenance import (
     BINARY_EVIDENCE_LABELS,
     EvidenceKind,
     InvalidDecisionError,
@@ -20,7 +20,7 @@ from fuzzyai import (
     ScoringDiagnostics,
     diagnose_bool_evidence,
 )
-from fuzzyai.diagnostics import (
+from probvenance.diagnostics import (
     TOP_TOKEN_ID_KEY,
     TOP_TOKEN_LOGIT_KEY,
     TOP_TOKEN_TEXT_KEY,

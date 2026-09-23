@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from fuzzyai import (
+from probvenance import (
     BINARY_EVIDENCE_LABELS,
     EvidenceKind,
     InvalidDecisionError,

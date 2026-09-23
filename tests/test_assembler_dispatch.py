@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from fuzzyai import (
+from probvenance import (
     BINARY_EVIDENCE_LABELS,
     BackendCapabilities,
     BoolCompiler,
@@ -23,13 +23,13 @@ from fuzzyai import (
     ChoiceResult,
     ChoiceScoringDiagnostics,
     EvidenceKind,
-    FuzzyAI,
     InferencePlan,
+    Probvenance,
     RawEvidence,
     ScoringDiagnostics,
     ScoringStrategy,
 )
-from fuzzyai.assembler import (
+from probvenance.assembler import (
     BINARY_ASSEMBLER_ID,
     BINARY_ASSEMBLER_VERSION,
     CATEGORICAL_ASSEMBLER_ID,
@@ -37,7 +37,7 @@ from fuzzyai.assembler import (
     assemble_probability,
     resolve_probability_assembler,
 )
-from fuzzyai.errors import UnsupportedAssemblerError
+from probvenance.errors import UnsupportedAssemblerError
 
 BINARY_METADATA: dict[str, Any] = {
     "positive_token_id": 9642,
@@ -207,12 +207,12 @@ class RecordingBackend:
 
 class TestRuntimeAssemblerProvenance:
     def test_runtime_rejects_a_lying_plan_without_result_or_trace(self) -> None:
-        ai = FuzzyAI(backend=RecordingBackend(), compiler=LyingBoolCompiler())
+        ai = Probvenance(backend=RecordingBackend(), compiler=LyingBoolCompiler())
         with pytest.raises(UnsupportedAssemblerError, match="my-magical-assembler"):
             ai.evaluate_with_trace(bool_decision())
 
     def test_runtime_trace_records_the_verified_declaration(self) -> None:
-        ai = FuzzyAI(backend=RecordingBackend())
+        ai = Probvenance(backend=RecordingBackend())
         evaluation = ai.evaluate_with_trace(bool_decision())
         assert isinstance(evaluation.result, BoolResult)
         assert evaluation.trace.assembler_id == BINARY_ASSEMBLER_ID

@@ -1,4 +1,4 @@
-"""Compilers: decisions -> :class:`~fuzzyai.plans.InferencePlan`.
+"""Compilers: decisions -> :class:`~probvenance.plans.InferencePlan`.
 
 A compiler is a pure planner. It NEVER computes probabilities, never sees
 evidence, and never touches a backend or a tokenizer. Its only job is to turn
@@ -7,33 +7,33 @@ plan.
 
 Two compilers exist:
 
-- :class:`BoolCompiler` compiles :class:`~fuzzyai.decisions.BoolDecision`
+- :class:`BoolCompiler` compiles :class:`~probvenance.decisions.BoolDecision`
   objects under the binary token-logit strategy.
-- :class:`ChoiceCompiler` compiles :class:`~fuzzyai.decisions.ChoiceDecision`
+- :class:`ChoiceCompiler` compiles :class:`~probvenance.decisions.ChoiceDecision`
   objects under the categorical token-logit strategy, assigning each semantic
   candidate an execution-only scoring label from a versioned label scheme.
 """
 
-from fuzzyai.assembler import (
+from probvenance.assembler import (
     BINARY_ASSEMBLER_ID,
     BINARY_ASSEMBLER_VERSION,
     CATEGORICAL_ASSEMBLER_ID,
     CATEGORICAL_ASSEMBLER_VERSION,
 )
-from fuzzyai.capabilities import BackendCapabilities
-from fuzzyai.decisions import BoolDecision, ChoiceDecision
-from fuzzyai.doctrine import (
+from probvenance.capabilities import BackendCapabilities
+from probvenance.decisions import BoolDecision, ChoiceDecision
+from probvenance.doctrine import (
     BINARY_SEMANTIC_JUDGMENT_V1,
     CATEGORICAL_SEMANTIC_JUDGMENT_V1,
     CategoricalScoringDoctrine,
     ScoringDoctrine,
 )
-from fuzzyai.errors import (
+from probvenance.errors import (
     InvalidDecisionError,
     UnsupportedCapabilityError,
     UnsupportedDecisionError,
 )
-from fuzzyai.plans import CandidateLabelMapping, InferencePlan, ScoringStrategy
+from probvenance.plans import CandidateLabelMapping, InferencePlan, ScoringStrategy
 
 BINARY_COMPILER_ID = "bool-compiler"
 BINARY_COMPILER_VERSION = 1
@@ -54,7 +54,7 @@ CATEGORICAL_COMPILER_VERSION = 1
 
 
 class BoolCompiler:
-    """Compiles :class:`~fuzzyai.decisions.BoolDecision` objects into plans."""
+    """Compiles :class:`~probvenance.decisions.BoolDecision` objects into plans."""
 
     def __init__(
         self,
@@ -105,7 +105,7 @@ class BoolCompiler:
 
         Raises:
             UnsupportedDecisionError: if ``decision`` is not a
-                :class:`~fuzzyai.decisions.BoolDecision`.
+                :class:`~probvenance.decisions.BoolDecision`.
             UnsupportedCapabilityError: if the backend does not declare
                 ``binary_token_logits``.
         """
@@ -142,7 +142,7 @@ class BoolCompiler:
 
 
 class ChoiceCompiler:
-    """Compiles :class:`~fuzzyai.decisions.ChoiceDecision` objects into plans.
+    """Compiles :class:`~probvenance.decisions.ChoiceDecision` objects into plans.
 
     Each semantic candidate receives the scoring label at its candidate index
     from :data:`CATEGORICAL_LABELS`. The compiler never consults a tokenizer,
@@ -174,7 +174,7 @@ class ChoiceCompiler:
 
         Raises:
             UnsupportedDecisionError: if ``decision`` is not a
-                :class:`~fuzzyai.decisions.ChoiceDecision`.
+                :class:`~probvenance.decisions.ChoiceDecision`.
             UnsupportedCapabilityError: if the backend does not declare
                 ``categorical_token_logits``.
             InvalidDecisionError: if the decision has more candidates than

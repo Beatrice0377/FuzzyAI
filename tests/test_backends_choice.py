@@ -15,12 +15,12 @@ pytest.importorskip("transformers")
 
 import torch
 
-from fuzzyai.assembler import CATEGORICAL_ASSEMBLER_ID, CATEGORICAL_ASSEMBLER_VERSION
-from fuzzyai.backends.transformers import TransformersBackend
-from fuzzyai.capabilities import BackendCapabilities
-from fuzzyai.compiler import CATEGORICAL_COMPILER_ID, CATEGORICAL_COMPILER_VERSION
-from fuzzyai.errors import ScoringLabelError, UnsupportedCapabilityError
-from fuzzyai.plans import (
+from probvenance.assembler import CATEGORICAL_ASSEMBLER_ID, CATEGORICAL_ASSEMBLER_VERSION
+from probvenance.backends.transformers import TransformersBackend
+from probvenance.capabilities import BackendCapabilities
+from probvenance.compiler import CATEGORICAL_COMPILER_ID, CATEGORICAL_COMPILER_VERSION
+from probvenance.errors import ScoringLabelError, UnsupportedCapabilityError
+from probvenance.plans import (
     CandidateLabelMapping,
     EvidenceKind,
     InferencePlan,
@@ -207,11 +207,11 @@ def make_backend(
     tokenizer = tokenizer or FakeTokenizer()
     model = FakeModel(tokenizer._vocab)
     monkeypatch.setattr(
-        "fuzzyai.backends.transformers.AutoTokenizer.from_pretrained",
+        "probvenance.backends.transformers.AutoTokenizer.from_pretrained",
         lambda *a, **kw: tokenizer,
     )
     monkeypatch.setattr(
-        "fuzzyai.backends.transformers.AutoModelForCausalLM.from_pretrained",
+        "probvenance.backends.transformers.AutoModelForCausalLM.from_pretrained",
         lambda *a, **kw: model,
     )
     return TransformersBackend("fake/model", device="cpu")

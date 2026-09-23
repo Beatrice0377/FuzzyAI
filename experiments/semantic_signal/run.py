@@ -34,20 +34,20 @@ if _SRC.exists() and str(_SRC) not in sys.path:
 from formulations import Formulation, all_formulations  # noqa: E402
 from metrics import load_case_set  # noqa: E402
 
-from fuzzyai import (  # noqa: E402
+from probvenance import (  # noqa: E402
     BINARY_EVIDENCE_LABELS,
     BackendCapabilities,
     BoolDecision,
     BoolResult,
     EvidenceKind,
-    FuzzyAI,
     InferencePlan,
+    Probvenance,
     RawEvidence,
 )
-from fuzzyai.errors import VerbalizerError  # noqa: E402
-from fuzzyai.fingerprint import fingerprint  # noqa: E402
-from fuzzyai.results import Certainty  # noqa: E402
-from fuzzyai.trace import DecisionTrace  # noqa: E402
+from probvenance.errors import VerbalizerError  # noqa: E402
+from probvenance.fingerprint import fingerprint  # noqa: E402
+from probvenance.results import Certainty  # noqa: E402
+from probvenance.trace import DecisionTrace  # noqa: E402
 
 CASE_SET_PATH = Path(__file__).with_name("cases.json")
 RESULTS_DIR = Path(__file__).with_name("results")
@@ -224,7 +224,7 @@ class FakeDryRunBackend:
 
 
 def _logaddexp(a: float, b: float) -> float:
-    """log(exp(a) + exp(b)) without overflow (same trick as fuzzyai.diagnostics)."""
+    """log(exp(a) + exp(b)) without overflow (same trick as probvenance.diagnostics)."""
     if a < b:
         a, b = b, a
     return a + math.log1p(math.exp(b - a))
@@ -434,7 +434,7 @@ def run_sweep(
         handle.write(json.dumps(header, sort_keys=True) + "\n")
         for formulation in formulations:
             compiler = formulation.make_compiler()
-            runtime = FuzzyAI(backend=backend, compiler=compiler, capture_rendered_input=True)
+            runtime = Probvenance(backend=backend, compiler=compiler, capture_rendered_input=True)
             formulation_probes = list(probes)[:limit] if limit is not None else list(probes)
             skipped = False
             skipped_count = 0
@@ -556,7 +556,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="MODULE:ATTRIBUTE",
         help=(
             "callable with the TransformersBackend signature to construct the backend "
-            "(default: fuzzyai.backends.transformers:TransformersBackend). Used to score "
+            "(default: probvenance.backends.transformers:TransformersBackend). Used to score "
             "checkpoints whose text tower needs a harness-side loader adaptation."
         ),
     )
@@ -602,7 +602,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Real run: import lazily so --dry-run never touches torch.
         try:
             if args.backend_factory is None:
-                from fuzzyai.backends.transformers import TransformersBackend
+                from probvenance.backends.transformers import TransformersBackend
 
                 factory: Any = TransformersBackend
             else:

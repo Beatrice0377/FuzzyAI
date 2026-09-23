@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from fuzzyai import BoolDecision, Choice, ChoiceDecision, InvalidDecisionError, JSONValue
+from probvenance import BoolDecision, Choice, ChoiceDecision, InvalidDecisionError, JSONValue
 
 
 class TestBoolDecision:

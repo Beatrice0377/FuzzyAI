@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from fuzzyai import (
+from probvenance import (
     BackendCapabilities,
     Certainty,
     ChoiceCompiler,
@@ -253,7 +253,7 @@ class TestCertaintyNotRebuilt:
 
 class TestDiagnoseChoiceEvidenceGuards:
     def test_binary_strategy_plan_rejected(self) -> None:
-        from fuzzyai import BoolCompiler, BoolDecision
+        from probvenance import BoolCompiler, BoolDecision
 
         binary_plan = BoolCompiler().compile(
             BoolDecision("Yes or no?"), BackendCapabilities(binary_token_logits=True)

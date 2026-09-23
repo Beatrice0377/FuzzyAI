@@ -2,7 +2,7 @@
 
 Status: design proposal, Phase 2C-Design, amended by Phase 2C.0. The identity and
 fingerprint concepts defined here are not implemented: no runtime class, no
-public API, and no fingerprint defined here exists in `src/fuzzyai/` yet. The one
+public API, and no fingerprint defined here exists in `src/probvenance/` yet. The one
 part that is now real is the compiler and assembler provenance carried on
 `InferencePlan` and `DecisionTrace`, which Phase 2C.0 added; where this document
 shows those identifiers they match the runtime. This document answers which
@@ -11,7 +11,7 @@ from the same decision.
 
 ## 1. Motivation
 
-FuzzyAI already carries four identities:
+Probvenance already carries four identities:
 
 ```text
 Decision Fingerprint    WHAT semantic question is asked
@@ -229,7 +229,7 @@ So descriptions are included in the outcome-space identity.
 
 ### No automatic paraphrase equivalence
 
-FuzzyAI must not attempt to decide that two descriptions mean the same thing.
+Probvenance must not attempt to decide that two descriptions mean the same thing.
 That would require another semantic model and would put an unaccountable
 judgement inside an identity primitive. If a caller wants several
 descriptions to sit in one taxonomy family, the mechanism is an explicit
@@ -553,7 +553,7 @@ equivalence are listed once, in section 16.
 
 ### Caller-supplied identity is provenance, not proof
 
-If a caller declares `taxonomy_id="support-routing-v3"`, FuzzyAI records that
+If a caller declares `taxonomy_id="support-routing-v3"`, Probvenance records that
 declaration. It must not treat the matching string as proof that two candidate
 sets are semantically equivalent. A declaration is an assertion by the caller,
 carried as provenance. The same caution applies to a declared rendering default.
@@ -699,7 +699,7 @@ interchangeable.
 ## 12. Proposed canonical payloads
 
 Proposals only, for a future fingerprint class; none of this is implemented in
-`src/fuzzyai/`. These payloads follow the existing fingerprint discipline:
+`src/probvenance/`. These payloads follow the existing fingerprint discipline:
 schema version, canonical JSON, SHA-256, JSON-compatible values only (no
 `repr(object)`, no callables, no sets, no automatic datetime conversion). The
 compiler and assembler identifiers and versions shown are the real ones the
@@ -860,7 +860,7 @@ This round does not:
 ```text
 implement CalibrationProfile, temperature scaling, ECE, Brier, a calibration
   store, or profile matching
-implement any fingerprint class in src/fuzzyai/
+implement any fingerprint class in src/probvenance/
 add a public API
 change runtime probability behavior (Phase 2C.0 later added compiler and
   assembler provenance to the plan fingerprint and trace, and made the

@@ -2,7 +2,7 @@
 
 import pytest
 
-from fuzzyai.backends.verbalizers import (
+from probvenance.backends.verbalizers import (
     SupportsChatTemplate,
     TokenizedText,
     VerbalizerTokens,
@@ -10,7 +10,7 @@ from fuzzyai.backends.verbalizers import (
     resolve_exact_single_token_continuation,
     resolve_verbalizers,
 )
-from fuzzyai.errors import ScoringLabelError, VerbalizerError
+from probvenance.errors import ScoringLabelError, VerbalizerError
 
 # Independent copy of the contract's reserved keys: the test must fail if the
 # implementation's reserved set silently shrinks.

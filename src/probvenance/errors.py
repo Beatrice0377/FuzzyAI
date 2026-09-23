@@ -1,4 +1,4 @@
-"""Stable exception hierarchy for FuzzyAI.
+"""Stable exception hierarchy for Probvenance.
 
 Every error is part of the public SDK surface: messages are written for ordinary
 users (they include the offending value's repr/type where useful) and never leak
@@ -6,31 +6,31 @@ stack-trace internals.
 """
 
 
-class FuzzyAIError(Exception):
-    """Base class for all FuzzyAI errors."""
+class ProbvenanceError(Exception):
+    """Base class for all Probvenance errors."""
 
 
-class InvalidDecisionError(FuzzyAIError):
+class InvalidDecisionError(ProbvenanceError):
     """A decision spec, plan, or evidence structure is invalid."""
 
 
-class InvalidProbabilityError(FuzzyAIError):
+class InvalidProbabilityError(ProbvenanceError):
     """A probability, certainty, or evidence numeric value is invalid."""
 
 
-class UnsupportedCapabilityError(FuzzyAIError):
+class UnsupportedCapabilityError(ProbvenanceError):
     """A backend cannot satisfy a required capability."""
 
 
-class FingerprintError(FuzzyAIError):
+class FingerprintError(ProbvenanceError):
     """A value is not deterministically serializable (JSON-incompatible)."""
 
 
-class UnsupportedDecisionError(FuzzyAIError):
+class UnsupportedDecisionError(ProbvenanceError):
     """A compiler or runtime does not support this decision type."""
 
 
-class UnsupportedAssemblerError(FuzzyAIError):
+class UnsupportedAssemblerError(ProbvenanceError):
     """No probability assembler matches a plan's declared assembler identity.
 
     The runtime executes only an implementation whose strategy, assembler id,
@@ -38,7 +38,7 @@ class UnsupportedAssemblerError(FuzzyAIError):
     """
 
 
-class ScoringLabelError(FuzzyAIError):
+class ScoringLabelError(ProbvenanceError):
     """A scoring label cannot be resolved to exactly one distinct scoring token."""
 
 

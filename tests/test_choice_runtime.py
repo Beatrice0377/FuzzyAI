@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from fuzzyai import (
+from probvenance import (
     Backend,
     BackendCapabilities,
     BoolDecision,
@@ -20,9 +20,9 @@ from fuzzyai import (
     ChoiceScoringDiagnostics,
     Evaluation,
     EvidenceKind,
-    FuzzyAI,
     InferencePlan,
     InvalidDecisionError,
+    Probvenance,
     RawEvidence,
     UnsupportedCapabilityError,
     UnsupportedDecisionError,
@@ -103,9 +103,9 @@ class CountingBackend(FakeCategoricalBackend):
 
 def make_runtime(
     backend: FakeCategoricalBackend | None = None,
-) -> tuple[FuzzyAI, FakeCategoricalBackend]:
+) -> tuple[Probvenance, FakeCategoricalBackend]:
     active_backend = backend if backend is not None else FakeCategoricalBackend()
-    return FuzzyAI(backend=active_backend), active_backend
+    return Probvenance(backend=active_backend), active_backend
 
 
 def make_decision() -> ChoiceDecision:
@@ -156,7 +156,7 @@ class TestChoiceEndToEnd:
 
     def test_exactly_one_forward_pass(self) -> None:
         backend = CountingBackend()
-        runtime = FuzzyAI(backend=backend)
+        runtime = Probvenance(backend=backend)
         runtime.evaluate_with_trace(make_decision())
         assert backend.forward_passes == 1
 
@@ -208,7 +208,7 @@ class TestChoiceDispatchRejections:
     def test_choice_compiler_injection_used(self) -> None:
         backend = FakeCategoricalBackend()
         compiler = ChoiceCompiler()
-        runtime = FuzzyAI(backend=backend, choice_compiler=compiler)
+        runtime = Probvenance(backend=backend, choice_compiler=compiler)
         assert runtime.choice_compiler is compiler
         runtime.evaluate_with_trace(make_decision())
         assert backend.executed_plans
@@ -234,7 +234,7 @@ class TestChoiceLineage:
             )
 
         backend.execute = execute_with_foreign_lineage
-        runtime = FuzzyAI(backend=backend)
+        runtime = Probvenance(backend=backend)
         with pytest.raises(InvalidDecisionError, match="plan_fingerprint"):
             runtime.evaluate_with_trace(make_decision())
 

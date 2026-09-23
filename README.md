@@ -1,20 +1,20 @@
 **English** | [简体中文](README.zh-CN.md)
 
-# FuzzyAI
+# Probvenance
 
 **Status: early development.** The deterministic core, a Bool vertical slice
 with a real local Hugging Face backend, and direct categorical Choice inference
 for the closed-set, single-label, single-token scoring path are implemented.
 Calibration, abstention, and every other Choice strategy are not.
 
-FuzzyAI is a provider-agnostic probabilistic decision runtime. It turns language
+Probvenance is a provider-agnostic probabilistic decision runtime. It turns language
 models into evaluable, calibratable, trackable semantic-probability decision
 components.
 
 The problem: LLMs get wired into program logic as if a raw text blob or an
 unexamined score were a trustworthy probability. Systems end up unable to say
 what a score means, unable to reproduce a past decision, and unable to separate
-"the model was unsure" from "the program should decline to act". FuzzyAI puts a
+"the model was unsure" from "the program should decline to act". Probvenance puts a
 narrow, deterministic core under that space.
 
 It is not a chat framework, not an agent framework, and not merely a
@@ -27,7 +27,7 @@ structured-output wrapper.
 ## Currently working: the Bool and Choice vertical slices
 
 Two end-to-end paths exist today: the Bool slice and the experimental direct
-categorical Choice slice. A thin `FuzzyAI` facade orchestrates each pipeline in
+categorical Choice slice. A thin `Probvenance` facade orchestrates each pipeline in
 a fixed order and adds no fallbacks of its own. Since Phase 2A.1 the Bool slice
 also reports scoring-validity diagnostics and an execution fingerprint on every
 trace:
@@ -45,16 +45,16 @@ uv sync --extra transformers    # group: torch>=2.7, transformers>=4.53
 ```
 
 ```python
-from fuzzyai import BoolDecision
-from fuzzyai.backends.transformers import TransformersBackend
-from fuzzyai.runtime import FuzzyAI
+from probvenance import BoolDecision
+from probvenance.backends.transformers import TransformersBackend
+from probvenance.runtime import Probvenance
 
 backend = TransformersBackend(
     "Qwen/Qwen3-0.6B",  # a local HF causal LM
     # Qwen3 starts a reasoning block first otherwise; see the note below.
     chat_template_kwargs={"enable_thinking": False},
 )
-ai = FuzzyAI(backend=backend)
+ai = Probvenance(backend=backend)
 
 evaluation = ai.evaluate_with_trace(
     BoolDecision(
@@ -162,7 +162,7 @@ record lives in
 [experiments/semantic_signal/REPORT.md](experiments/semantic_signal/REPORT.md):
 an experiment record, not a capability claim and not a benchmark. One
 concrete outcome of the round was a diagnostics fix: the overshoot clamp in
-`src/fuzzyai/diagnostics.py` is now a relative tolerance (see
+`src/probvenance/diagnostics.py` is now a relative tolerance (see
 [docs/claims.md](docs/claims.md)).
 
 ## Planned API (not implemented)
@@ -212,7 +212,7 @@ The Phase 1 deterministic core:
 - `BackendCapabilities` (explicit data) and the narrow `Backend` Protocol
 - `InferencePlan` and `RawEvidence` abstractions
 - The deterministic fingerprint system (canonical JSON + SHA-256)
-- The error taxonomy rooted at `FuzzyAIError`
+- The error taxonomy rooted at `ProbvenanceError`
 
 The Phase 2A Bool path:
 
@@ -222,7 +222,7 @@ The Phase 2A Bool path:
 - `TransformersBackend` (optional `transformers` extra, logits only)
 - `DecisionTrace` / `build_decision_trace` (its `trace_id` is never derived
   from a fingerprint)
-- The thin `FuzzyAI` / `Evaluation` facade
+- The thin `Probvenance` / `Evaluation` facade
 
 The Phase 2A.1 scoring-validity increment:
 
@@ -237,7 +237,7 @@ BoolDecision --(BoolCompiler)--> InferencePlan --(TransformersBackend)--> RawEvi
                                                                              |
                               assemble_bool_probability     (calibration: still future)
                                                                              v
-                                                BoolResult + DecisionTrace (via FuzzyAI)
+                                                BoolResult + DecisionTrace (via Probvenance)
 ```
 
 The Phase 2B direct categorical Choice path:
@@ -258,7 +258,7 @@ ChoiceDecision --(ChoiceCompiler)--> InferencePlan --(TransformersBackend)--> Ra
                                                                                  |
                         assemble_choice_probability    (calibration: still future)
                                                                                  v
-                                             ChoiceResult + DecisionTrace (via FuzzyAI)
+                                             ChoiceResult + DecisionTrace (via Probvenance)
 ```
 
 This path is experimental. It is closed-set, assumes the caller supplies

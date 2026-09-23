@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from fuzzyai import (
+from probvenance import (
     BoolResult,
     Certainty,
     ChoiceResult,

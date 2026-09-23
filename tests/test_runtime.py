@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from fuzzyai import (
+from probvenance import (
     BINARY_DOCTRINE_ID,
     BINARY_EVIDENCE_LABELS,
     Backend,
@@ -22,9 +22,9 @@ from fuzzyai import (
     DecisionTrace,
     Evaluation,
     EvidenceKind,
-    FuzzyAI,
     InferencePlan,
     InvalidDecisionError,
+    Probvenance,
     RawEvidence,
     ScoringDiagnostics,
     UnsupportedCapabilityError,
@@ -82,9 +82,9 @@ class FakeBackend:
         )
 
 
-def make_runtime(**backend_kwargs: Any) -> tuple[FuzzyAI, FakeBackend]:
+def make_runtime(**backend_kwargs: Any) -> tuple[Probvenance, FakeBackend]:
     backend = FakeBackend(**backend_kwargs)
-    return FuzzyAI(backend=backend), backend
+    return Probvenance(backend=backend), backend
 
 
 def make_decision() -> BoolDecision:
@@ -194,12 +194,12 @@ class TestEndToEnd:
 
     def test_capture_rendered_input_flag_gates_capture(self) -> None:
         backend = FakeBackend()
-        runtime = FuzzyAI(backend=backend, capture_rendered_input=True)
+        runtime = Probvenance(backend=backend, capture_rendered_input=True)
         evaluation = runtime.evaluate_with_trace(make_decision())
         assert evaluation.trace.rendered_input is None
 
         metadata_backend = FakeBackendWithRenderedInput()
-        capturing = FuzzyAI(backend=metadata_backend, capture_rendered_input=True)
+        capturing = Probvenance(backend=metadata_backend, capture_rendered_input=True)
         captured = capturing.evaluate_with_trace(make_decision())
         assert captured.trace.rendered_input == "RENDERED PROMPT"
 
@@ -268,7 +268,7 @@ class TestFacadeProperties:
     def test_custom_compiler_used(self) -> None:
         compiler = BoolCompiler(positive_verbalizer="affirm", negative_verbalizer="deny")
         backend = FakeBackend()
-        runtime = FuzzyAI(backend=backend, compiler=compiler)
+        runtime = Probvenance(backend=backend, compiler=compiler)
         assert runtime.compiler is compiler
         evaluation = runtime.evaluate_with_trace(make_decision())
         assert evaluation.trace.positive_verbalizer == "affirm"

@@ -1,15 +1,15 @@
-"""Tests for the public API surface of the fuzzyai package."""
+"""Tests for the public API surface of the probvenance package."""
 
-import fuzzyai
+import probvenance
 
 
 def test_import_works() -> None:
-    assert fuzzyai.__name__ == "fuzzyai"
+    assert probvenance.__name__ == "probvenance"
 
 
 def test_all_names_exist_on_module() -> None:
-    for name in fuzzyai.__all__:
-        assert hasattr(fuzzyai, name), f"missing public name: {name}"
+    for name in probvenance.__all__:
+        assert hasattr(probvenance, name), f"missing public name: {name}"
 
 
 def test_all_is_sorted_and_unique() -> None:
@@ -20,8 +20,8 @@ def test_all_is_sorted_and_unique() -> None:
     def ruf022_key(name: str) -> tuple[bool, bool, str]:
         return (not name.isupper(), name.islower(), name)
 
-    assert fuzzyai.__all__ == sorted(fuzzyai.__all__, key=ruf022_key)
-    assert len(fuzzyai.__all__) == len(set(fuzzyai.__all__))
+    assert probvenance.__all__ == sorted(probvenance.__all__, key=ruf022_key)
+    assert len(probvenance.__all__) == len(set(probvenance.__all__))
 
 
 def test_representative_names_present() -> None:
@@ -44,7 +44,7 @@ def test_representative_names_present() -> None:
         "JSONValue",
         "canonical_json",
         "fingerprint",
-        "FuzzyAIError",
+        "ProbvenanceError",
         "InvalidDecisionError",
         "InvalidProbabilityError",
         "UnsupportedCapabilityError",
@@ -62,7 +62,7 @@ def test_representative_names_present() -> None:
         "DecisionTrace",
         "build_decision_trace",
         "Evaluation",
-        "FuzzyAI",
+        "Probvenance",
         "ScoringDiagnostics",
         "diagnose_bool_evidence",
         "ChoiceCompiler",
@@ -80,12 +80,12 @@ def test_representative_names_present() -> None:
         "scoring_label_mass",
         "diagnose_choice_evidence",
     }
-    assert expected <= set(fuzzyai.__all__)
+    assert expected <= set(probvenance.__all__)
 
 
 def test_renamed_scoring_label_names_present() -> None:
-    assert "scoring_label_mass" in fuzzyai.__all__
-    assert callable(fuzzyai.scoring_label_mass)
+    assert "scoring_label_mass" in probvenance.__all__
+    assert callable(probvenance.scoring_label_mass)
 
 
 def test_old_candidate_mass_names_gone() -> None:
@@ -93,18 +93,18 @@ def test_old_candidate_mass_names_gone() -> None:
     # candidate_token_probabilities -> scoring_label_token_probabilities:
     # the old names measure protocol adherence, not candidate coverage, and
     # must not linger on the public surface in any form.
-    assert "candidate_mass" not in fuzzyai.__all__
-    assert "candidate_token_probabilities" not in fuzzyai.__all__
-    assert not hasattr(fuzzyai, "candidate_mass")
-    assert not hasattr(fuzzyai, "candidate_token_probabilities")
+    assert "candidate_mass" not in probvenance.__all__
+    assert "candidate_token_probabilities" not in probvenance.__all__
+    assert not hasattr(probvenance, "candidate_mass")
+    assert not hasattr(probvenance, "candidate_token_probabilities")
 
 
 def test_no_internal_helpers_exported() -> None:
-    for name in fuzzyai.__all__:
+    for name in probvenance.__all__:
         assert not name.startswith("_")
     # Internal helpers must not be part of the public surface.
     for internal in ("_canonicalize", "_validate_distribution", "_normalize_choices"):
-        assert internal not in fuzzyai.__all__
+        assert internal not in probvenance.__all__
 
 
 def test_internal_diagnostic_helpers_not_exported() -> None:
@@ -114,22 +114,22 @@ def test_internal_diagnostic_helpers_not_exported() -> None:
         "full_vocab_probability",
         "_logaddexp",
     ):
-        assert internal not in fuzzyai.__all__
+        assert internal not in probvenance.__all__
 
 
 def test_exception_hierarchy() -> None:
-    assert issubclass(fuzzyai.InvalidDecisionError, fuzzyai.FuzzyAIError)
-    assert issubclass(fuzzyai.InvalidProbabilityError, fuzzyai.FuzzyAIError)
-    assert issubclass(fuzzyai.UnsupportedCapabilityError, fuzzyai.FuzzyAIError)
-    assert issubclass(fuzzyai.FingerprintError, fuzzyai.FuzzyAIError)
-    assert issubclass(fuzzyai.UnsupportedDecisionError, fuzzyai.FuzzyAIError)
-    assert issubclass(fuzzyai.ScoringLabelError, fuzzyai.FuzzyAIError)
-    assert issubclass(fuzzyai.VerbalizerError, fuzzyai.ScoringLabelError)
-    assert issubclass(fuzzyai.FuzzyAIError, Exception)
+    assert issubclass(probvenance.InvalidDecisionError, probvenance.ProbvenanceError)
+    assert issubclass(probvenance.InvalidProbabilityError, probvenance.ProbvenanceError)
+    assert issubclass(probvenance.UnsupportedCapabilityError, probvenance.ProbvenanceError)
+    assert issubclass(probvenance.FingerprintError, probvenance.ProbvenanceError)
+    assert issubclass(probvenance.UnsupportedDecisionError, probvenance.ProbvenanceError)
+    assert issubclass(probvenance.ScoringLabelError, probvenance.ProbvenanceError)
+    assert issubclass(probvenance.VerbalizerError, probvenance.ScoringLabelError)
+    assert issubclass(probvenance.ProbvenanceError, Exception)
 
 
 def test_scoring_label_error_is_verbalizer_compatible() -> None:
     # Existing `except VerbalizerError` handlers keep working after the
     # re-parenting, and the new categorical error is catchable through it.
-    assert isinstance(fuzzyai.VerbalizerError("v"), fuzzyai.ScoringLabelError)
-    assert isinstance(fuzzyai.ScoringLabelError("s"), fuzzyai.FuzzyAIError)
+    assert isinstance(probvenance.VerbalizerError("v"), probvenance.ScoringLabelError)
+    assert isinstance(probvenance.ScoringLabelError("s"), probvenance.ProbvenanceError)

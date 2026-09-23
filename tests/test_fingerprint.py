@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from fuzzyai import FingerprintError, JSONValue, canonical_json, fingerprint
+from probvenance import FingerprintError, JSONValue, canonical_json, fingerprint
 
 
 class TestCanonicalJson:

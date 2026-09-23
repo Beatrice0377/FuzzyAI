@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from fuzzyai import BackendCapabilities
+from probvenance import BackendCapabilities
 
 
 # INV-14: capabilities are explicit declared data, never hasattr probes.

@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from fuzzyai import (
+from probvenance import (
     BINARY_EVIDENCE_LABELS,
     PLAN_FINGERPRINT_VERSION,
     DecisionTrace,
@@ -20,8 +20,8 @@ from fuzzyai import (
     build_decision_trace,
     fingerprint,
 )
-from fuzzyai.assembler import BINARY_ASSEMBLER_ID, BINARY_ASSEMBLER_VERSION
-from fuzzyai.compiler import BINARY_COMPILER_ID, BINARY_COMPILER_VERSION
+from probvenance.assembler import BINARY_ASSEMBLER_ID, BINARY_ASSEMBLER_VERSION
+from probvenance.compiler import BINARY_COMPILER_ID, BINARY_COMPILER_VERSION
 
 TIMESTAMP = "2026-01-01T00:00:00+00:00"
 
@@ -78,7 +78,7 @@ def make_result(evidence: RawEvidence, trace_id: str | None = "trace-1"):
 
 
 def make_diagnostics(evidence: RawEvidence) -> ScoringDiagnostics:
-    from fuzzyai import diagnose_bool_evidence
+    from probvenance import diagnose_bool_evidence
 
     return diagnose_bool_evidence(evidence)
 

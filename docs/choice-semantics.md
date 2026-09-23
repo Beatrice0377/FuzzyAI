@@ -76,7 +76,7 @@ different scoring representation
 = different uncalibrated distribution
 ```
 
-FuzzyAI's job is to record that difference, not to hide it, and never to treat
+Probvenance's job is to record that difference, not to hide it, and never to treat
 numbers produced under different plans as automatically comparable.
 
 ### Layer boundary: single-run diagnostics versus cross-run metrics
@@ -373,7 +373,7 @@ artifact, not now.
 
 ## 6. Candidate-label mapping contract
 
-Implemented shape (see `CandidateLabelMapping` in `src/fuzzyai/plans.py`):
+Implemented shape (see `CandidateLabelMapping` in `src/probvenance/plans.py`):
 
 ```text
 CandidateLabelMapping:

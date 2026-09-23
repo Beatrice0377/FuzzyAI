@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from fuzzyai import (
+from probvenance import (
     PLAN_FINGERPRINT_VERSION,
     Backend,
     BackendCapabilities,
@@ -17,13 +17,13 @@ from fuzzyai import (
     RawEvidence,
     ScoringStrategy,
 )
-from fuzzyai.assembler import (
+from probvenance.assembler import (
     BINARY_ASSEMBLER_ID,
     BINARY_ASSEMBLER_VERSION,
     CATEGORICAL_ASSEMBLER_ID,
     CATEGORICAL_ASSEMBLER_VERSION,
 )
-from fuzzyai.compiler import (
+from probvenance.compiler import (
     BINARY_COMPILER_ID,
     BINARY_COMPILER_VERSION,
     CATEGORICAL_COMPILER_ID,
@@ -186,7 +186,9 @@ class TestPlanFingerprintVersion:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         before = make_plan().fingerprint
-        monkeypatch.setattr("fuzzyai.plans.PLAN_FINGERPRINT_VERSION", PLAN_FINGERPRINT_VERSION + 1)
+        monkeypatch.setattr(
+            "probvenance.plans.PLAN_FINGERPRINT_VERSION", PLAN_FINGERPRINT_VERSION + 1
+        )
         assert make_plan().fingerprint != before
 
 

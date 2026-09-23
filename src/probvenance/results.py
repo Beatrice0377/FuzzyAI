@@ -9,7 +9,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from fuzzyai.errors import InvalidProbabilityError
+from probvenance.errors import InvalidProbabilityError
 
 _SUM_TOLERANCE = 1e-9
 
@@ -175,7 +175,7 @@ class DecisionResult:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class BoolResult(DecisionResult):
-    """Outcome of a :class:`~fuzzyai.decisions.BoolDecision`."""
+    """Outcome of a :class:`~probvenance.decisions.BoolDecision`."""
 
     probability_true: float
 
@@ -208,7 +208,7 @@ class BoolResult(DecisionResult):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ChoiceResult(DecisionResult):
-    """Outcome of a :class:`~fuzzyai.decisions.ChoiceDecision`.
+    """Outcome of a :class:`~probvenance.decisions.ChoiceDecision`.
 
     ``probabilities`` is a read-only snapshot: a plain ``dict`` deep-copied at
     construction, preserving the given key order. Key order is

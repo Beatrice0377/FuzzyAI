@@ -21,16 +21,16 @@ registry, no plugin loading, and no fallback.
 import math
 from collections.abc import Callable, Mapping
 
-from fuzzyai.diagnostics import (
+from probvenance.diagnostics import (
     BINARY_EVIDENCE_LABELS,
     ChoiceScoringDiagnostics,
     ScoringDiagnostics,
     diagnose_bool_evidence,
     diagnose_choice_evidence,
 )
-from fuzzyai.errors import InvalidDecisionError, UnsupportedAssemblerError
-from fuzzyai.plans import EvidenceKind, InferencePlan, RawEvidence, ScoringStrategy
-from fuzzyai.results import BoolResult, Certainty, ChoiceResult
+from probvenance.errors import InvalidDecisionError, UnsupportedAssemblerError
+from probvenance.plans import EvidenceKind, InferencePlan, RawEvidence, ScoringStrategy
+from probvenance.results import BoolResult, Certainty, ChoiceResult
 
 BINARY_ASSEMBLER_ID = "binary-restricted-softmax"
 CATEGORICAL_ASSEMBLER_ID = "categorical-restricted-softmax"
@@ -45,7 +45,7 @@ def assemble_bool_probability(
     method: str = ScoringStrategy.BINARY_TOKEN_LOGITS.value,
 ) -> BoolResult:
     """Convert binary token-logit evidence into an uncalibrated
-    :class:`~fuzzyai.results.BoolResult`.
+    :class:`~probvenance.results.BoolResult`.
 
     The probability of ``True`` is the stable softmax over the two logits,
     which equals ``sigmoid(l_true - l_false)``. Extreme logits (e.g.
@@ -93,7 +93,7 @@ def assemble_choice_probability(
     method: str = ScoringStrategy.CATEGORICAL_TOKEN_LOGITS.value,
 ) -> tuple[ChoiceResult, ChoiceScoringDiagnostics]:
     """Convert categorical token-logit evidence into an uncalibrated
-    :class:`~fuzzyai.results.ChoiceResult` plus its scoring diagnostics.
+    :class:`~probvenance.results.ChoiceResult` plus its scoring diagnostics.
 
     The label-space probabilities are the stable N-way softmax over the
     candidate logits: ``p_i = exp(l_i - m) / sum_j exp(l_j - m)`` with

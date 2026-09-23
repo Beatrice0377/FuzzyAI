@@ -108,7 +108,7 @@ models, and never need a GPU.
 - `[V]` `DecisionTrace.trace_id` is never derived from any fingerprint.
   Evidence:
   `tests/test_trace.py::TestTraceIdProvenance::test_trace_id_is_not_any_fingerprint`.
-- `[V]` The `FuzzyAI` facade composes compile, execute, assemble, and trace in
+- `[V]` The `Probvenance` facade composes compile, execute, assemble, and trace in
   a fixed order and rejects evidence whose plan fingerprint does not match the
   plan it came from. Evidence:
   `tests/test_runtime.py::TestEndToEnd::test_evaluate_with_trace_full_pipeline`,
@@ -182,7 +182,7 @@ models, and never need a GPU.
   float32 overshoot `1.8553912184415822e-07` that the previous absolute `1e-9`
   bound wrongly rejected), and
   `::test_materially_inconsistent_normalizer_is_rejected`. The claim covers
-  the deterministic clamp logic in `src/fuzzyai/diagnostics.py` only; it says
+  the deterministic clamp logic in `src/probvenance/diagnostics.py` only; it says
   nothing about any model.
 
 ### Direct categorical Choice (Phase 2B)
@@ -263,7 +263,7 @@ models, and never need a GPU.
   included in the v4 plan fingerprint, and surfaced on the trace and its
   `to_dict()`. Evidence: `tests/test_plans.py::TestPlanProvenance`. The decision
   fingerprint is unaffected by construction rather than by test:
-  `src/fuzzyai/decisions.py` never reads provenance, and both decision payloads
+  `src/probvenance/decisions.py` never reads provenance, and both decision payloads
   remain v1 with no provenance keys.
 
 ### Execution-verified assembler provenance (Phase 2C.1)
@@ -364,7 +364,7 @@ them generalises to other models, revisions, prompts, or tasks.
   and no probe was auto-rejected. `verbalizer_mass` is the full-vocabulary mass
   on the two declared candidate tokens; "low-mass" below means
   `verbalizer_mass < 0.5`, which is an experimental analysis cutoff used only
-  to group these results, not a FuzzyAI threshold or API contract. Observed
+  to group these results, not a Probvenance threshold or API contract. Observed
   under exactly these conditions, generalising to none of them:
 
   - Scoring-position health: `LFM2.5-1.2B-Instruct` leaves the decision
@@ -411,7 +411,7 @@ them generalises to other models, revisions, prompts, or tasks.
     0.9770), while MiniCPM5-2B (0.0067, 0.2689, 0.8670, 0.0097) and
     Qwen3.5-2B (0.0373, 0.5622, 0.9149, 0.0474) followed the evidence. This
     is an observation about three small models on four probes. It is NOT a
-    prompt-injection safety claim, and FuzzyAI makes no such claim anywhere.
+    prompt-injection safety claim, and Probvenance makes no such claim anywhere.
   - Choice-readiness gate (report section 10), assessed per model: against
     the stated criteria the gate is met by a specific named configuration
     (MiniCPM5-2B or Qwen3.5-2B, `yes_no` or `true_false`, with a doctrine
@@ -427,7 +427,7 @@ them generalises to other models, revisions, prompts, or tasks.
   was absolute (`1e-9`), while a float32 logsumexp over a 130k-token
   vocabulary carries rounding error proportional to its own magnitude, so the
   bound sat below the noise floor. Fix: a relative tolerance (`1e-6` scaled
-  by the operand magnitude) in `src/fuzzyai/diagnostics.py`, keeping the
+  by the operand magnitude) in `src/probvenance/diagnostics.py`, keeping the
   material-inconsistency rejection (tests cited under Verified claims). All
   three sweeps were re-run: 2160 `ok` records each, and every previously-`ok`
   record is bit-identical (2128 for LFM, 2130 for MiniCPM, all 2160 for

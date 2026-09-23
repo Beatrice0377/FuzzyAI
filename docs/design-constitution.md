@@ -1,10 +1,10 @@
-# FuzzyAI Design Constitution
+# Probvenance Design Constitution
 
 Status: **early development**. The Bool vertical slice and an experimental
 direct categorical Choice slice are implemented; calibration is still future.
 
 This is the highest-level, longest-lived document in the repository. It is the
-binding design constraint for all future work in FuzzyAI. Code, tests, docs, and
+binding design constraint for all future work in Probvenance. Code, tests, docs, and
 APIs that contradict this constitution are wrong, even if they pass review. When
 a future change alters a rule here, this document must be amended first.
 
@@ -12,7 +12,7 @@ a future change alters a rule here, this document must be amended first.
 
 ## 1. Purpose and Core Principle
 
-FuzzyAI is a **provider-agnostic probabilistic decision runtime**. It turns
+Probvenance is a **provider-agnostic probabilistic decision runtime**. It turns
 language models into decision components whose outputs are evaluable,
 calibratable, and trackable as semantic probabilities.
 
@@ -20,20 +20,20 @@ The problem it addresses: LLMs are routinely wired into program logic as if a
 raw text blob or an unexamined score were a trustworthy probability. The result
 is systems that cannot say what a score means, cannot reproduce a past decision,
 and cannot separate "the model was unsure" from "the program should decline to
-act". FuzzyAI gives that space a narrow, deterministic core.
+act". Probvenance gives that space a narrow, deterministic core.
 
 The core principle, stated once and enforced everywhere:
 
 > **The LLM handles semantic uncertainty. The program handles deterministic policy.**
 
-FuzzyAI is NOT:
+Probvenance is NOT:
 
 - a chat framework,
 - an agent framework,
 - merely a structured-output wrapper.
 
 If a proposed feature fits one of those descriptions better than the
-description above, it does not belong in FuzzyAI.
+description above, it does not belong in Probvenance.
 
 ---
 
@@ -57,7 +57,7 @@ distribution by up to 0.31 and 0.57 total variation on two model families
 (Phase 2B and Phase 2B.1, `experiments/choice_signal/REPORT.md`). A probability
 therefore has plan-relative semantics: the same decision compiled into a
 different scoring representation is a different plan, and its numbers are not
-automatically comparable with the original. FuzzyAI records that difference
+automatically comparable with the original. Probvenance records that difference
 rather than hiding it.
 
 **What it is NOT:** a probability is not automatically a real-world correctness
@@ -400,7 +400,7 @@ The layering below is the proven design. Phase 2A wired the Bool path
 end-to-end: `BoolCompiler`, `TransformersBackend` (optional extra), and
 `assemble_bool_probability` and `assemble_choice_probability` now connect
 `BoolDecision` and `ChoiceDecision` to their results plus a `DecisionTrace`,
-under the `FuzzyAI` facade. Assembler selection is execution-truthful: the
+under the `Probvenance` facade. Assembler selection is execution-truthful: the
 facade runs only the implementation named by the plan's
 `(strategy, assembler_id, assembler_version)` declaration and rejects a plan
 that names no known implementation, so a recorded `assembler_id` cannot
@@ -479,15 +479,15 @@ Phase 1 defines ONLY the `BoolDecision` and `ChoiceDecision` primitives;
 
 Phase 2A added the first real inference path (Bool): `ScoringDoctrine` and
 `BINARY_SEMANTIC_JUDGMENT_V1`, `BoolCompiler`, `assemble_bool_probability`,
-`DecisionTrace` / `build_decision_trace`, the `FuzzyAI` / `Evaluation` facade,
+`DecisionTrace` / `build_decision_trace`, the `Probvenance` / `Evaluation` facade,
 and the optional-extra `TransformersBackend` (imported from
-`fuzzyai.backends.transformers`, not re-exported from the package root). Phase
+`probvenance.backends.transformers`, not re-exported from the package root). Phase
 2B added the experimental direct categorical Choice path (`ChoiceCompiler`,
 `CATEGORICAL_SEMANTIC_JUDGMENT_V1`, `assemble_choice_probability`,
 `ChoiceScoringDiagnostics`), and Phase 2C.0 added compiler and assembler
 provenance to plans and traces. The error taxonomy gains
 `UnsupportedDecisionError`, `ScoringLabelError`, and `VerbalizerError` as
-further `FuzzyAIError` subclasses. Calibration and abstention remain
+further `ProbvenanceError` subclasses. Calibration and abstention remain
 unimplemented.
 
 Public API (Phase 1 core):
@@ -499,7 +499,7 @@ normalized_entropy, probability_margin,
 BackendCapabilities, Backend,
 InferencePlan, ScoringStrategy, RawEvidence, EvidenceKind,
 JSONValue, canonical_json, fingerprint,
-FuzzyAIError, InvalidDecisionError, InvalidProbabilityError,
+ProbvenanceError, InvalidDecisionError, InvalidProbabilityError,
 UnsupportedCapabilityError, FingerprintError
 ```
 
@@ -507,7 +507,7 @@ Fingerprint API surface: `canonical_json(value)`, `fingerprint(value)`,
 `BoolDecision.fingerprint`, `ChoiceDecision.fingerprint`, and
 `InferencePlan.fingerprint`.
 
-Error taxonomy: `FuzzyAIError` is the base; `InvalidDecisionError`,
+Error taxonomy: `ProbvenanceError` is the base; `InvalidDecisionError`,
 `InvalidProbabilityError`, `UnsupportedCapabilityError`, and `FingerprintError`
 are its Phase 1 subclasses.
 
@@ -540,7 +540,7 @@ replayable execution snapshot. It records what is needed to interpret and compar
 an execution, but it does not snapshot backend or tokenizer code, so strict
 replayability remains an open question (section 8).
 
-Phase 2A and 2A.1 public API additions on top of the Phase 1 core: `FuzzyAI`,
+Phase 2A and 2A.1 public API additions on top of the Phase 1 core: `Probvenance`,
 `Evaluation`, `BoolCompiler`, `ScoringDoctrine`, `DecisionTrace`,
 `ScoringDiagnostics`, `diagnose_bool_evidence`, `UnsupportedDecisionError`,
 `VerbalizerError`, and `TransformersBackend` (optional `transformers` extra).
@@ -570,7 +570,7 @@ Consequences:
   decision based on a threshold nobody configured. Silent behavior change is a
   semantics change (see INV-15).
 - Thresholds, risk tolerance, and escalation paths are application concerns.
-  FuzzyAI may later ship policy primitives (Phase 5), but they will be explicit
+  Probvenance may later ship policy primitives (Phase 5), but they will be explicit
   objects, never hidden defaults inside the model path.
 - "The model was unsure" and "the program declined to act" are different events
   and must remain representable separately.

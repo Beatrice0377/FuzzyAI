@@ -12,7 +12,7 @@ verbalizer resolution, scoring, diagnostics and provenance all run through the
 real ``TransformersBackend`` code path; only checkpoint loading differs.
 
 This is a checkpoint adaptation and therefore belongs to the experiment
-harness, not to ``src/fuzzyai``.
+harness, not to ``src/probvenance``.
 """
 
 from __future__ import annotations
@@ -26,9 +26,9 @@ from huggingface_hub import snapshot_download
 from safetensors.torch import load_file
 from transformers import AutoConfig, AutoTokenizer, Qwen3_5ForCausalLM
 
-from fuzzyai.backends.transformers import _ALLOWED_DTYPES, TransformersBackend
-from fuzzyai.backends.verbalizers import VerbalizerTokens
-from fuzzyai.fingerprint import JSONValue, canonical_json
+from probvenance.backends.transformers import _ALLOWED_DTYPES, TransformersBackend
+from probvenance.backends.verbalizers import VerbalizerTokens
+from probvenance.fingerprint import JSONValue, canonical_json
 
 TEXT_TOWER_PREFIX = "model.language_model."
 NON_TEXT_PREFIXES = ("model.visual.", "mtp.")

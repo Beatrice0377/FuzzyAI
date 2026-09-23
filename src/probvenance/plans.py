@@ -6,7 +6,7 @@ provider-specific fields (no temperatures, no HTTP parameters, no vendor
 options) — those belong to future backend configuration.
 
 :class:`RawEvidence` is model output BEFORE conversion to a
-:class:`~fuzzyai.results.DecisionResult`. It is explicitly NOT a probability
+:class:`~probvenance.results.DecisionResult`. It is explicitly NOT a probability
 and NOT a calibrated probability.
 """
 
@@ -15,9 +15,9 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 
-from fuzzyai.capabilities import BackendCapabilities
-from fuzzyai.errors import InvalidDecisionError, InvalidProbabilityError
-from fuzzyai.fingerprint import JSONValue, canonical_json, fingerprint
+from probvenance.capabilities import BackendCapabilities
+from probvenance.errors import InvalidDecisionError, InvalidProbabilityError
+from probvenance.fingerprint import JSONValue, canonical_json, fingerprint
 
 
 class ScoringStrategy(StrEnum):

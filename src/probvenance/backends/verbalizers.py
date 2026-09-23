@@ -22,8 +22,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
-from fuzzyai.errors import ScoringLabelError, VerbalizerError
-from fuzzyai.fingerprint import JSONValue
+from probvenance.errors import ScoringLabelError, VerbalizerError
+from probvenance.fingerprint import JSONValue
 
 
 class TokenizedText(Protocol):
@@ -88,7 +88,7 @@ def _validate_template_kwargs(
         if key in _RESERVED_TEMPLATE_KWARGS:
             raise VerbalizerError(
                 f"template_kwargs contains reserved key {key!r}, which would conflict "
-                f"with the chat-template call FuzzyAI controls; remove it. "
+                f"with the chat-template call Probvenance controls; remove it. "
                 f"Reserved keys: {', '.join(sorted(_RESERVED_TEMPLATE_KWARGS))}"
             )
     return kwargs
@@ -107,7 +107,7 @@ def render_input_text(
     caller can control template-specific rendering modes (e.g. a thinking
     model's reasoning-mode flag). Unknown keys are NOT validated: they are the
     template's business. Reserved keys that would collide with this helper's
-    own arguments raise :class:`~fuzzyai.errors.VerbalizerError`. On the
+    own arguments raise :class:`~probvenance.errors.VerbalizerError`. On the
     plain-concatenation fallback (no chat template) ``template_kwargs`` is
     ignored.
 
@@ -240,7 +240,7 @@ def resolve_verbalizers(
     :func:`resolve_exact_single_token_continuation`, so each must preserve the
     rendered prefix tokenization exactly and append exactly one token.
 
-    Raises :class:`~fuzzyai.errors.VerbalizerError` for any violation: zero or
+    Raises :class:`~probvenance.errors.VerbalizerError` for any violation: zero or
     multiple added tokens, a retokenized prefix, empty ids, non-int ids, or
     identical positive and negative token ids.
     """

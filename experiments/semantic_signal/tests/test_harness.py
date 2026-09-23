@@ -38,10 +38,10 @@ formulations = _load("formulations")
 run_module = _load("run")
 metrics = _load("metrics")
 
-from fuzzyai import ScoringDoctrine, VerbalizerError  # noqa: E402
-from fuzzyai.compiler import BoolCompiler  # noqa: E402
-from fuzzyai.doctrine import BINARY_SEMANTIC_JUDGMENT_V1  # noqa: E402
-from fuzzyai.fingerprint import fingerprint  # noqa: E402
+from probvenance import ScoringDoctrine, VerbalizerError  # noqa: E402
+from probvenance.compiler import BoolCompiler  # noqa: E402
+from probvenance.doctrine import BINARY_SEMANTIC_JUDGMENT_V1  # noqa: E402
+from probvenance.fingerprint import fingerprint  # noqa: E402
 
 
 class TestCaseSet:

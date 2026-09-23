@@ -11,8 +11,8 @@ structural, not conventional.
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from fuzzyai.errors import InvalidDecisionError
-from fuzzyai.fingerprint import JSONValue, canonical_json, fingerprint
+from probvenance.errors import InvalidDecisionError
+from probvenance.fingerprint import JSONValue, canonical_json, fingerprint
 
 BINARY_DOCTRINE_ID = "binary-semantic-judgment-v1"
 BINARY_DOCTRINE_VERSION = 1

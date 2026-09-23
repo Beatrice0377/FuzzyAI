@@ -14,11 +14,11 @@ snapshot, and no retention mode.
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from fuzzyai.diagnostics import ChoiceScoringDiagnostics, ScoringDiagnostics
-from fuzzyai.errors import InvalidDecisionError
-from fuzzyai.fingerprint import JSONValue, canonical_json, fingerprint
-from fuzzyai.plans import CandidateLabelMapping, InferencePlan, RawEvidence, ScoringStrategy
-from fuzzyai.results import BoolResult, DecisionResult
+from probvenance.diagnostics import ChoiceScoringDiagnostics, ScoringDiagnostics
+from probvenance.errors import InvalidDecisionError
+from probvenance.fingerprint import JSONValue, canonical_json, fingerprint
+from probvenance.plans import CandidateLabelMapping, InferencePlan, RawEvidence, ScoringStrategy
+from probvenance.results import BoolResult, DecisionResult
 
 POSITIVE_TOKEN_ID_KEY = "positive_token_id"
 NEGATIVE_TOKEN_ID_KEY = "negative_token_id"
@@ -55,9 +55,9 @@ def _metadata_int(evidence: RawEvidence, key: str) -> int:
 class DecisionTrace:
     """Immutable provenance record of one evaluated decision.
 
-    ``scoring_diagnostics`` is a :class:`~fuzzyai.diagnostics.ScoringDiagnostics`
+    ``scoring_diagnostics`` is a :class:`~probvenance.diagnostics.ScoringDiagnostics`
     for the binary strategy or a
-    :class:`~fuzzyai.diagnostics.ChoiceScoringDiagnostics` for the categorical
+    :class:`~probvenance.diagnostics.ChoiceScoringDiagnostics` for the categorical
     strategy; consumers must narrow on ``trace.scoring_strategy``.
     ``positive_token_id`` / ``negative_token_id`` are the binary scoring token
     ids (``-1`` when unused); ``resolved_target_token_ids`` carries the

@@ -10,24 +10,24 @@ module is importable only when the optional dependency group is installed:
 from collections.abc import Mapping
 from typing import Any
 
-from fuzzyai.backends.verbalizers import (
+from probvenance.backends.verbalizers import (
     VerbalizerTokens,
     _as_int_ids,
     render_input_text,
     resolve_exact_single_token_continuation,
     resolve_verbalizers,
 )
-from fuzzyai.capabilities import BackendCapabilities
-from fuzzyai.diagnostics import (
+from probvenance.capabilities import BackendCapabilities
+from probvenance.diagnostics import (
     TOP_TOKEN_ID_KEY,
     TOP_TOKEN_LOGIT_KEY,
     TOP_TOKEN_TEXT_KEY,
     VOCAB_LOGSUMEXP_KEY,
     full_vocab_probability,
 )
-from fuzzyai.errors import ScoringLabelError, UnsupportedCapabilityError
-from fuzzyai.fingerprint import JSONValue, canonical_json
-from fuzzyai.plans import EvidenceKind, InferencePlan, RawEvidence, ScoringStrategy
+from probvenance.errors import ScoringLabelError, UnsupportedCapabilityError
+from probvenance.fingerprint import JSONValue, canonical_json
+from probvenance.plans import EvidenceKind, InferencePlan, RawEvidence, ScoringStrategy
 
 try:
     import torch
@@ -35,8 +35,8 @@ try:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 except ImportError as exc:  # pragma: no cover - exercised only without the extra
     raise ImportError(
-        "fuzzyai.backends.transformers requires the optional dependency group: "
-        "install with 'uv sync --extra transformers' (or 'pip install fuzzyai[transformers]')"
+        "probvenance.backends.transformers requires the optional dependency group: "
+        "install with 'uv sync --extra transformers' (or 'pip install probvenance[transformers]')"
     ) from exc
 
 TRANSFORMERS_BACKEND_VERSION = 1

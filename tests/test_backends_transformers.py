@@ -15,14 +15,14 @@ pytest.importorskip("transformers")
 
 import torch
 
-from fuzzyai.assembler import BINARY_ASSEMBLER_ID, BINARY_ASSEMBLER_VERSION
-from fuzzyai.backends.transformers import TRANSFORMERS_BACKEND_VERSION, TransformersBackend
-from fuzzyai.capabilities import BackendCapabilities
-from fuzzyai.compiler import BINARY_COMPILER_ID, BINARY_COMPILER_VERSION
-from fuzzyai.diagnostics import diagnose_bool_evidence
-from fuzzyai.errors import UnsupportedCapabilityError, VerbalizerError
-from fuzzyai.fingerprint import JSONValue
-from fuzzyai.plans import EvidenceKind, InferencePlan, ScoringStrategy
+from probvenance.assembler import BINARY_ASSEMBLER_ID, BINARY_ASSEMBLER_VERSION
+from probvenance.backends.transformers import TRANSFORMERS_BACKEND_VERSION, TransformersBackend
+from probvenance.capabilities import BackendCapabilities
+from probvenance.compiler import BINARY_COMPILER_ID, BINARY_COMPILER_VERSION
+from probvenance.diagnostics import diagnose_bool_evidence
+from probvenance.errors import UnsupportedCapabilityError, VerbalizerError
+from probvenance.fingerprint import JSONValue
+from probvenance.plans import EvidenceKind, InferencePlan, ScoringStrategy
 
 
 class FakeTokenized:
@@ -204,11 +204,11 @@ def backend(monkeypatch: pytest.MonkeyPatch) -> TransformersBackend:
     tokenizer = FakeTokenizer()
     model = FakeModel(tokenizer._vocab)
     monkeypatch.setattr(
-        "fuzzyai.backends.transformers.AutoTokenizer.from_pretrained",
+        "probvenance.backends.transformers.AutoTokenizer.from_pretrained",
         lambda *a, **kw: tokenizer,
     )
     monkeypatch.setattr(
-        "fuzzyai.backends.transformers.AutoModelForCausalLM.from_pretrained",
+        "probvenance.backends.transformers.AutoModelForCausalLM.from_pretrained",
         lambda *a, **kw: model,
     )
     return TransformersBackend("fake/model", device="cpu")
@@ -313,11 +313,11 @@ def test_top_token_text_decode_failure_is_not_fatal(
     tokenizer = FakeTokenizer(decode_raises=True)
     model = FakeModel(tokenizer._vocab)
     monkeypatch.setattr(
-        "fuzzyai.backends.transformers.AutoTokenizer.from_pretrained",
+        "probvenance.backends.transformers.AutoTokenizer.from_pretrained",
         lambda *a, **kw: tokenizer,
     )
     monkeypatch.setattr(
-        "fuzzyai.backends.transformers.AutoModelForCausalLM.from_pretrained",
+        "probvenance.backends.transformers.AutoModelForCausalLM.from_pretrained",
         lambda *a, **kw: model,
     )
     backend = TransformersBackend("fake/model", device="cpu")
@@ -348,11 +348,11 @@ def test_diagnostics_metadata_drives_verbalizer_mass(
     tokenizer = FakeTokenizer()
     model = UniformLogitsModel(tokenizer._vocab)
     monkeypatch.setattr(
-        "fuzzyai.backends.transformers.AutoTokenizer.from_pretrained",
+        "probvenance.backends.transformers.AutoTokenizer.from_pretrained",
         lambda *a, **kw: tokenizer,
     )
     monkeypatch.setattr(
-        "fuzzyai.backends.transformers.AutoModelForCausalLM.from_pretrained",
+        "probvenance.backends.transformers.AutoModelForCausalLM.from_pretrained",
         lambda *a, **kw: model,
     )
     backend = TransformersBackend("fake/model", device="cpu")
@@ -373,11 +373,11 @@ def test_tokenizer_revision_falls_back_to_requested_revision(
     tokenizer.init_kwargs = {}
     model = FakeModel(tokenizer._vocab)
     monkeypatch.setattr(
-        "fuzzyai.backends.transformers.AutoTokenizer.from_pretrained",
+        "probvenance.backends.transformers.AutoTokenizer.from_pretrained",
         lambda *a, **kw: tokenizer,
     )
     monkeypatch.setattr(
-        "fuzzyai.backends.transformers.AutoModelForCausalLM.from_pretrained",
+        "probvenance.backends.transformers.AutoModelForCausalLM.from_pretrained",
         lambda *a, **kw: model,
     )
     backend = TransformersBackend("fake/model", device="cpu", revision="v2.0")
@@ -395,11 +395,11 @@ def test_execute_uses_chat_template_when_tokenizer_has_one(
     tokenizer = FakeTokenizer(chat_template="yes")
     model = FakeModel(tokenizer._vocab)
     monkeypatch.setattr(
-        "fuzzyai.backends.transformers.AutoTokenizer.from_pretrained",
+        "probvenance.backends.transformers.AutoTokenizer.from_pretrained",
         lambda *a, **kw: tokenizer,
     )
     monkeypatch.setattr(
-        "fuzzyai.backends.transformers.AutoModelForCausalLM.from_pretrained",
+        "probvenance.backends.transformers.AutoModelForCausalLM.from_pretrained",
         lambda *a, **kw: model,
     )
     backend = TransformersBackend("fake/model", device="cpu")
@@ -454,11 +454,11 @@ def test_retokenized_prefix_verbalizer_raises_before_forward(
     tokenizer = RetokenizingTokenizer()
     model = FakeModel(tokenizer._vocab)
     monkeypatch.setattr(
-        "fuzzyai.backends.transformers.AutoTokenizer.from_pretrained",
+        "probvenance.backends.transformers.AutoTokenizer.from_pretrained",
         lambda *a, **kw: tokenizer,
     )
     monkeypatch.setattr(
-        "fuzzyai.backends.transformers.AutoModelForCausalLM.from_pretrained",
+        "probvenance.backends.transformers.AutoModelForCausalLM.from_pretrained",
         lambda *a, **kw: model,
     )
     backend = TransformersBackend("fake/model", device="cpu")
@@ -488,11 +488,11 @@ def make_patched_backend(
     tokenizer = FakeTokenizer(chat_template=chat_template)
     model = FakeModel(tokenizer._vocab)
     monkeypatch.setattr(
-        "fuzzyai.backends.transformers.AutoTokenizer.from_pretrained",
+        "probvenance.backends.transformers.AutoTokenizer.from_pretrained",
         lambda *a, **kw: tokenizer,
     )
     monkeypatch.setattr(
-        "fuzzyai.backends.transformers.AutoModelForCausalLM.from_pretrained",
+        "probvenance.backends.transformers.AutoModelForCausalLM.from_pretrained",
         lambda *a, **kw: model,
     )
     backend = TransformersBackend(
@@ -564,14 +564,14 @@ def test_default_device_prefers_cuda_when_available(
     tokenizer = FakeTokenizer()
     model = FakeModel(tokenizer._vocab)
     monkeypatch.setattr(
-        "fuzzyai.backends.transformers.AutoTokenizer.from_pretrained",
+        "probvenance.backends.transformers.AutoTokenizer.from_pretrained",
         lambda *a, **kw: tokenizer,
     )
     monkeypatch.setattr(
-        "fuzzyai.backends.transformers.AutoModelForCausalLM.from_pretrained",
+        "probvenance.backends.transformers.AutoModelForCausalLM.from_pretrained",
         lambda *a, **kw: model,
     )
-    monkeypatch.setattr("fuzzyai.backends.transformers.torch.cuda.is_available", lambda: True)
+    monkeypatch.setattr("probvenance.backends.transformers.torch.cuda.is_available", lambda: True)
     backend = TransformersBackend("fake/model")
     assert backend._device == "cuda"
     assert backend._model.to_calls == ["cuda"]

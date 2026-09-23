@@ -23,8 +23,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from fuzzyai.errors import FingerprintError, InvalidDecisionError
-from fuzzyai.fingerprint import JSONValue, canonical_json, fingerprint
+from probvenance.errors import FingerprintError, InvalidDecisionError
+from probvenance.fingerprint import JSONValue, canonical_json, fingerprint
 
 
 def _require_non_empty_str(value: Any, field_name: str) -> str:

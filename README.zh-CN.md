@@ -1,12 +1,12 @@
 [English](README.md) | **简体中文**
 
-# FuzzyAI
+# Probvenance
 
 **状态：早期开发阶段（Status: early development）。** 确定性内核（deterministic core）、Bool 垂直切片（vertical slice，真实本地 Hugging Face 后端），以及 direct categorical Choice 推理（仅限 closed-set、single-label、single-token 打分标签路径）均已实现。校准（calibration）、弃权（abstention）与其他所有 Choice 策略尚未实现。
 
-FuzzyAI 是一个 provider-agnostic（供应商无关）的概率决策运行时（probabilistic decision runtime）。它把语言模型变成可评估（evaluable）、可校准（calibratable）、可追踪（trackable）的语义概率决策组件。
+Probvenance 是一个 provider-agnostic（供应商无关）的概率决策运行时（probabilistic decision runtime）。它把语言模型变成可评估（evaluable）、可校准（calibratable）、可追踪（trackable）的语义概率决策组件。
 
-要解决的问题：LLM 被接入程序逻辑时，人们常把一坨原始文本或一个未经审视的分数当作可信的概率。结果是：系统说不清一个分数意味着什么，无法复现过去的决策，也无法区分"模型不确定"与"程序应当拒绝行动"。FuzzyAI 为这一领域提供一个狭窄而确定性的内核。
+要解决的问题：LLM 被接入程序逻辑时，人们常把一坨原始文本或一个未经审视的分数当作可信的概率。结果是：系统说不清一个分数意味着什么，无法复现过去的决策，也无法区分"模型不确定"与"程序应当拒绝行动"。Probvenance 为这一领域提供一个狭窄而确定性的内核。
 
 它不是聊天框架，不是 agent 框架，也不仅仅是 structured-output（结构化输出）的包装层。
 
@@ -17,7 +17,7 @@ FuzzyAI 是一个 provider-agnostic（供应商无关）的概率决策运行时
 
 ## 当前可用：Bool 与 Choice 垂直切片
 
-目前有两条端到端路径：Bool 切片，以及实验性的 direct categorical Choice 切片。一个轻量的 `FuzzyAI` facade 按固定顺序编排每条流水线，自身不添加任何回退（fallback）。自 Phase 2A.1 起，Bool 切片还会在每条 trace 上报告 scoring-validity 诊断（scoring-validity diagnostics）与执行指纹（execution fingerprint）：
+目前有两条端到端路径：Bool 切片，以及实验性的 direct categorical Choice 切片。一个轻量的 `Probvenance` facade 按固定顺序编排每条流水线，自身不添加任何回退（fallback）。自 Phase 2A.1 起，Bool 切片还会在每条 trace 上报告 scoring-validity 诊断（scoring-validity diagnostics）与执行指纹（execution fingerprint）：
 
 ```
 BoolDecision -> BoolCompiler -> InferencePlan -> TransformersBackend
@@ -31,16 +31,16 @@ uv sync --extra transformers    # 依赖组：torch>=2.7, transformers>=4.53
 ```
 
 ```python
-from fuzzyai import BoolDecision
-from fuzzyai.backends.transformers import TransformersBackend
-from fuzzyai.runtime import FuzzyAI
+from probvenance import BoolDecision
+from probvenance.backends.transformers import TransformersBackend
+from probvenance.runtime import Probvenance
 
 backend = TransformersBackend(
     "Qwen/Qwen3-0.6B",  # 一个本地 HF causal LM
     # 否则 Qwen3 会先输出推理块；见下方说明。
     chat_template_kwargs={"enable_thinking": False},
 )
-ai = FuzzyAI(backend=backend)
+ai = Probvenance(backend=backend)
 
 evaluation = ai.evaluate_with_trace(
     BoolDecision(
@@ -79,7 +79,7 @@ decision 的 context 只会被渲染进 user prompt 作为证据（evidence）�
 
 `BoolCompiler` 与 `ChoiceCompiler` 相互排斥：`BoolCompiler` 会以 `UnsupportedDecisionError` 拒绝 `ChoiceDecision`，`ChoiceCompiler` 则拒绝 `BoolDecision`。实验性的 Choice 运行时见下文「当前已实现的内容」中的 Phase 2B direct categorical Choice 路径。
 
-Phase 2A.2 用这条切片自带的诊断做了一次语义信号验证实验（semantic signal validation）：二值打分位置到底携不携带语义信号，测量结果里哪些部分来自模型、哪些来自 doctrine 与 label family。它在固定条件下探测了三个本地 causal LLM（每条 probe 一次前向传播，没有 ground truth），并如实记录观察到的现象。实验记录位于 [experiments/semantic_signal/REPORT.md](experiments/semantic_signal/REPORT.md)：那是一份实验记录，不是能力声明，也不是 benchmark。这一轮产出的一项具体修复是诊断侧的：`src/fuzzyai/diagnostics.py` 中的上界钳制（overshoot clamp）改成了相对容差（relative tolerance），见 [docs/claims.md](docs/claims.md)。
+Phase 2A.2 用这条切片自带的诊断做了一次语义信号验证实验（semantic signal validation）：二值打分位置到底携不携带语义信号，测量结果里哪些部分来自模型、哪些来自 doctrine 与 label family。它在固定条件下探测了三个本地 causal LLM（每条 probe 一次前向传播，没有 ground truth），并如实记录观察到的现象。实验记录位于 [experiments/semantic_signal/REPORT.md](experiments/semantic_signal/REPORT.md)：那是一份实验记录，不是能力声明，也不是 benchmark。这一轮产出的一项具体修复是诊断侧的：`src/probvenance/diagnostics.py` 中的上界钳制（overshoot clamp）改成了相对容差（relative tolerance），见 [docs/claims.md](docs/claims.md)。
 
 ## Planned API（尚未实现）
 
@@ -116,7 +116,7 @@ Phase 1 确定性内核：
 - `BackendCapabilities`（显式数据）与狭窄的 `Backend` Protocol
 - `InferencePlan` 与 `RawEvidence` 抽象
 - 确定性指纹系统（canonical JSON + SHA-256）
-- 以 `FuzzyAIError` 为根的错误分类体系
+- 以 `ProbvenanceError` 为根的错误分类体系
 
 Phase 2A Bool 路径：
 
@@ -125,7 +125,7 @@ Phase 2A Bool 路径：
 - `assemble_bool_probability`（binary token logits 上的 two-way softmax）
 - `TransformersBackend`（可选 `transformers` 附加包，只读 logits）
 - `DecisionTrace` / `build_decision_trace`（其 `trace_id` 从不派生自任何指纹）
-- 轻量的 `FuzzyAI` / `Evaluation` facade
+- 轻量的 `Probvenance` / `Evaluation` facade
 
 Phase 2A.1 的 scoring-validity 增量：
 
@@ -137,7 +137,7 @@ BoolDecision --(BoolCompiler)--> InferencePlan --(TransformersBackend)--> RawEvi
                                                                              |
                               assemble_bool_probability     (calibration: still future)
                                                                              v
-                                                BoolResult + DecisionTrace (via FuzzyAI)
+                                                BoolResult + DecisionTrace (via Probvenance)
 ```
 
 Phase 2B direct categorical Choice 路径：
@@ -153,7 +153,7 @@ ChoiceDecision --(ChoiceCompiler)--> InferencePlan --(TransformersBackend)--> Ra
                                                                                  |
                         assemble_choice_probability    (calibration: still future)
                                                                                  v
-                                             ChoiceResult + DecisionTrace (via FuzzyAI)
+                                             ChoiceResult + DecisionTrace (via Probvenance)
 ```
 
 该路径是实验性的。它是 closed-set 的，假定调用方提供互斥候选，只支持 single-label 决策，要求每个打分标签恰好是一个 token，仅在较小 N 上做过研究，并且是**未校准**的（`predicted_correctness` 始终为 `None`）。它没有任何 open-set 保证：当候选集遗漏了真实主题时，模型仍会在集合内作答，而 `scoring_label_mass` 检测不到这一点。

@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from fuzzyai import (
+from probvenance import (
     BINARY_DOCTRINE_ID,
     BINARY_SEMANTIC_JUDGMENT_V1,
     BackendCapabilities,

@@ -25,7 +25,7 @@ import hashlib
 import json
 import math
 
-from fuzzyai.errors import FingerprintError
+from probvenance.errors import FingerprintError
 
 # PEP 604 unions evaluate fine at runtime here (``None | bool | ...`` works on
 # 3.11), so the alias uses ``|`` to satisfy ruff's UP007 without a suppression.

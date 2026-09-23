@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from fuzzyai import (
+from probvenance import (
     CATEGORICAL_COMPILER_VERSION,
     CATEGORICAL_DOCTRINE_ID,
     CATEGORICAL_LABEL_SCHEME_ID,

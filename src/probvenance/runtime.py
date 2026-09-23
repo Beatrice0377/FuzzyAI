@@ -1,4 +1,4 @@
-"""FuzzyAI runtime facade: the one-object entry point for evaluation.
+"""Probvenance runtime facade: the one-object entry point for evaluation.
 
 The runtime orchestrates the existing pieces — compiler, backend, assembler,
 trace builder — in a fixed order. It re-implements none of them and adds no
@@ -16,14 +16,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
 
-from fuzzyai.assembler import assemble_probability
-from fuzzyai.backends.base import Backend
-from fuzzyai.compiler import BoolCompiler, ChoiceCompiler
-from fuzzyai.decisions import BoolDecision, ChoiceDecision
-from fuzzyai.errors import InvalidDecisionError, UnsupportedDecisionError
-from fuzzyai.plans import InferencePlan, RawEvidence
-from fuzzyai.results import BoolResult, ChoiceResult
-from fuzzyai.trace import DecisionTrace, build_decision_trace
+from probvenance.assembler import assemble_probability
+from probvenance.backends.base import Backend
+from probvenance.compiler import BoolCompiler, ChoiceCompiler
+from probvenance.decisions import BoolDecision, ChoiceDecision
+from probvenance.errors import InvalidDecisionError, UnsupportedDecisionError
+from probvenance.plans import InferencePlan, RawEvidence
+from probvenance.results import BoolResult, ChoiceResult
+from probvenance.trace import DecisionTrace, build_decision_trace
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +34,7 @@ class Evaluation:
     trace: DecisionTrace
 
 
-class FuzzyAI:
+class Probvenance:
     """Evaluates decisions against a backend, end to end, with provenance."""
 
     def __init__(
@@ -107,7 +107,7 @@ class FuzzyAI:
             plan = self._choice_compiler.compile(decision, self._backend.capabilities)
         else:
             raise UnsupportedDecisionError(
-                f"FuzzyAI supports only BoolDecision and ChoiceDecision, "
+                f"Probvenance supports only BoolDecision and ChoiceDecision, "
                 f"got {type(decision).__name__}"
             )
         # 3. Execute and measure latency.

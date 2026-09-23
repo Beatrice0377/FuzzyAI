@@ -1,4 +1,4 @@
-"""FuzzyAI: provider-agnostic probabilistic decision runtime for language models.
+"""Probvenance: provider-agnostic probabilistic decision runtime for language models.
 
 Phase 2A adds the deterministic decision pipeline: scoring doctrines, the Bool
 compiler, the probability assembler, decision traces, and the runtime facade
@@ -8,15 +8,15 @@ the categorical doctrine, choice scoring diagnostics, the choice assembler,
 and runtime dispatch on the decision type.
 """
 
-from fuzzyai.assembler import (
+from probvenance.assembler import (
     assemble_bool_probability,
     assemble_choice_probability,
     assemble_probability,
     resolve_probability_assembler,
 )
-from fuzzyai.backends import Backend
-from fuzzyai.capabilities import BackendCapabilities
-from fuzzyai.compiler import (
+from probvenance.backends import Backend
+from probvenance.capabilities import BackendCapabilities
+from probvenance.compiler import (
     BINARY_COMPILER_VERSION,
     CATEGORICAL_COMPILER_VERSION,
     CATEGORICAL_LABEL_SCHEME_ID,
@@ -24,8 +24,8 @@ from fuzzyai.compiler import (
     BoolCompiler,
     ChoiceCompiler,
 )
-from fuzzyai.decisions import BoolDecision, Choice, ChoiceDecision
-from fuzzyai.diagnostics import (
+from probvenance.decisions import BoolDecision, Choice, ChoiceDecision
+from probvenance.diagnostics import (
     BINARY_EVIDENCE_LABELS,
     ChoiceScoringDiagnostics,
     ScoringDiagnostics,
@@ -33,7 +33,7 @@ from fuzzyai.diagnostics import (
     diagnose_choice_evidence,
     scoring_label_mass,
 )
-from fuzzyai.doctrine import (
+from probvenance.doctrine import (
     BINARY_DOCTRINE_ID,
     BINARY_DOCTRINE_VERSION,
     BINARY_SEMANTIC_JUDGMENT_V1,
@@ -43,19 +43,19 @@ from fuzzyai.doctrine import (
     CategoricalScoringDoctrine,
     ScoringDoctrine,
 )
-from fuzzyai.errors import (
+from probvenance.errors import (
     FingerprintError,
-    FuzzyAIError,
     InvalidDecisionError,
     InvalidProbabilityError,
+    ProbvenanceError,
     ScoringLabelError,
     UnsupportedAssemblerError,
     UnsupportedCapabilityError,
     UnsupportedDecisionError,
     VerbalizerError,
 )
-from fuzzyai.fingerprint import JSONValue, canonical_json, fingerprint
-from fuzzyai.plans import (
+from probvenance.fingerprint import JSONValue, canonical_json, fingerprint
+from probvenance.plans import (
     PLAN_FINGERPRINT_VERSION,
     CandidateLabelMapping,
     EvidenceKind,
@@ -63,7 +63,7 @@ from fuzzyai.plans import (
     RawEvidence,
     ScoringStrategy,
 )
-from fuzzyai.results import (
+from probvenance.results import (
     BoolResult,
     Certainty,
     ChoiceResult,
@@ -71,8 +71,8 @@ from fuzzyai.results import (
     normalized_entropy,
     probability_margin,
 )
-from fuzzyai.runtime import Evaluation, FuzzyAI
-from fuzzyai.trace import DecisionTrace, build_decision_trace
+from probvenance.runtime import Evaluation, Probvenance
+from probvenance.trace import DecisionTrace, build_decision_trace
 
 __all__ = [
     "BINARY_COMPILER_VERSION",
@@ -105,12 +105,12 @@ __all__ = [
     "Evaluation",
     "EvidenceKind",
     "FingerprintError",
-    "FuzzyAI",
-    "FuzzyAIError",
     "InferencePlan",
     "InvalidDecisionError",
     "InvalidProbabilityError",
     "JSONValue",
+    "Probvenance",
+    "ProbvenanceError",
     "RawEvidence",
     "ScoringDiagnostics",
     "ScoringDoctrine",
