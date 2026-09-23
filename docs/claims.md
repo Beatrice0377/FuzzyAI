@@ -392,6 +392,50 @@ These claims are about the deterministic data model only. They say nothing
 about the quality of any calibration produced from such data; no calibration
 has been fitted, and no calibration-quality claim is made anywhere.
 
+### Pre-calibration evaluation foundation (Phase 4A evaluation)
+
+ - `[V]` `CalibrationEvaluationDataset` structurally preserves binding,
+   ground-truth semantics, and split provenance: admission is all-or-nothing
+   over fit-eligible observations with accumulated, distinct rejection
+   messages; binding and ground-truth semantics are enforced by canonical-JSON
+   string equality of their identity payloads (`label_source` differences
+   alone are accepted; `labeling_rule` differences are rejected even when the
+   binding matches); invalid split metadata (a non-`EvaluationSplitRole`
+   `split_role`, an empty `split_id`) is rejected; a taxonomy miss, an
+   unresolved ground truth, or an unadjudicated ground truth is rejected as
+   not fit-eligible and never encoded as `correct = False`. The dataset
+   fingerprint is version 1, row-order independent, multiplicity preserving,
+   and commits the declared `split_role` and `split_id`. Evidence:
+   `tests/test_calibration_evaluation.py`
+   (`TestEvaluationDatasetAdmission`, `TestEvaluationDatasetIdentity`).
+ - `[V]` Brier evaluation computes `Brier = mean((p_i - y_i)^2)` with
+   `math.fsum` accumulation, where `p_i` is the uncalibrated selected semantic
+   probability extracted from the recorded `selected_value` by semantic name
+   (the winner is never recomputed, tie-breaking is never re-run, and scoring
+   labels or token ids are never used) and `y_i` is the derived
+   winner-correctness label of the observation. Evidence:
+   `tests/test_calibration_evaluation.py`
+   (`TestBrierMatrix`, `TestSelectedProbabilityExtraction`).
+ - `[V]` `BrierEvaluationResult` commits metric identity and version
+   (`brier`, version 1), the empirical target (`winner_correctness`),
+   input-score identity and version
+   (`uncalibrated-selected-probability`, version 1), the evaluation dataset
+   fingerprint and payload version, the constant `configuration == {}`,
+   `count`, and `value`; the fingerprint is the hash of `canonical_payload()`,
+   and `evaluate_uncalibrated_winner_brier(dataset)` is the only supported
+   construction path (direct construction and `dataclasses.replace(result)`
+   raise `InvalidDecisionError`; `dataclasses.replace(result, value=...)` is
+   rejected by `dataclasses` itself with a `ValueError`). Two evaluation
+   datasets that accidentally produce the same Brier numeric value yield
+   different result fingerprints. Evidence: `tests/test_calibration_evaluation.py`
+   (`TestBrierEvaluationResult`, `TestVersionGuards`).
+
+These claims are deterministic implementation claims about the evaluation
+foundation only. They are NOT claims that any model is calibrated, that any
+calibration improves anything, or that any pre-calibration baseline is
+calibration-quality evidence: no calibrator exists, no fitting has happened,
+and no `CalibrationProfile` exists.
+
 ## Experimental records
 
 Single-session observations, each reported with the conditions under which it

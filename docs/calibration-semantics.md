@@ -8,7 +8,9 @@ CalibrationObservation:    implemented (src/probvenance/calibration.py)
 CalibrationBinding:        implemented (src/probvenance/calibration.py)
 CalibrationDataset:        implemented (src/probvenance/calibration.py)
 CalibrationProfile:        not implemented
-Evaluation metrics:        not implemented
+Evaluation dataset:        implemented (src/probvenance/calibration_evaluation.py)
+Evaluation metrics:        winner-correctness Brier over a declared evaluation
+                           split implemented (src/probvenance/calibration_evaluation.py)
 Fitting algorithms:        not implemented
 Calibration runtime:       not implemented
 predicted_correctness:     None for every result the runtime can currently produce
@@ -17,14 +19,20 @@ predicted_correctness:     None for every result the runtime can currently produ
 This document originated as a design document. The Phase 4A data foundation
 portions it specified (ground truth, binding, observation, dataset, and their
 identities and fingerprints, in `src/probvenance/calibration.py`) are now
-implemented. `CalibrationProfile`, fitting, evaluation metrics, and runtime
-profile application remain unimplemented, and this document does not add any.
+implemented. The Phase 4A evaluation foundation it specified (the evaluation
+dataset contract and the winner-correctness Brier metric, in
+`src/probvenance/calibration_evaluation.py`) is now implemented as well.
+`CalibrationProfile`, fitting, the remaining metrics, and runtime profile
+application remain unimplemented, and this document does not add any.
 
-This document is a design proposal and makes no verified claim. Every measured
-number it cites (the Phase 2B.1 total-variation figures in section 1, and the
-`scoring_label_mass` observations in sections 6.2, 13.3, and 20.4) is `[E]`
-EXPERIMENTAL under its named conditions, as recorded in `docs/claims.md`. Nothing
-here is `[V]` VERIFIED.
+This document is in part a design proposal. The deterministic data model and
+the evaluation foundation carry `[V]` VERIFIED claims in `docs/claims.md`,
+backed by tests in `tests/test_calibration.py` and
+`tests/test_calibration_evaluation.py`. Every measured number it cites (the
+Phase 2B.1 total-variation figures in section 1, and the `scoring_label_mass`
+observations in sections 6.2, 13.3, and 20.4) is `[E]` EXPERIMENTAL under its
+named conditions, and the not-yet-implemented portions (fitting, profiles,
+runtime application) remain design statements without verified claims.
 
 The question it answers:
 
@@ -847,11 +855,49 @@ and never a correctness proxy.
 
 ## 14. Metric semantics
 
-Metrics evaluate a calibrator. They do not produce correctness information.
+Metrics evaluate declared probability-like scores against declared empirical
+targets. They do not produce correctness information: the correctness labels
+come from the declared ground-truth semantics, and the metric only compares a
+score with them.
+
+### 14.0 Pre-calibration evaluation and post-calibration evaluation
+
+The same formula (for example Brier, section 14.1) can be run against two
+different input scores, and the two runs mean different things. The runs are
+distinguished by input-score identity:
+
+- Pre-calibration evaluation evaluates the uncalibrated selected semantic
+  probability (input-score identity `uncalibrated-selected-probability`)
+  against the derived winner-correctness label. It is implemented in
+  `src/probvenance/calibration_evaluation.py` as
+  `evaluate_uncalibrated_winner_brier` over a `CalibrationEvaluationDataset`.
+  It measures the empirical quality of the raw semantic probability and is a
+  baseline.
+- Post-calibration evaluation would evaluate `predicted_correctness` (the
+  score a future calibration profile would produce) against the same derived
+  winner-correctness label. It does not exist yet: no `CalibrationProfile`
+  exists, and the runtime keeps `predicted_correctness = None` and
+  `calibrated = False`.
+
+The pre-calibration baseline must NOT be presented as calibration-quality
+evidence: no calibrator was involved in producing it, so it cannot show how
+much, or whether, calibration helps. Comparing a pre-calibration run with a
+post-calibration run is exactly how the effect of a future calibrator would be
+measured, and the comparison is only meaningful when both runs use the same
+dataset identity (the `CalibrationEvaluationDataset` fingerprint) and differ
+only in input-score identity.
+
+`CalibrationEvaluationDataset` records a declared split role (`validation` or
+`test`) and a declared split id. These are provenance, not proof: they record
+which role the caller assigned to the split and do NOT prove statistical
+independence from any data used for future fitting. Independence discipline is
+the caller's responsibility (section 11).
 
 ### 14.1 Brier score
 
-For winner correctness, with `p_i` the predicted correctness estimate and
+For winner correctness, with `p_i` the evaluated probability-like score (the
+uncalibrated selected semantic probability for a pre-calibration run, or
+`predicted_correctness` for a post-calibration run; see section 14.0) and
 `y_i` in `{0, 1}`:
 
 ```text
@@ -1269,15 +1315,17 @@ mean for calibration.
 ## 22. Non-goals
 
 The Phase 4A data foundation (ground truth, binding, observation, dataset, and
-their identities and fingerprints) is implemented and is no longer listed
-here. This document still does not implement, and does not decide the
-eventual API for:
+their identities and fingerprints) and the Phase 4A evaluation foundation (the
+evaluation dataset contract and the winner-correctness Brier metric) are
+implemented and are no longer listed here. This document still does not
+implement, and does not decide the eventual API for:
 
 ```text
 CalibrationProfile, CalibrationProfileFingerprint
 any calibration fitting algorithm or library
 temperature scaling, Platt scaling, isotonic regression, binning
-Brier, log loss, ECE, or reliability-curve runtime code
+post-calibration metric runs (predicted_correctness as the input score)
+log loss, ECE, or reliability-curve runtime code
 profile matching runtime
 a calibration store
 abstention, review, escalate, or any policy
