@@ -1,10 +1,13 @@
 # Probability Semantics Identity and Formulation Families
 
-Status: design proposal, Phase 2C-Design. Nothing in this document is
-implemented. No runtime class, no public API, and no fingerprint defined here
-exists in `src/fuzzyai/` yet. This document answers which probabilities may be
-treated as the same kind of object, and which merely come from the same
-decision.
+Status: design proposal, Phase 2C-Design, amended by Phase 2C.0. The identity and
+fingerprint concepts defined here are not implemented: no runtime class, no
+public API, and no fingerprint defined here exists in `src/fuzzyai/` yet. The one
+part that is now real is the compiler and assembler provenance carried on
+`InferencePlan` and `DecisionTrace`, which Phase 2C.0 added; where this document
+shows those identifiers they match the runtime. This document answers which
+probabilities may be treated as the same kind of object, and which merely come
+from the same decision.
 
 ## 1. Motivation
 
@@ -333,7 +336,7 @@ evidence-specific) and the execution fingerprint (too concrete).
 |---|---|---|
 | decision family (bool / choice) | include | A bool `[p, 1-p]` and an N-way distribution are different objects with different outcome spaces. |
 | scoring strategy | include | `binary_token_logits`, `categorical_token_logits`, `token_logprobs`, and future `one_vs_rest`, `sampling`, `pairwise` are different mathematical sources even when they emit `{"A": 0.7, "B": 0.3}`. |
-| probability assembler id and version | include | The assembler defines the probability transformation (restricted N-way softmax, binary verbalizer softmax, future OVR normalization or pairwise aggregation). It is not named independently of the strategy anywhere in the plan payload, which is a real gap. |
+| probability assembler id and version | include | The assembler defines the probability transformation (restricted N-way softmax, binary verbalizer softmax, future OVR normalization or pairwise aggregation). Since Phase 2C.0 it is named independently of the strategy on the plan (`assembler_id`, `assembler_version`) and in the plan fingerprint. |
 | doctrine id and version | include | The doctrine fixes how the model is asked to interpret candidates. It shapes the formulation. |
 | compiler id and version | include | The compiler chooses the representation. A version bump can change the formulation, so it must be visible. |
 | semantic outcome space | include | Section 4. Different candidate sets are different probability objects. |
@@ -355,24 +358,40 @@ evidence-specific) and the execution fingerprint (too concrete).
 | required capabilities | exclude | An execution precondition, not a statement about probability semantics. |
 | input and rendered-input fingerprints | exclude, execution-bound | Replay concern, already in the execution fingerprint. |
 
-### The inclusion rule, and how axis separation works
+### The three layers, and how axis separation works
+
+Realized probability behavior depends on three layers:
 
 ```text
-Does this dimension change WHAT THE NUMBER MEANS, for any execution of the
-formulation? It is probability-semantics-relevant.
-Does it change only WHICH EXECUTION produced the number, or under what
-environment? It is execution-bound.
-Does it change only the conditioning event for this one inference? Exclude it.
+Formulation axis
+    provider-independent probability transformation semantics: the outcome
+    space, the scoring representation, the strategy, the assembler, the
+    doctrine, and the compiler versions that fixed them.
+Source axis
+    model, tokenizer, and rendering properties that influence realized
+    probabilities without being part of the provider-independent formulation.
+Instance evidence
+    the question and context that produce a particular value.
 ```
 
-Applied literally, the first clause would include the model and the rendering
-mode, because they demonstrably change what the number means. This document
-separates them onto the source axis (section 8) instead, for one reason only:
-the plan compiler boundary and INV-17 require the compiled formulation to stay
-provider-independent. That separation is permitted under this rule **on the
-condition that every comparability level and every calibration binding composes
-both axes**. The formulation identity alone is never a complete statement about
-what a probability is; it is the provider-independent half of a pair.
+The rule that assigns a dimension to a layer:
+
+```text
+Does it describe the provider-independent transformation from model evidence to
+a distribution? It belongs to the formulation axis.
+Does it describe properties of the concrete model or rendering environment that
+change realized probabilities? It belongs to the source axis.
+Does it only fix the conditioning event for one inference? It is instance
+evidence, and it is excluded from both identity axes.
+```
+
+Splitting model and rendering onto the source axis is required by the plan
+compiler boundary and INV-17, which keep the compiled formulation
+provider-independent. The consequence is strict: the formulation identity alone
+is never a complete statement about what a probability is. Every comparison and
+every calibration binding must compose the formulation axis with the source
+axis. The formulation fingerprint is the provider-independent half of a pair,
+not the whole probability identity.
 
 ## 7. Formulation families
 
@@ -559,27 +578,37 @@ default.
 
 Comparability depends on the purpose. Debugging, regression, calibration, and
 aggregate metrics ask different questions of the same two numbers. The design
-therefore refuses a single `comparable = True/False`. Instead it offers
-vocabulary, derived from the identity facts, for the Eval layer to report:
+therefore refuses a single `comparable = True/False`. It also refuses a single
+strength ladder, because formulation and source are independent axes: a value
+that climbs one axis cannot represent a difference on the other.
+
+Instead the Eval layer reports a relation tuple derived from the identity facts:
 
 ```text
-L0  same exact execution
-    (same Execution Fingerprint)
-L1  same exact formulation and same source
-    (same ProbabilityFormulationFingerprint and same source identity)
-L2  same formulation family and same source
-    (same FormulationFamilyFingerprint and same source identity)
-L3  same decision family only
+FormulationRelation
+    exact            same ProbabilityFormulationFingerprint
+    family           same FormulationFamilyFingerprint, different exact identity
+    decision_family  same decision family only
+    different        otherwise
+
+SourceRelation
+    exact            same source identity
+    different        different source identity
+    unknown          a source value is an explicit unknown (section 9)
 ```
 
-L2 carries the source qualifier deliberately. A family is model-independent by
-construction, so `same family` alone must never be read as cross-model
-comparable; example 11.3 shows exactly that trap.
+The two axes are independent, so neither ordering is the "stronger" one.
+`(family, exact)` and `(exact, different)` are simply different relationships,
+and which is appropriate depends on the question being asked. A family is
+model-independent by construction, so `family` on the formulation axis must
+never be read as cross-model comparable; example 11.3 shows exactly that trap.
 
-These levels are descriptive labels for evaluation reports. They are not a
-runtime predicate, and no automatic policy may be added on top of them:
-`if fp1 == fp2: comparable = True` must not exist, because it would hide the
-different strengths of the relationship behind one bit.
+This is vocabulary for evaluation reports. It is not a runtime predicate, and no
+automatic policy may be added on top of it: `if fp1 == fp2: comparable = True`
+must not exist, because it would hide the two independent relationships behind
+one bit. There is deliberately no `compatible` relation this round: that word
+would need an evidence-backed definition of compatibility, which does not yet
+exist.
 
 ## 11. Worked examples
 
@@ -596,6 +625,11 @@ technical->C` versus `billing->C, shipping->A, technical->B`.
 | FormulationFamilyFingerprint | same | same mechanism, same arity |
 | Execution Fingerprint | different | different resolved token ids and rendered input |
 | Trace ID | different | different executions |
+
+Relation tuple: `formulation_relation = family`, `source_relation = exact`. This
+is the case Phase 2B.1 measures when it reports total variation between two
+label permutations: an explicit cross-formulation evaluation that preserves both
+identities and the comparison method, which P1 permits.
 
 ### 11.2 Same formulation, different evidence
 
@@ -620,6 +654,10 @@ representation.
 | FormulationFamilyFingerprint | same | same mechanism |
 | source identity | different | different model |
 | calibration sharing | not allowed by default | the model is a calibration-relevant source |
+
+Relation tuple: `formulation_relation = exact`, `source_relation = different`.
+Neither this tuple nor example 11.1's `(family, exact)` is inherently "more
+comparable"; which one is usable depends on the question being asked.
 
 Measured: Phase 2B.1 found mean total variation 0.0334 versus 0.0514 at N=3 and
 0.0277 versus 0.0381 at N=5 between the two models under the same frozen
@@ -660,11 +698,14 @@ interchangeable.
 
 ## 12. Proposed canonical payloads
 
-Proposals only. These payloads follow the existing fingerprint discipline:
+Proposals only, for a future fingerprint class; none of this is implemented in
+`src/fuzzyai/`. These payloads follow the existing fingerprint discipline:
 schema version, canonical JSON, SHA-256, JSON-compatible values only (no
 `repr(object)`, no callables, no sets, no automatic datetime conversion). The
-compiler and assembler identifiers shown are proposals; only the compiler
-version constants exist in code today.
+compiler and assembler identifiers and versions shown are the real ones the
+runtime now carries on `InferencePlan` and `DecisionTrace` (`bool-compiler` /
+`choice-compiler` and `binary-restricted-softmax` /
+`categorical-restricted-softmax`), reused here so the proposal matches reality.
 
 ### Exact formulation identity (Choice)
 
@@ -674,7 +715,7 @@ version constants exist in code today.
   "kind": "probability_formulation",
   "decision_family": "choice",
   "strategy": "categorical_token_logits",
-  "assembler": {"id": "restricted-categorical-softmax", "version": 1},
+  "assembler": {"id": "categorical-restricted-softmax", "version": 1},
   "doctrine": {"doctrine_id": "categorical-semantic-judgment-v1", "version": 1},
   "compiler": {"id": "choice-compiler", "version": 1},
   "outcome_space": {
@@ -712,7 +753,7 @@ version constants exist in code today.
   "kind": "probability_formulation",
   "decision_family": "bool",
   "strategy": "binary_token_logits",
-  "assembler": {"id": "binary-verbalizer-softmax", "version": 1},
+  "assembler": {"id": "binary-restricted-softmax", "version": 1},
   "doctrine": {"doctrine_id": "binary-semantic-judgment-v1", "version": 1},
   "compiler": {"id": "bool-compiler", "version": 1},
   "outcome_space": {"outcomes": ["false", "true"], "closed_set": true,
@@ -735,7 +776,7 @@ The same Choice decision, with the representation removed:
   "kind": "formulation_family",
   "decision_family": "choice",
   "strategy": "categorical_token_logits",
-  "assembler": {"id": "restricted-categorical-softmax", "version": 1},
+  "assembler": {"id": "categorical-restricted-softmax", "version": 1},
   "doctrine": {"doctrine_id": "categorical-semantic-judgment-v1", "version": 1},
   "compiler": {"id": "choice-compiler", "version": 1},
   "label_scheme_id": "categorical-labels-v1",
@@ -745,6 +786,22 @@ The same Choice decision, with the representation removed:
 
 This payload is identical under all six label permutations, which is the point,
 and equality of this payload is explicitly not probability equality.
+
+### Version bump rules
+
+```text
+assembler_version  bumps only when the mathematics of RawEvidence -> uncalibrated
+                   probability changes (normalization, aggregation, or the
+                   probability transformation). A refactor, a performance
+                   optimization, or an equivalent implementation does not bump it.
+compiler_version   bumps when the compiler changes prompt construction, label
+                   mapping semantics, doctrine lowering, or strategy selection in
+                   a way that affects the formulation. An equivalent internal
+                   refactor does not bump it.
+```
+
+These rules exist so the provenance fields stay meaningful: a version is a claim
+about probability semantics, not about code churn.
 
 ### Naming considered
 
@@ -764,9 +821,10 @@ Listed for review. **None of these is written into
 `docs/design-constitution.md`.** That requires a separate review.
 
 ```text
-P1  A restricted candidate probability must not be compared, pooled, or
-    calibrated with a probability from a different probability formulation
-    identity.
+P1  Probabilities from different probability formulation identities must not be
+    silently treated as interchangeable, directly pooled, or assumed to share
+    calibration. Explicit cross-formulation evaluation is allowed when both
+    identities and the comparison method are preserved.
 
 P2  Formulation family membership does not imply probability comparability,
     poolability, or shared calibration.
@@ -784,9 +842,14 @@ P5  The probability assembler identity and version are part of probability
 ```
 
 P1 generalizes INV-19, which already requires that a restricted probability be
-read together with its candidate-space mass. P3 is the rule that keeps the
-formulation evidence-independent. P5 closes the current gap that a plan names
-the strategy but not the transformation.
+read together with its candidate-space mass. P1 forbids implicit interchange,
+blind pooling, and default shared calibration; it does not forbid explicit
+comparison, which is exactly what Phase 2B.1 does when it reports total
+variation between two formulation identities while preserving both. P3 is the
+rule that keeps the formulation evidence-independent. P5 closes the gap that a
+plan names the strategy but not the transformation; the runtime now carries a
+real assembler identity and version, which is engineering support and not yet
+proof.
 
 ## 14. Non-goals
 
@@ -797,7 +860,9 @@ implement CalibrationProfile, temperature scaling, ECE, Brier, a calibration
   store, or profile matching
 implement any fingerprint class in src/fuzzyai/
 add a public API
-change runtime behavior or trace schema
+change runtime probability behavior (Phase 2C.0 later added compiler and
+  assembler provenance to the plan fingerprint and trace, and made the
+  continuation check exact; no accepted probability value changed)
 define an automatic comparability policy
 define automatic paraphrase equivalence
 run any model

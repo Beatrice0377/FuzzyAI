@@ -8,14 +8,19 @@ or disappear when evidence says they should; the binding rules live in the
 Phase 1 (core contracts, fingerprints, result semantics) and the Phase 2A
 Bool vertical slice, including the Phase 2A.1 scoring-validity diagnostics,
 are implemented: see the constitution for exact scope. Phase 2A.2 is a
-completed validation experiment, not a feature. Nothing else below is
+completed validation experiment, not a feature. Phase 2B / 2B.1 add the
+experimental direct categorical Choice runtime and its cross-model validation,
+and Phase 2C.0 closed scoring-continuation correctness plus compiler and
+assembler provenance. Anything below not marked as delivered is not
 implemented.
 
 ## Phase 2: first real inference path
 
 Phase 2A delivered the Bool path end-to-end, Phase 2A.1 added the
 scoring-validity diagnostics, and Phase 2A.2 ran the semantic signal
-validation experiment; the Choice path (Phase 2B) is the next unstarted step.
+validation experiment. Phase 2B delivered the experimental direct categorical
+Choice path and Phase 2B.1 replicated it on a second model family. The
+remaining Phase 2 items below are still future.
 
 - Transformers local backend. Delivered (Phase 2A): logits-only
   `TransformersBackend` behind the optional `transformers` extra.
@@ -49,8 +54,12 @@ validation experiment; the Choice path (Phase 2B) is the next unstarted step.
   configuration (MiniCPM5-2B or Qwen3.5-2B with `yes_no` / `true_false` under
   a decision-position-keeping doctrine), NOT met by the mechanism in general;
   the three-way candidate space itself remains unmeasured.
-- Choice categorical-logit scoring (Phase 2B). Pending; this is the next
-  unstarted step. Design recorded in `docs/choice-semantics.md`.
+- Choice categorical-logit scoring (Phase 2B, 2B.1). Implemented and
+  experimentally validated: the direct categorical runtime exists, and
+  representation sensitivity was replicated on two model families. Design and
+  measured outcome in `docs/choice-semantics.md` and
+  `experiments/choice_signal/REPORT.md`. Remaining Choice work (one-vs-rest,
+  multi-token scoring labels, open-set handling) stays future.
 
 ## Phase 3: cloud backends and experiments
 

@@ -28,6 +28,28 @@ class ScoringStrategy(StrEnum):
     TOKEN_LOGPROBS = "token_logprobs"
 
 
+# Strategies that have a real compiler and probability assembler today. Plans
+# using these MUST declare which one produced them; an unimplemented strategy
+# has no compiler yet, so it declares no provenance.
+_STRATEGIES_WITH_PROVENANCE: frozenset[ScoringStrategy] = frozenset(
+    {ScoringStrategy.BINARY_TOKEN_LOGITS, ScoringStrategy.CATEGORICAL_TOKEN_LOGITS}
+)
+
+
+def _require_positive_int(value: object, field_name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise InvalidDecisionError(
+            f"{field_name} must be a positive int, got {type(value).__name__} ({value!r})"
+        )
+
+
+def _require_non_empty_str(value: object, field_name: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise InvalidDecisionError(
+            f"{field_name} must be a non-empty string, got {type(value).__name__} ({value!r})"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class CandidateLabelMapping:
     """One semantic candidate bound to one execution-only scoring label.
@@ -85,6 +107,10 @@ class InferencePlan:
     doctrine_id: str | None = None
     label_scheme_id: str | None = None
     candidate_mapping: tuple[CandidateLabelMapping, ...] = ()
+    compiler_id: str = ""
+    compiler_version: int = 0
+    assembler_id: str = ""
+    assembler_version: int = 0
 
     def __post_init__(self) -> None:
         if not isinstance(self.decision_fingerprint, str) or not self.decision_fingerprint:
@@ -183,6 +209,11 @@ class InferencePlan:
                 f"{ScoringStrategy.CATEGORICAL_TOKEN_LOGITS.value} strategy, got "
                 f"{len(self.candidate_mapping)} entries"
             )
+        if self.strategy in _STRATEGIES_WITH_PROVENANCE:
+            _require_non_empty_str(self.compiler_id, "compiler_id")
+            _require_positive_int(self.compiler_version, "compiler_version")
+            _require_non_empty_str(self.assembler_id, "assembler_id")
+            _require_positive_int(self.assembler_version, "assembler_version")
 
     def _validate_categorical_mapping(self) -> None:
         mapping = self.candidate_mapping
@@ -225,7 +256,7 @@ class InferencePlan:
         """Stable SHA-256 fingerprint of this plan's semantic content."""
         return fingerprint(
             {
-                "v": 3,
+                "v": 4,
                 "kind": "inference_plan",
                 "decision_fingerprint": self.decision_fingerprint,
                 "strategy": str(self.strategy),
@@ -238,6 +269,10 @@ class InferencePlan:
                 "label_scheme_id": self.label_scheme_id,
                 "candidate_mapping": [asdict(entry) for entry in self.candidate_mapping],
                 "required_capabilities": asdict(self.required_capabilities),
+                "compiler_id": self.compiler_id,
+                "compiler_version": self.compiler_version,
+                "assembler_id": self.assembler_id,
+                "assembler_version": self.assembler_version,
             }
         )
 

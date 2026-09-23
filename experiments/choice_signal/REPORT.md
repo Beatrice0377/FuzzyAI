@@ -393,6 +393,15 @@ value-preserving.
 Latency is not deterministic and the first call in each run included model
 warm-up.
 
+The recorded `plan_fingerprint` and `execution_fingerprint` values in the
+`results/*.jsonl` artifacts were computed under plan-fingerprint schema v3.
+Phase 2C.0 raised the plan fingerprint to v4 by adding `compiler_id`,
+`compiler_version`, `assembler_id` and `assembler_version`, so re-running the
+same plans now yields different plan and execution fingerprints. The stored
+hashes stay internally consistent because they are only ever compared within
+one run or between the two runs reported here, both of which predate v4. They
+are not comparable with hashes computed after Phase 2C.0.
+
 ## 15. What this establishes and does not
 
 Established, for these two models, this doctrine, this label scheme, and these

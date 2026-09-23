@@ -23,6 +23,11 @@ from fuzzyai.errors import InvalidDecisionError
 from fuzzyai.plans import EvidenceKind, InferencePlan, RawEvidence, ScoringStrategy
 from fuzzyai.results import BoolResult, Certainty, ChoiceResult
 
+BINARY_ASSEMBLER_ID = "binary-restricted-softmax"
+CATEGORICAL_ASSEMBLER_ID = "categorical-restricted-softmax"
+BINARY_ASSEMBLER_VERSION = 1
+CATEGORICAL_ASSEMBLER_VERSION = 1
+
 
 def assemble_bool_probability(
     evidence: RawEvidence,

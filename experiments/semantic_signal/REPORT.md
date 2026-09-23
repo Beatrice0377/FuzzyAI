@@ -346,6 +346,10 @@ configuration passing the choice-readiness gate, not the mechanism passing.
   `python experiments/semantic_signal/metrics.py results/<id>.jsonl`
 - Qwen3.5-2B additionally needs
   `--backend-factory qwen35_loader:Qwen35TextBackend`.
+- The recorded `plan_fingerprint` and `execution_fingerprint` values predate
+  plan fingerprint v4. Phase 2C.0 added compiler and assembler provenance to the
+  plan payload and its fingerprint, so re-running now yields different
+  fingerprints for otherwise identical plans.
 
 ## 14. Qwen3.5-2B text-tower compatibility
 

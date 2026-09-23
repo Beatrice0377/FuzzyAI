@@ -15,9 +15,9 @@ FuzzyAI 是一个 provider-agnostic（供应商无关）的概率决策运行时
 > **LLM 处理语义不确定性。程序处理确定性策略。**
 > The LLM handles semantic uncertainty. The program handles deterministic policy.
 
-## 当前可用：Bool 垂直切片
+## 当前可用：Bool 与 Choice 垂直切片
 
-目前唯一端到端可用的路径是 Bool-only。一个轻量的 `FuzzyAI` facade 按固定顺序编排整条流水线，自身不添加任何回退（fallback）。自 Phase 2A.1 起，Bool 切片还会在每条 trace 上报告 scoring-validity 诊断（scoring-validity diagnostics）与执行指纹（execution fingerprint）：
+目前有两条端到端路径：Bool 切片，以及实验性的 direct categorical Choice 切片。一个轻量的 `FuzzyAI` facade 按固定顺序编排每条流水线，自身不添加任何回退（fallback）。自 Phase 2A.1 起，Bool 切片还会在每条 trace 上报告 scoring-validity 诊断（scoring-validity diagnostics）与执行指纹（execution fingerprint）：
 
 ```
 BoolDecision -> BoolCompiler -> InferencePlan -> TransformersBackend
@@ -77,13 +77,13 @@ execution fingerprint 的 payload 覆盖：plan fingerprint、backend 类型、b
 
 decision 的 context 只会被渲染进 user prompt 作为证据（evidence），永远不会进入 system prompt。这是一条结构性放置规则，不是 prompt-injection（提示注入）安全性声明。
 
-`ChoiceDecision` 没有运行时路径：它仍是 Phase 1 的数据模型，编译它会抛出 `UnsupportedDecisionError`。
+`BoolCompiler` 与 `ChoiceCompiler` 相互排斥：`BoolCompiler` 会以 `UnsupportedDecisionError` 拒绝 `ChoiceDecision`，`ChoiceCompiler` 则拒绝 `BoolDecision`。实验性的 Choice 运行时见下文「当前已实现的内容」中的 Phase 2B direct categorical Choice 路径。
 
 Phase 2A.2 用这条切片自带的诊断做了一次语义信号验证实验（semantic signal validation）：二值打分位置到底携不携带语义信号，测量结果里哪些部分来自模型、哪些来自 doctrine 与 label family。它在固定条件下探测了三个本地 causal LLM（每条 probe 一次前向传播，没有 ground truth），并如实记录观察到的现象。实验记录位于 [experiments/semantic_signal/REPORT.md](experiments/semantic_signal/REPORT.md)：那是一份实验记录，不是能力声明，也不是 benchmark。这一轮产出的一项具体修复是诊断侧的：`src/fuzzyai/diagnostics.py` 中的上界钳制（overshoot clamp）改成了相对容差（relative tolerance），见 [docs/claims.md](docs/claims.md)。
 
 ## Planned API（尚未实现）
 
-下面的便捷接口仍是 **planned API（尚未实现）**。不存在 `ai.bool` 或 `ai.choice` 入口；当前可用的调用是上文所示的 `ai.evaluate(BoolDecision(...))`。
+下面的便捷接口仍是 **planned API（尚未实现）**。不存在 `ai.bool` 或 `ai.choice` 入口；当前可用的调用是 `ai.evaluate(BoolDecision(...))` 与 `ai.evaluate(ChoiceDecision(...))`。
 
 ```python
 risk = ai.bool("Is this transaction suspicious?", context=transaction)

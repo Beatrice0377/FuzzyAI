@@ -63,6 +63,9 @@ class DecisionTrace:
     ids (``-1`` when unused); ``resolved_target_token_ids`` carries the
     categorical ``(label, token_id)`` pairs in target order (empty when
     unused). ``candidate_mapping`` mirrors the plan's mapping.
+    ``compiler_id`` / ``compiler_version`` and ``assembler_id`` /
+    ``assembler_version`` mirror the plan's provenance, so lineage is readable
+    without looking up historical code.
     ``probability_true`` is the binary ``P(True)`` and ``None`` for
     categorical decisions, which have no true/false outcome space.
     """
@@ -96,6 +99,10 @@ class DecisionTrace:
     rendering_config: Mapping[str, JSONValue] = field(default_factory=dict)
     candidate_mapping: tuple[CandidateLabelMapping, ...] = ()
     resolved_target_token_ids: tuple[tuple[str, int], ...] = ()
+    compiler_id: str = ""
+    compiler_version: int = 0
+    assembler_id: str = ""
+    assembler_version: int = 0
 
     def to_dict(self) -> dict[str, JSONValue]:
         """A JSON-compatible plain dict of every field (evidence nested)."""
@@ -145,6 +152,10 @@ class DecisionTrace:
             "resolved_target_token_ids": [
                 [label, token_id] for label, token_id in self.resolved_target_token_ids
             ],
+            "compiler_id": self.compiler_id,
+            "compiler_version": self.compiler_version,
+            "assembler_id": self.assembler_id,
+            "assembler_version": self.assembler_version,
         }
         return payload
 
@@ -406,4 +417,8 @@ def build_decision_trace(
         rendering_config=rendering_config,
         candidate_mapping=plan.candidate_mapping,
         resolved_target_token_ids=resolved_target_token_ids,
+        compiler_id=plan.compiler_id,
+        compiler_version=plan.compiler_version,
+        assembler_id=plan.assembler_id,
+        assembler_version=plan.assembler_version,
     )

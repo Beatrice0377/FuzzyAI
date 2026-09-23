@@ -1,7 +1,7 @@
 # FuzzyAI Design Constitution
 
-Status: **early development**, Phase 2A (Bool vertical slice implemented,
-Choice inference and calibration still future).
+Status: **early development**. The Bool vertical slice and an experimental
+direct categorical Choice slice are implemented; calibration is still future.
 
 This is the highest-level, longest-lived document in the repository. It is the
 binding design constraint for all future work in FuzzyAI. Code, tests, docs, and
@@ -381,11 +381,16 @@ mapping, required capabilities, prompt structure) from the decision, the
 doctrine, the versioned label scheme, and the declared capabilities, without
 access to a tokenizer, model, chat template, token id, CUDA, or backend-specific
 rendering; the backend resolves those labels in the real continuation and
-rejects an unexecutable representation explicitly. Neither side may silently
-repair the other: the compiler never skips or re-assigns a label, and the
-backend never falls back to another strategy, truncates, sums multi-token
-logits, or generates. A future tokenizer-aware resolver would be an explicit,
-recorded artifact, not an implicit behaviour.
+rejects an unexecutable representation explicitly. Resolution is exact: a label
+counts as a single-token continuation only when tokenizing the prefix plus the
+label reproduces the original prefix token sequence followed by exactly one
+additional token. A net increase of one token is not sufficient, because a
+retokenized prefix can leave the final token unrelated to the original last
+position, in which case reading its logit would not be evidence about the label.
+Neither side may silently repair the other: the compiler never skips or
+re-assigns a label, and the backend never falls back to another strategy,
+truncates, sums multi-token logits, or generates. A future tokenizer-aware
+resolver would be an explicit, recorded artifact, not an implicit behaviour.
 
 ---
 
@@ -393,17 +398,18 @@ recorded artifact, not an implicit behaviour.
 
 The layering below is the proven design. Phase 2A wired the Bool path
 end-to-end: `BoolCompiler`, `TransformersBackend` (optional extra), and
-`assemble_bool_probability` now connect `BoolDecision` to `BoolResult` plus a
-`DecisionTrace`, under the `FuzzyAI` facade. The Choice path, Calibration, and
-all other backends remain future work.
+`assemble_bool_probability` and `assemble_choice_probability` now connect
+`BoolDecision` and `ChoiceDecision` to their results plus a `DecisionTrace`,
+under the `FuzzyAI` facade. Calibration and all other backends remain future
+work.
 
 ```
 DecisionSpec
-    -> Compiler                 (BoolCompiler implemented; Choice pending)
+    -> Compiler                 (BoolCompiler and ChoiceCompiler implemented)
     -> InferencePlan
     -> Backend                  (Protocol; TransformersBackend implemented)
     -> RawEvidence
-    -> ProbabilityAssembler     (Bool binary-token-logit only)
+    -> ProbabilityAssembler     (Bool binary and Choice categorical restricted softmax)
     -> DecisionResult
     -> Calibration              (future)
     -> Policy                   (out of scope by design)
@@ -428,11 +434,12 @@ It does NOT:
 - perform empirical calibration;
 - claim that its probability is a correctness probability.
 
-Phase 2A implements this layer for Bool only:
-`assemble_bool_probability` turns a two-label logits `RawEvidence` into an
-uncalibrated `BoolResult` via a numerically stable two-way softmax over
-exactly the two verbalizer-token logits. The Choice (categorical) assembler is
-still future work.
+Two assemblers exist. `assemble_bool_probability` turns a two-label logits
+`RawEvidence` into an uncalibrated `BoolResult` via a numerically stable
+two-way softmax over exactly the two verbalizer-token logits.
+`assemble_choice_probability` turns a multi-label logits `RawEvidence` into an
+uncalibrated `ChoiceResult` via a numerically stable N-way softmax over the
+candidate scoring-label logits. Both are uncalibrated.
 
 ### Calibration
 
@@ -449,11 +456,11 @@ not have. `Probability != predicted correctness` holds at every layer.
 | Layer | Phase 1 status | Responsibility | Must not know about |
 |---|---|---|---|
 | `DecisionSpec` (`BoolDecision`, `ChoiceDecision`) | implemented | Declare WHAT semantic decision to make: the question, the candidates (ordered), the context. Provide `fingerprint`. | Models, providers, tokens, scoring. |
-| Compiler | implemented (Bool only) | Choose a scoring strategy from declared capabilities; lower a spec into a plan. Raise `UnsupportedCapabilityError` when no declared capability supports the needed strategy. | Business policy, results. |
+| Compiler | implemented (Bool and Choice) | Choose a scoring strategy from declared capabilities; lower a spec into a plan. Raise `UnsupportedCapabilityError` when no declared capability supports the needed strategy. | Business policy, results. |
 | `InferencePlan` | abstraction only | Provider-independent description of the inference to run, including `ScoringStrategy`. Fingerprintable. | Any provider-specific knob (INV-17). |
 | `Backend` (Protocol) | protocol; one local implementation | Declare `capabilities` explicitly; `execute(plan)` and return raw output. | Decisions, results, certainty (INV-16). |
 | `RawEvidence` | abstraction only | Carry raw model output (`EvidenceKind`) before any conversion; optional `dict[str, JSONValue]` metadata. | Probability semantics (INV-18). |
-| `ProbabilityAssembler` | implemented (Bool only) | Turn `RawEvidence` into an uncalibrated decision probability distribution. | Model inference, business policy, empirical calibration, and any claim that probability is a correctness probability. |
+| `ProbabilityAssembler` | implemented (Bool and Choice) | Turn `RawEvidence` into an uncalibrated decision probability distribution. | Model inference, business policy, empirical calibration, and any claim that probability is a correctness probability. |
 | Calibration | future | Map uncalibrated probability/evidence plus a ground-truth-derived calibration profile onto empirically meaningful calibrated information (INV-04). | Model inference, business policy. |
 | `DecisionResult` (`BoolResult`, `ChoiceResult`, `Certainty`) | implemented | Report the probability distribution, certainty, `predicted_correctness=None`, `calibrated=False`. | What to do about the answer. |
 | Policy | out of scope by design | Map a result plus risk tolerance onto `accept` / `abstain` / `review` / `escalate`. | (Consumes results; owns abstention.) |
@@ -466,14 +473,18 @@ result model, `BackendCapabilities`, the `Backend` Protocol, `InferencePlan` and
 Phase 1 defines ONLY the `BoolDecision` and `ChoiceDecision` primitives;
 `Score`, `MultiLabel`, `Rank`, `Preference`, and `Compare` are roadmap only.
 
-Phase 2A adds the first real inference path, Bool only: `ScoringDoctrine` and
+Phase 2A added the first real inference path (Bool): `ScoringDoctrine` and
 `BINARY_SEMANTIC_JUDGMENT_V1`, `BoolCompiler`, `assemble_bool_probability`,
 `DecisionTrace` / `build_decision_trace`, the `FuzzyAI` / `Evaluation` facade,
 and the optional-extra `TransformersBackend` (imported from
-`fuzzyai.backends.transformers`, not re-exported from the package root). The
-error taxonomy gains `UnsupportedDecisionError` and `VerbalizerError` as
-further `FuzzyAIError` subclasses. Choice inference, calibration, and
-abstention remain unimplemented.
+`fuzzyai.backends.transformers`, not re-exported from the package root). Phase
+2B added the experimental direct categorical Choice path (`ChoiceCompiler`,
+`CATEGORICAL_SEMANTIC_JUDGMENT_V1`, `assemble_choice_probability`,
+`ChoiceScoringDiagnostics`), and Phase 2C.0 added compiler and assembler
+provenance to plans and traces. The error taxonomy gains
+`UnsupportedDecisionError`, `ScoringLabelError`, and `VerbalizerError` as
+further `FuzzyAIError` subclasses. Calibration and abstention remain
+unimplemented.
 
 Public API (Phase 1 core):
 

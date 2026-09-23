@@ -165,6 +165,10 @@ class TestTieBreakFollowsSemanticOrder:
                 for entry, new_label in zip(base.candidate_mapping, labels, strict=True)
             ),
             required_capabilities=base.required_capabilities,
+            compiler_id=base.compiler_id,
+            compiler_version=base.compiler_version,
+            assembler_id=base.assembler_id,
+            assembler_version=base.assembler_version,
         )
 
     def test_tie_break_first_candidate_wins_under_natural_mapping(self) -> None:

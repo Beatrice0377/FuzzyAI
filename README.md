@@ -24,12 +24,13 @@ structured-output wrapper.
 
 > **The LLM handles semantic uncertainty. The program handles deterministic policy.**
 
-## Currently working: the Bool vertical slice
+## Currently working: the Bool and Choice vertical slices
 
-The one end-to-end path that exists today is Bool-only. A thin `FuzzyAI` facade
-orchestrates the pipeline in a fixed order and adds no fallbacks of its own.
-Since Phase 2A.1 the Bool slice also reports scoring-validity diagnostics and
-an execution fingerprint on every trace:
+Two end-to-end paths exist today: the Bool slice and the experimental direct
+categorical Choice slice. A thin `FuzzyAI` facade orchestrates each pipeline in
+a fixed order and adds no fallbacks of its own. Since Phase 2A.1 the Bool slice
+also reports scoring-validity diagnostics and an execution fingerprint on every
+trace:
 
 ```
 BoolDecision -> BoolCompiler -> InferencePlan -> TransformersBackend
@@ -147,8 +148,10 @@ Decision context is rendered into the user prompt as evidence only and never
 into the system prompt. That is a structural placement rule, not a claim of
 prompt-injection safety.
 
-`ChoiceDecision` has no runtime path: it remains a Phase 1 data model, and
-compiling one raises `UnsupportedDecisionError`.
+`BoolCompiler` and `ChoiceCompiler` are mutually exclusive: `BoolCompiler`
+rejects a `ChoiceDecision` with `UnsupportedDecisionError`, and `ChoiceCompiler`
+rejects a `BoolDecision`. The experimental Choice runtime is described under
+[What exists today](#what-exists-today).
 
 Phase 2A.2 used this slice's diagnostics in a semantic signal validation
 experiment: does the binary scoring position carry a semantic signal at all,
@@ -165,8 +168,8 @@ concrete outcome of the round was a diagnostics fix: the overshoot clamp in
 ## Planned API (not implemented)
 
 The convenience surface below is still the **planned API**. There is no
-`ai.bool` or `ai.choice` entry point; the working call is
-`ai.evaluate(BoolDecision(...))` as shown above.
+`ai.bool` or `ai.choice` entry point; the working calls are
+`ai.evaluate(BoolDecision(...))` and `ai.evaluate(ChoiceDecision(...))`.
 
 ```python
 risk = ai.bool("Is this transaction suspicious?", context=transaction)

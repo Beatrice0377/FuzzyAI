@@ -19,6 +19,8 @@ from fuzzyai import (
     build_decision_trace,
     fingerprint,
 )
+from fuzzyai.assembler import BINARY_ASSEMBLER_ID, BINARY_ASSEMBLER_VERSION
+from fuzzyai.compiler import BINARY_COMPILER_ID, BINARY_COMPILER_VERSION
 
 TIMESTAMP = "2026-01-01T00:00:00+00:00"
 
@@ -49,6 +51,10 @@ def make_plan(**overrides: Any) -> InferencePlan:
         "positive_verbalizer": "yes",
         "negative_verbalizer": "no",
         "doctrine_id": "binary-semantic-judgment-v1",
+        "compiler_id": BINARY_COMPILER_ID,
+        "compiler_version": BINARY_COMPILER_VERSION,
+        "assembler_id": BINARY_ASSEMBLER_ID,
+        "assembler_version": BINARY_ASSEMBLER_VERSION,
     }
     kwargs.update(overrides)
     return InferencePlan(**kwargs)

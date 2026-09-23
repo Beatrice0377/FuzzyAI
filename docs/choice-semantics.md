@@ -373,7 +373,7 @@ artifact, not now.
 
 ## 6. Candidate-label mapping contract
 
-Proposed shape (conceptual, not implemented):
+Implemented shape (see `CandidateLabelMapping` in `src/fuzzyai/plans.py`):
 
 ```text
 CandidateLabelMapping:
@@ -388,7 +388,7 @@ The mapping is deliberately provider-independent, so it carries no
 a concrete input, so it belongs to execution provenance rather than to the
 compiled plan (section 7).
 
-It must carry, at minimum:
+The execution provenance for the mapping must carry, at minimum:
 
 - **the semantic candidate name**, matching `ChoiceDecision.choice_names`;
 - **the semantic candidate description**, so a stored trace can explain what

@@ -16,6 +16,18 @@ from fuzzyai import (
     RawEvidence,
     ScoringStrategy,
 )
+from fuzzyai.assembler import (
+    BINARY_ASSEMBLER_ID,
+    BINARY_ASSEMBLER_VERSION,
+    CATEGORICAL_ASSEMBLER_ID,
+    CATEGORICAL_ASSEMBLER_VERSION,
+)
+from fuzzyai.compiler import (
+    BINARY_COMPILER_ID,
+    BINARY_COMPILER_VERSION,
+    CATEGORICAL_COMPILER_ID,
+    CATEGORICAL_COMPILER_VERSION,
+)
 
 
 def make_plan(**overrides: Any) -> InferencePlan:
@@ -25,6 +37,10 @@ def make_plan(**overrides: Any) -> InferencePlan:
         "prompt": "Answer yes or no.",
         "positive_verbalizer": "yes",
         "negative_verbalizer": "no",
+        "compiler_id": BINARY_COMPILER_ID,
+        "compiler_version": BINARY_COMPILER_VERSION,
+        "assembler_id": BINARY_ASSEMBLER_ID,
+        "assembler_version": BINARY_ASSEMBLER_VERSION,
     }
     kwargs.update(overrides)
     return InferencePlan(**kwargs)
@@ -154,9 +170,10 @@ class TestInferencePlanVerbalizerValidation:
     def test_system_prompt_change_changes_fingerprint(self) -> None:
         assert make_plan().fingerprint != make_plan(system_prompt="Other instructions.").fingerprint
 
-    def test_new_fields_included_in_fingerprint_v2(self) -> None:
+    def test_fingerprint_v4_commits_provenance(self) -> None:
         plan = make_plan(system_prompt="S", positive_verbalizer="yes", negative_verbalizer="no")
         assert len(plan.fingerprint) == 64
+        assert plan.fingerprint != make_plan(system_prompt="S", compiler_version=2).fingerprint
 
 
 class TestRawEvidence:
@@ -280,9 +297,64 @@ def make_categorical_plan(**overrides: Any) -> InferencePlan:
         "targets": ("A", "B", "C"),
         "label_scheme_id": "categorical-labels-v1",
         "candidate_mapping": CATEGORICAL_MAPPING,
+        "compiler_id": CATEGORICAL_COMPILER_ID,
+        "compiler_version": CATEGORICAL_COMPILER_VERSION,
+        "assembler_id": CATEGORICAL_ASSEMBLER_ID,
+        "assembler_version": CATEGORICAL_ASSEMBLER_VERSION,
     }
     kwargs.update(overrides)
     return InferencePlan(**kwargs)
+
+
+class TestPlanProvenance:
+    def test_missing_compiler_provenance_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="compiler_id"):
+            InferencePlan(
+                decision_fingerprint="a" * 64,
+                strategy=ScoringStrategy.BINARY_TOKEN_LOGITS,
+                prompt="Answer.",
+                positive_verbalizer="yes",
+                negative_verbalizer="no",
+            )
+
+    def test_missing_assembler_provenance_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="assembler_id"):
+            make_plan(assembler_id="")
+
+    def test_non_positive_compiler_version_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="compiler_version"):
+            make_plan(compiler_version=0)
+
+    def test_non_positive_assembler_version_rejected(self) -> None:
+        with pytest.raises(InvalidDecisionError, match="assembler_version"):
+            make_plan(assembler_version=0)
+
+    def test_compiler_id_changes_plan_fingerprint(self) -> None:
+        assert make_plan().fingerprint != make_plan(compiler_id="other-compiler").fingerprint
+
+    def test_compiler_version_changes_plan_fingerprint(self) -> None:
+        assert make_plan().fingerprint != make_plan(compiler_version=2).fingerprint
+
+    def test_assembler_id_changes_plan_fingerprint(self) -> None:
+        assert make_plan().fingerprint != make_plan(assembler_id="other-assembler").fingerprint
+
+    def test_assembler_version_changes_plan_fingerprint(self) -> None:
+        assert make_plan().fingerprint != make_plan(assembler_version=2).fingerprint
+
+    def test_categorical_provenance_committed(self) -> None:
+        plan = make_categorical_plan()
+        assert plan.compiler_id == CATEGORICAL_COMPILER_ID
+        assert plan.assembler_id == CATEGORICAL_ASSEMBLER_ID
+        assert plan.fingerprint != make_categorical_plan(assembler_version=2).fingerprint
+
+    def test_provenance_absent_for_unsupported_strategy(self) -> None:
+        plan = InferencePlan(
+            decision_fingerprint="a" * 64,
+            strategy=ScoringStrategy.TOKEN_LOGPROBS,
+            prompt="Answer.",
+        )
+        assert plan.compiler_id == ""
+        assert len(plan.fingerprint) == 64
 
 
 class TestCategoricalPlanValidation:

@@ -202,6 +202,10 @@ class TestMappingIdentity:
                 for entry, label in zip(natural.candidate_mapping, labels, strict=True)
             ),
             required_capabilities=natural.required_capabilities,
+            compiler_id=natural.compiler_id,
+            compiler_version=natural.compiler_version,
+            assembler_id=natural.assembler_id,
+            assembler_version=natural.assembler_version,
         )
 
     def test_permuted_mapping_keeps_decision_fingerprint_and_changes_plan_fingerprint(

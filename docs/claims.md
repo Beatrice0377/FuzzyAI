@@ -100,10 +100,11 @@ models, and never need a GPU.
   `tests/test_compiler.py::TestBoolCompilerCompile::test_missing_capability_rejected`,
   `tests/test_runtime.py::TestRuntimeRejections::test_missing_capability_rejected_before_execution`,
   INV-15.
-- `[V]` `ChoiceDecision` has no runtime path: compiling or evaluating one
-  raises `UnsupportedDecisionError` before execution. Evidence:
+- `[V]` `BoolCompiler` and `ChoiceCompiler` are mutually exclusive: `BoolCompiler`
+  rejects a `ChoiceDecision` and `ChoiceCompiler` rejects a `BoolDecision`, both
+  with `UnsupportedDecisionError` before any execution. Evidence:
   `tests/test_compiler.py::TestBoolCompilerCompile::test_choice_decision_rejected`,
-  `tests/test_runtime.py::TestRuntimeRejections::test_choice_decision_rejected_before_execution`.
+  `tests/test_choice_compiler.py::TestCompileRejections::test_bool_decision_rejected`.
 - `[V]` `DecisionTrace.trace_id` is never derived from any fingerprint.
   Evidence:
   `tests/test_trace.py::TestTraceIdProvenance::test_trace_id_is_not_any_fingerprint`.
@@ -247,6 +248,23 @@ models, and never need a GPU.
   `tests/test_public_api.py::test_renamed_scoring_label_names_present`,
   `tests/test_public_api.py::test_old_candidate_mass_names_gone`,
   `tests/test_choice_assembler.py::TestDiagnosticsReturned::test_renamed_fields_present_old_candidate_fields_gone`.
+
+### Exact continuation and provenance (Phase 2C.0)
+- `[V]` Single-token continuation requires exact preservation of the rendered
+  prefix tokenization: a scoring label counts only when tokenizing the prefix
+  plus the label reproduces the prefix token ids followed by exactly one
+  additional token, so a net increase of one token is not sufficient. Evidence:
+  `tests/test_verbalizers.py::test_exact_continuation_rejects_retokenized_prefix_when_net_delta_is_one`,
+  `tests/test_backends_choice.py::test_retokenized_prefix_label_raises_before_forward`,
+  `tests/test_backends_transformers.py::test_retokenized_prefix_verbalizer_raises_before_forward`.
+- `[V]` Compiler and probability-assembler provenance are committed by the plan
+  fingerprint and exposed in `DecisionTrace`: `compiler_id`, `compiler_version`,
+  `assembler_id`, and `assembler_version` are explicit on `InferencePlan`,
+  included in the v4 plan fingerprint, and surfaced on the trace and its
+  `to_dict()`. Evidence: `tests/test_plans.py::TestPlanProvenance`. The decision
+  fingerprint is unaffected by construction rather than by test:
+  `src/fuzzyai/decisions.py` never reads provenance, and both decision payloads
+  remain v1 with no provenance keys.
 
 ## Experimental records
 
