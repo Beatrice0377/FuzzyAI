@@ -284,6 +284,52 @@ class InferencePlan:
             }
         )
 
+    # The probability identity helpers are imported inside the properties rather
+    # than at module scope: ``probability_identity`` reads plan fields and so
+    # imports this module, and keeping the reference deferred avoids a cycle.
+    # These identities are DERIVED and are deliberately not part of the plan
+    # fingerprint payload, which would create a second source of truth.
+    @property
+    def probability_formulation_fingerprint(self) -> str:
+        """Provider-independent exact formulation identity for this plan.
+
+        Derived from the plan alone: it excludes question, context, model,
+        tokenizer, rendering configuration, and resolved scoring token ids.
+        """
+        from probvenance.probability_identity import probability_formulation_fingerprint
+
+        return probability_formulation_fingerprint(self)
+
+    @property
+    def probability_formulation_fingerprint_version(self) -> int:
+        """Schema version of the canonical exact-formulation payload."""
+        from probvenance.probability_identity import (
+            PROBABILITY_FORMULATION_FINGERPRINT_VERSION,
+        )
+
+        return PROBABILITY_FORMULATION_FINGERPRINT_VERSION
+
+    @property
+    def formulation_family_fingerprint(self) -> str:
+        """Coarser mechanism-class identity for this plan.
+
+        Candidate names, descriptions, and the candidate-to-label assignment are
+        collapsed. Equality does NOT imply interchangeability, poolability, or
+        shared calibration (INV-24).
+        """
+        from probvenance.probability_identity import formulation_family_fingerprint
+
+        return formulation_family_fingerprint(self)
+
+    @property
+    def formulation_family_fingerprint_version(self) -> int:
+        """Schema version of the canonical formulation-family payload."""
+        from probvenance.probability_identity import (
+            FORMULATION_FAMILY_FINGERPRINT_VERSION,
+        )
+
+        return FORMULATION_FAMILY_FINGERPRINT_VERSION
+
 
 class EvidenceKind(StrEnum):
     """The kind of raw model output carried by :class:`RawEvidence`."""

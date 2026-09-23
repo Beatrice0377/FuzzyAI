@@ -68,6 +68,11 @@ class DecisionTrace:
     without looking up historical code. ``plan_fingerprint_version`` records
     which canonical payload schema produced ``plan_fingerprint``, so a stored
     hash self-describes its version instead of needing historical code.
+    ``probability_formulation_fingerprint`` and ``formulation_family_fingerprint``
+    (each with its schema version) are the derived provider-independent
+    formulation identities read from the plan; they exclude source and evidence
+    and are deliberately not part of any fingerprint payload. Neither is a
+    statement about comparability or calibration.
     ``probability_true`` is the binary ``P(True)`` and ``None`` for
     categorical decisions, which have no true/false outcome space.
     """
@@ -77,6 +82,10 @@ class DecisionTrace:
     decision_fingerprint: str
     plan_fingerprint: str
     plan_fingerprint_version: int
+    probability_formulation_fingerprint: str
+    probability_formulation_fingerprint_version: int
+    formulation_family_fingerprint: str
+    formulation_family_fingerprint_version: int
     scoring_strategy: str
     doctrine_id: str
     positive_verbalizer: str
@@ -115,6 +124,12 @@ class DecisionTrace:
             "decision_fingerprint": self.decision_fingerprint,
             "plan_fingerprint": self.plan_fingerprint,
             "plan_fingerprint_version": self.plan_fingerprint_version,
+            "probability_formulation_fingerprint": self.probability_formulation_fingerprint,
+            "probability_formulation_fingerprint_version": (
+                self.probability_formulation_fingerprint_version
+            ),
+            "formulation_family_fingerprint": self.formulation_family_fingerprint,
+            "formulation_family_fingerprint_version": self.formulation_family_fingerprint_version,
             "scoring_strategy": self.scoring_strategy,
             "doctrine_id": self.doctrine_id,
             "positive_verbalizer": self.positive_verbalizer,
@@ -393,6 +408,12 @@ def build_decision_trace(
         decision_fingerprint=decision_fingerprint,
         plan_fingerprint=plan.fingerprint,
         plan_fingerprint_version=plan.fingerprint_version,
+        probability_formulation_fingerprint=plan.probability_formulation_fingerprint,
+        probability_formulation_fingerprint_version=(
+            plan.probability_formulation_fingerprint_version
+        ),
+        formulation_family_fingerprint=plan.formulation_family_fingerprint,
+        formulation_family_fingerprint_version=plan.formulation_family_fingerprint_version,
         scoring_strategy=str(plan.strategy.value),
         doctrine_id=plan.doctrine_id if plan.doctrine_id is not None else "none",
         positive_verbalizer=plan.positive_verbalizer
