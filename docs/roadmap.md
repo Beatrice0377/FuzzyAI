@@ -83,7 +83,12 @@ stays behind the `Backend` boundary.
 
 Calibration identity depends on probability-semantics formulation and source
 identity, not on task or model identity alone; see
-`docs/probability-semantics-identity.md`.
+`docs/probability-semantics-identity.md`. The calibration semantics, dataset
+identity, binding, profile identity, and evaluation contract are designed in
+`docs/calibration-semantics.md`. That document is design only:
+no `CalibrationProfile`, no fitting, no reliability metric, and no profile
+matching exist in the runtime, and `predicted_correctness` remains `None` for
+every result the runtime can produce.
 
 - Evaluation harness.
 - Brier score.
