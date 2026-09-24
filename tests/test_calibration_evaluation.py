@@ -63,21 +63,30 @@ from probvenance.calibration_evaluation import (
     BRIER_METRIC_VERSION,
     CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION,
     CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION,
+    EMPIRICAL_CONSTANT_BRIER_REFERENCE_ID,
+    EMPIRICAL_CONSTANT_BRIER_REFERENCE_VERSION,
+    EMPIRICAL_CORRECTNESS_RATE_ID,
+    EMPIRICAL_CORRECTNESS_RATE_VERSION,
     LOG_LOSS_BOUNDARY_POLICY,
     LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION,
     LOG_LOSS_LOG_BASE,
     LOG_LOSS_METRIC_ID,
     LOG_LOSS_METRIC_VERSION,
     LOG_LOSS_TARGET,
+    MEAN_SELECTED_PROBABILITY_ID,
+    MEAN_SELECTED_PROBABILITY_VERSION,
     UNCALIBRATED_SELECTED_PROBABILITY_ID,
     UNCALIBRATED_SELECTED_PROBABILITY_VERSION,
+    WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION,
     BrierEvaluationResult,
     CalibrationEvaluationCohort,
     CalibrationEvaluationDataset,
     EvaluationSplitRole,
     LogLossEvaluationResult,
+    WinnerCorrectnessDiagnosticsResult,
     _binary_log_loss_term,
     evaluate_uncalibrated_winner_brier,
+    evaluate_uncalibrated_winner_diagnostics,
     evaluate_uncalibrated_winner_log_loss,
 )
 from probvenance.fingerprint import fingerprint
@@ -1460,4 +1469,585 @@ class TestLogLossVersionGuards:
     def test_pre_existing_versions_unchanged(self):
         assert BRIER_METRIC_VERSION == 1
         assert CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION == 1
+        assert UNCALIBRATED_SELECTED_PROBABILITY_VERSION == 1
+
+
+# ---------------------------------------------------------------------------
+# Winner-correctness companion diagnostics: accuracy and rate
+# ---------------------------------------------------------------------------
+
+
+def _diagnostics_taxonomy_miss_rows(count):
+    # Distinct taxonomy-miss rows so multiplicity is unambiguous.
+    return [choice_observation(resolved_truth(f"account-{index}")) for index in range(count)]
+
+
+def _diagnostics_correct_observation():
+    # Selected "shipping" at p = 0.6, truth "shipping" -> correct.
+    return choice_observation()
+
+
+def _diagnostics_wrong_observation():
+    # Selected "shipping" at p = 0.6, truth "billing" -> wrong.
+    return choice_observation(resolved_truth("billing"))
+
+
+class TestWinnerDiagnosticsAccuracy:
+    def test_labels_one_one_zero_zero_give_rate_one_half(self):
+        # y = [1, 1, 0, 0]: two correct, two incorrect.
+        dataset = evaluation_dataset(
+            [
+                _diagnostics_correct_observation(),
+                _diagnostics_correct_observation(),
+                _diagnostics_wrong_observation(),
+                _diagnostics_wrong_observation(),
+            ]
+        )
+        result = evaluate_uncalibrated_winner_diagnostics(dataset)
+        assert result.correct_count == 2
+        assert result.incorrect_count == 2
+        assert result.empirical_correctness_rate == pytest.approx(0.5)
+
+    def test_all_correct_gives_rate_one(self):
+        result = evaluate_uncalibrated_winner_diagnostics(
+            evaluation_dataset([_diagnostics_correct_observation()])
+        )
+        assert result.correct_count == 1
+        assert result.incorrect_count == 0
+        assert result.empirical_correctness_rate == pytest.approx(1.0)
+
+    def test_all_wrong_gives_rate_zero(self):
+        result = evaluate_uncalibrated_winner_diagnostics(
+            evaluation_dataset([_diagnostics_wrong_observation()])
+        )
+        assert result.correct_count == 0
+        assert result.incorrect_count == 1
+        assert result.empirical_correctness_rate == pytest.approx(0.0)
+
+    def test_count_accounting_invariant(self):
+        dataset = evaluation_dataset(
+            [
+                _diagnostics_correct_observation(),
+                _diagnostics_wrong_observation(),
+                _diagnostics_correct_observation(),
+            ]
+        )
+        result = evaluate_uncalibrated_winner_diagnostics(dataset)
+        assert result.correct_count + result.incorrect_count == result.count == 3
+
+    def test_exactly_one_numeric_field_for_the_rate(self):
+        # On this binary winner-correctness target the empirical correctness
+        # rate IS the ordinary decision accuracy: mean(Y_correct). The frozen
+        # semantic decision is that this is ONE quantity, so the artifact
+        # carries exactly one numeric field for it and no duplicate
+        # accuracy/base-rate identity.
+        result = evaluate_uncalibrated_winner_diagnostics(
+            evaluation_dataset([_diagnostics_correct_observation()])
+        )
+        names = {f.name for f in fields(WinnerCorrectnessDiagnosticsResult)}
+        assert "empirical_correctness_rate" in names
+        for forbidden in ("accuracy", "base_rate", "correctness_base_rate"):
+            assert forbidden not in names
+        payload = result.canonical_payload()
+        assert "accuracy" not in payload
+        assert "base_rate" not in payload
+        diagnostics = payload["diagnostics"]
+        assert isinstance(diagnostics, dict)
+        assert set(diagnostics) == {
+            "empirical_correctness_rate",
+            "mean_selected_probability",
+            "empirical_constant_brier_reference",
+        }
+
+
+# ---------------------------------------------------------------------------
+# Winner-correctness companion diagnostics: mean selected probability
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerDiagnosticsMeanSelectedProbability:
+    def test_hand_calculated_mean_of_three_selected_probabilities(self):
+        # Selected probabilities 0.8, 0.6, 0.4 -> mean 0.6.
+        observations = (
+            choice_observation_with_probabilities(
+                three_way_probabilities(billing=0.8, shipping=0.1, returns=0.1),
+                resolved_truth("billing"),
+            ),
+            choice_observation(),
+            choice_observation_with_probabilities(
+                three_way_probabilities(billing=0.3, shipping=0.4, returns=0.3),
+                resolved_truth("shipping"),
+            ),
+        )
+        result = evaluate_uncalibrated_winner_diagnostics(evaluation_dataset(list(observations)))
+        assert result.mean_selected_probability == pytest.approx((0.8 + 0.6 + 0.4) / 3)
+        assert result.mean_selected_probability == pytest.approx(0.6)
+
+    def test_bool_true_selection_uses_probability_true(self):
+        observation = bool_observation_with_probability_true(0.8, resolved_truth(True))
+        assert observation.selected_value is True
+        result = evaluate_uncalibrated_winner_diagnostics(evaluation_dataset([observation]))
+        assert result.mean_selected_probability == pytest.approx(0.8)
+
+    def test_bool_false_selection_uses_probability_false(self):
+        # P(True) = 0.2 so P(False) = 0.8, selected False. The mean must use
+        # P(False) = 0.8, not P(True) = 0.2.
+        observation = bool_observation_with_probability_true(0.2, resolved_truth(True))
+        assert observation.selected_value is False
+        result = evaluate_uncalibrated_winner_diagnostics(evaluation_dataset([observation]))
+        assert result.mean_selected_probability == pytest.approx(0.8)
+        assert result.mean_selected_probability != pytest.approx(0.2)
+
+    def test_choice_uses_semantic_lookup(self):
+        # Default choice observation: selected "shipping" at p = 0.6.
+        result = evaluate_uncalibrated_winner_diagnostics(
+            evaluation_dataset([choice_observation()])
+        )
+        assert result.mean_selected_probability == pytest.approx(0.6)
+
+    def test_recorded_non_argmax_selection_is_used_not_the_scoring_label(self):
+        # The recorded selection is "returns" whose semantic probability is
+        # 0.0. The mean must use 0.0, never the scoring-label slot and never
+        # the argmax probability 0.6.
+        observation = recorded_selection_observation(
+            three_way_probabilities(billing=0.6, shipping=0.4, returns=0.0),
+            "returns",
+            resolved_truth("returns"),
+        )
+        assert observation.selected_value == "returns"
+        result = evaluate_uncalibrated_winner_diagnostics(evaluation_dataset([observation]))
+        assert result.mean_selected_probability == pytest.approx(0.0)
+
+    def test_mean_is_aggregate_raw_score_behaviour_not_confidence(self):
+        result = evaluate_uncalibrated_winner_diagnostics(
+            evaluation_dataset([choice_observation()])
+        )
+        names = {f.name for f in fields(WinnerCorrectnessDiagnosticsResult)}
+        assert "confidence" not in names
+        assert result.mean_selected_probability == pytest.approx(0.6)
+
+
+# ---------------------------------------------------------------------------
+# Winner-correctness companion diagnostics: constant Brier reference
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerDiagnosticsConstantReference:
+    def test_labels_one_one_zero_zero_give_reference_one_quarter(self):
+        dataset = evaluation_dataset(
+            [
+                _diagnostics_correct_observation(),
+                _diagnostics_correct_observation(),
+                _diagnostics_wrong_observation(),
+                _diagnostics_wrong_observation(),
+            ]
+        )
+        result = evaluate_uncalibrated_winner_diagnostics(dataset)
+        assert result.empirical_correctness_rate == pytest.approx(0.5)
+        assert result.empirical_constant_brier_reference == pytest.approx(0.25)
+
+    def test_three_correct_one_wrong_gives_reference_three_sixteenths(self):
+        dataset = evaluation_dataset(
+            [
+                _diagnostics_correct_observation(),
+                _diagnostics_correct_observation(),
+                _diagnostics_correct_observation(),
+                _diagnostics_wrong_observation(),
+            ]
+        )
+        result = evaluate_uncalibrated_winner_diagnostics(dataset)
+        assert result.empirical_correctness_rate == pytest.approx(0.75)
+        assert result.empirical_constant_brier_reference == pytest.approx(0.1875)
+
+    def test_all_correct_endpoint_gives_reference_zero(self):
+        # q = 1 -> q * (1 - q) = 0. This is the deliberate hindsight
+        # prevalence endpoint, not a bug.
+        result = evaluate_uncalibrated_winner_diagnostics(
+            evaluation_dataset([_diagnostics_correct_observation()])
+        )
+        assert result.empirical_correctness_rate == pytest.approx(1.0)
+        assert result.empirical_constant_brier_reference == pytest.approx(0.0)
+
+    def test_all_wrong_endpoint_gives_reference_zero(self):
+        # q = 0 -> q * (1 - q) = 0. Same deliberate endpoint.
+        result = evaluate_uncalibrated_winner_diagnostics(
+            evaluation_dataset([_diagnostics_wrong_observation()])
+        )
+        assert result.empirical_correctness_rate == pytest.approx(0.0)
+        assert result.empirical_constant_brier_reference == pytest.approx(0.0)
+
+    def test_reference_equals_rate_times_one_minus_rate(self):
+        observations = [
+            _diagnostics_correct_observation(),
+            _diagnostics_wrong_observation(),
+            _diagnostics_correct_observation(),
+        ]
+        result = evaluate_uncalibrated_winner_diagnostics(evaluation_dataset(observations))
+        q = result.empirical_correctness_rate
+        assert result.empirical_constant_brier_reference == pytest.approx(q * (1.0 - q))
+
+    def test_reference_stays_within_theoretical_range(self):
+        observations = [
+            _diagnostics_correct_observation(),
+            _diagnostics_wrong_observation(),
+            _diagnostics_correct_observation(),
+            _diagnostics_wrong_observation(),
+        ]
+        result = evaluate_uncalibrated_winner_diagnostics(evaluation_dataset(observations))
+        assert 0.0 <= result.empirical_constant_brier_reference <= 0.25
+
+
+# ---------------------------------------------------------------------------
+# Winner-correctness companion diagnostics: exclusion provenance
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerDiagnosticsExclusionProvenance:
+    def test_excluded_rows_never_enter_rate_mean_or_reference(self):
+        # 2 eligible correct rows + 8 taxonomy misses: the rate must be 1.0
+        # over count = 2, never 0.2 over source_count = 10.
+        eligible = [
+            choice_observation_with_probabilities(
+                three_way_probabilities(billing=0.8, shipping=0.1, returns=0.1),
+                resolved_truth("billing"),
+            ),
+            choice_observation_with_probabilities(
+                three_way_probabilities(billing=0.1, shipping=0.6, returns=0.3),
+                resolved_truth("shipping"),
+            ),
+        ]
+        dataset = evaluation_dataset(eligible + _diagnostics_taxonomy_miss_rows(8))
+        result = evaluate_uncalibrated_winner_diagnostics(dataset)
+        assert result.source_count == 10
+        assert result.count == 2
+        assert result.taxonomy_miss_count == 8
+        assert result.correct_count == 2
+        assert result.incorrect_count == 0
+        assert result.empirical_correctness_rate == pytest.approx(1.0)
+        assert result.mean_selected_probability == pytest.approx((0.8 + 0.6) / 2)
+        assert result.empirical_constant_brier_reference == pytest.approx(0.0)
+
+    def test_excluded_rows_never_enter_a_mixed_population_denominator(self):
+        # Same two eligible rows (one correct, one wrong) plus taxonomy
+        # misses: rate stays 0.5 over count = 2, never diluted.
+        eligible = [
+            choice_observation_with_probabilities(
+                three_way_probabilities(billing=0.8, shipping=0.1, returns=0.1),
+                resolved_truth("billing"),
+            ),
+            choice_observation_with_probabilities(
+                three_way_probabilities(billing=0.1, shipping=0.6, returns=0.3),
+                resolved_truth("billing"),
+            ),
+        ]
+        dataset = evaluation_dataset(eligible + _diagnostics_taxonomy_miss_rows(8))
+        result = evaluate_uncalibrated_winner_diagnostics(dataset)
+        assert result.count == 2
+        assert result.correct_count == 1
+        assert result.incorrect_count == 1
+        assert result.empirical_correctness_rate == pytest.approx(0.5)
+        assert result.empirical_constant_brier_reference == pytest.approx(0.25)
+
+
+# ---------------------------------------------------------------------------
+# Winner-correctness companion diagnostics: identity
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerDiagnosticsIdentity:
+    def test_row_order_independence(self):
+        observations = [
+            _diagnostics_correct_observation(),
+            _diagnostics_wrong_observation(),
+            _diagnostics_correct_observation(),
+        ]
+        forward = evaluate_uncalibrated_winner_diagnostics(evaluation_dataset(observations))
+        reversed_result = evaluate_uncalibrated_winner_diagnostics(
+            evaluation_dataset(list(reversed(observations)))
+        )
+        assert forward.fingerprint == reversed_result.fingerprint
+        assert forward.empirical_correctness_rate == reversed_result.empirical_correctness_rate
+
+    def test_multiplicity_is_preserved(self):
+        observation = _diagnostics_correct_observation()
+        single = evaluate_uncalibrated_winner_diagnostics(evaluation_dataset([observation]))
+        doubled = evaluate_uncalibrated_winner_diagnostics(
+            evaluation_dataset([observation, observation])
+        )
+        # The duplicated row enters the population twice.
+        assert doubled.count == 2
+        assert doubled.correct_count == 2
+        assert doubled.empirical_correctness_rate == single.empirical_correctness_rate
+        assert doubled.mean_selected_probability == single.mean_selected_probability
+        assert doubled.empirical_constant_brier_reference == (
+            single.empirical_constant_brier_reference
+        )
+        # ...but the artifacts are distinct because the populations differ.
+        assert doubled.fingerprint != single.fingerprint
+
+    def test_same_dataset_gives_same_diagnostics_fingerprint(self):
+        dataset = evaluation_dataset(
+            [_diagnostics_correct_observation(), _diagnostics_wrong_observation()]
+        )
+        first = evaluate_uncalibrated_winner_diagnostics(dataset)
+        second = evaluate_uncalibrated_winner_diagnostics(dataset)
+        assert first.fingerprint == second.fingerprint
+
+    def test_same_numerics_with_extra_taxonomy_misses_do_not_collapse(self):
+        # A-vs-B: identical eligible rows (one correct, one wrong) so every
+        # numeric diagnostic matches, but cohort B carries three extra
+        # taxonomy misses. The diagnostics numbers are equal while the
+        # diagnostics artifact fingerprints differ.
+        eligible = [
+            choice_observation_with_probabilities(
+                three_way_probabilities(billing=0.8, shipping=0.1, returns=0.1),
+                resolved_truth("billing"),
+            ),
+            choice_observation_with_probabilities(
+                three_way_probabilities(billing=0.1, shipping=0.6, returns=0.3),
+                resolved_truth("billing"),
+            ),
+        ]
+        cohort_a = evaluation_cohort(eligible)
+        cohort_b = evaluation_cohort(eligible + _diagnostics_taxonomy_miss_rows(3))
+        diagnostics_a = evaluate_uncalibrated_winner_diagnostics(
+            CalibrationEvaluationDataset.from_cohort(cohort_a)
+        )
+        diagnostics_b = evaluate_uncalibrated_winner_diagnostics(
+            CalibrationEvaluationDataset.from_cohort(cohort_b)
+        )
+        assert diagnostics_a.empirical_correctness_rate == (
+            diagnostics_b.empirical_correctness_rate
+        )
+        assert diagnostics_a.mean_selected_probability == (diagnostics_b.mean_selected_probability)
+        assert diagnostics_a.empirical_constant_brier_reference == (
+            diagnostics_b.empirical_constant_brier_reference
+        )
+        assert diagnostics_a.correct_count == diagnostics_b.correct_count
+        assert diagnostics_a.count == diagnostics_b.count
+        assert diagnostics_a.source_count != diagnostics_b.source_count
+        assert diagnostics_a.taxonomy_miss_count != diagnostics_b.taxonomy_miss_count
+        assert diagnostics_a.fingerprint != diagnostics_b.fingerprint
+
+    def test_diagnostics_are_deterministic(self):
+        dataset = evaluation_dataset(
+            [
+                _diagnostics_correct_observation(),
+                _diagnostics_wrong_observation(),
+                choice_observation_with_probabilities(
+                    three_way_probabilities(billing=0.8, shipping=0.1, returns=0.1),
+                    resolved_truth("billing"),
+                ),
+            ]
+        )
+        first = evaluate_uncalibrated_winner_diagnostics(dataset)
+        second = evaluate_uncalibrated_winner_diagnostics(dataset)
+        assert first.canonical_payload() == second.canonical_payload()
+        assert first.fingerprint == second.fingerprint
+
+
+# ---------------------------------------------------------------------------
+# Winner-correctness companion diagnostics: construction guard
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerDiagnosticsConstruction:
+    def test_direct_construction_is_rejected(self):
+        with pytest.raises(InvalidDecisionError, match="evaluate_uncalibrated_winner_diagnostics"):
+            WinnerCorrectnessDiagnosticsResult()
+
+    def test_replace_without_fields_is_rejected(self):
+        result = evaluate_uncalibrated_winner_diagnostics(
+            evaluation_dataset([choice_observation()])
+        )
+        with pytest.raises(InvalidDecisionError, match="evaluate_uncalibrated_winner_diagnostics"):
+            replace(result)
+
+    def test_replace_with_derived_value_is_rejected(self):
+        # dataclasses.replace raises its own ValueError for init=False fields
+        # before the token-guarded __init__ ever runs.
+        result = evaluate_uncalibrated_winner_diagnostics(
+            evaluation_dataset([choice_observation()])
+        )
+        with pytest.raises(ValueError, match="init=False"):
+            replace(result, empirical_correctness_rate=0.9)
+
+    def test_evaluator_rejects_non_dataset(self):
+        with pytest.raises(InvalidDecisionError):
+            evaluate_uncalibrated_winner_diagnostics("not-a-dataset")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Winner-correctness companion diagnostics: cross-artifact alignment
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerDiagnosticsCrossArtifactAlignment:
+    def test_three_evaluators_share_provenance_but_not_artifact_identity(self):
+        dataset = evaluation_dataset(
+            [
+                _diagnostics_correct_observation(),
+                _diagnostics_wrong_observation(),
+                _diagnostics_taxonomy_miss_rows(1)[0],
+            ]
+        )
+        brier = evaluate_uncalibrated_winner_brier(dataset)
+        log_loss = evaluate_uncalibrated_winner_log_loss(dataset)
+        diagnostics = evaluate_uncalibrated_winner_diagnostics(dataset)
+
+        assert diagnostics.evaluation_dataset_fingerprint == (brier.evaluation_dataset_fingerprint)
+        assert diagnostics.evaluation_dataset_fingerprint == (
+            log_loss.evaluation_dataset_fingerprint
+        )
+        assert diagnostics.evaluation_dataset_fingerprint_version == (
+            brier.evaluation_dataset_fingerprint_version
+        )
+        assert diagnostics.source_cohort_fingerprint == brier.source_cohort_fingerprint
+        assert diagnostics.source_cohort_fingerprint == log_loss.source_cohort_fingerprint
+        assert diagnostics.source_cohort_fingerprint_version == (
+            brier.source_cohort_fingerprint_version
+        )
+        assert diagnostics.source_count == brier.source_count == log_loss.source_count
+        assert diagnostics.count == brier.count == log_loss.count
+        assert diagnostics.taxonomy_miss_count == (
+            brier.taxonomy_miss_count == log_loss.taxonomy_miss_count
+        )
+        assert diagnostics.unresolved_count == brier.unresolved_count
+        assert diagnostics.unresolved_count == log_loss.unresolved_count
+        assert diagnostics.unadjudicated_resolved_count == brier.unadjudicated_resolved_count
+        assert diagnostics.unadjudicated_resolved_count == log_loss.unadjudicated_resolved_count
+        assert diagnostics.target == brier.target == log_loss.target
+        assert diagnostics.input_score_id == brier.input_score_id == log_loss.input_score_id
+        assert diagnostics.input_score_version == (
+            brier.input_score_version == log_loss.input_score_version
+        )
+        assert len({brier.fingerprint, log_loss.fingerprint, diagnostics.fingerprint}) == 3
+
+
+# ---------------------------------------------------------------------------
+# Winner-correctness companion diagnostics: no semantic conflation
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerDiagnosticsNoConflation:
+    def test_result_has_no_calibration_prediction_or_confidence_fields(self):
+        names = {f.name for f in fields(WinnerCorrectnessDiagnosticsResult)}
+        assert "calibrated" not in names
+        assert "predicted_correctness" not in names
+        assert "confidence" not in names
+
+    def test_no_uncommitted_metric_identity_attribute(self):
+        # Regression guard (cross-review): a stray metric_id/metric_version once
+        # existed on this artifact while being excluded from canonical_payload(),
+        # duplicating the rate identity without binding it into the fingerprint.
+        # The container has no single metric identity; each quantity is
+        # identified inside payload["diagnostics"] instead.
+        assert not hasattr(WinnerCorrectnessDiagnosticsResult, "metric_id")
+        assert not hasattr(WinnerCorrectnessDiagnosticsResult, "metric_version")
+        result = evaluate_uncalibrated_winner_diagnostics(
+            evaluation_dataset([_diagnostics_correct_observation()])
+        )
+        payload = result.canonical_payload()
+        assert "metric_id" not in payload
+        assert "metric_version" not in payload
+        diagnostics = payload["diagnostics"]
+        assert isinstance(diagnostics, dict)
+        expected = {
+            "empirical_correctness_rate": EMPIRICAL_CORRECTNESS_RATE_ID,
+            "mean_selected_probability": MEAN_SELECTED_PROBABILITY_ID,
+            "empirical_constant_brier_reference": EMPIRICAL_CONSTANT_BRIER_REFERENCE_ID,
+        }
+        for key, identity in expected.items():
+            entry = diagnostics[key]
+            assert isinstance(entry, dict)
+            assert entry["id"] == identity
+
+    def test_payload_is_finite_fingerprintable_and_stable(self):
+        dataset = evaluation_dataset(
+            [
+                _diagnostics_correct_observation(),
+                _diagnostics_wrong_observation(),
+            ]
+        )
+        result = evaluate_uncalibrated_winner_diagnostics(dataset)
+        payload = result.canonical_payload()
+
+        def _assert_finite(value):
+            if isinstance(value, float):
+                assert math.isfinite(value)
+            elif isinstance(value, dict):
+                for nested in value.values():
+                    _assert_finite(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    _assert_finite(nested)
+
+        _assert_finite(payload)
+        assert result.fingerprint == fingerprint(payload)
+        assert len(result.fingerprint) == 64
+        # A second evaluation of the same dataset reproduces the payload.
+        again = evaluate_uncalibrated_winner_diagnostics(dataset)
+        assert again.canonical_payload() == payload
+
+    def test_evaluation_does_not_mutate_observations_or_dataset(self):
+        observation = choice_observation()
+        dataset = evaluation_dataset([observation])
+        before_observation = observation.fingerprint
+        before_dataset = dataset.fingerprint
+        evaluate_uncalibrated_winner_diagnostics(dataset)
+        assert observation.fingerprint == before_observation
+        assert dataset.fingerprint == before_dataset
+
+    def test_rate_is_never_written_as_a_prediction(self):
+        # The empirical correctness rate is a population-level rate, never a
+        # per-example predicted probability for a new observation. The
+        # evaluator is read-only: every recorded observation field is
+        # untouched afterwards.
+        observation = choice_observation()
+        dataset = evaluation_dataset([observation])
+        before = (
+            observation.selected_value,
+            observation.probabilities,
+            observation.correct,
+            observation.status,
+            observation.fingerprint,
+        )
+        evaluate_uncalibrated_winner_diagnostics(dataset)
+        after = (
+            observation.selected_value,
+            observation.probabilities,
+            observation.correct,
+            observation.status,
+            observation.fingerprint,
+        )
+        assert after == before
+
+
+# ---------------------------------------------------------------------------
+# Winner-correctness companion diagnostics: version guards
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerDiagnosticsVersionGuards:
+    def test_new_diagnostics_fingerprint_version_is_one(self):
+        assert WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION == 1
+
+    def test_diagnostics_identity_constants(self):
+        assert EMPIRICAL_CORRECTNESS_RATE_ID == "empirical-winner-correctness-rate"
+        assert EMPIRICAL_CORRECTNESS_RATE_VERSION == 1
+        assert MEAN_SELECTED_PROBABILITY_ID == "mean-uncalibrated-selected-probability"
+        assert MEAN_SELECTED_PROBABILITY_VERSION == 1
+        assert (
+            EMPIRICAL_CONSTANT_BRIER_REFERENCE_ID
+            == "empirical-correctness-rate-constant-brier-reference"
+        )
+        assert EMPIRICAL_CONSTANT_BRIER_REFERENCE_VERSION == 1
+
+    def test_pre_existing_versions_unchanged(self):
+        assert CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION == 1
+        assert CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION == 2
+        assert BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION == 2
+        assert LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION == 2
+        assert BRIER_METRIC_VERSION == 1
+        assert LOG_LOSS_METRIC_VERSION == 1
         assert UNCALIBRATED_SELECTED_PROBABILITY_VERSION == 1

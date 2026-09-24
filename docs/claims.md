@@ -538,6 +538,44 @@ has been fitted, and no calibration-quality claim is made anywhere.
    identities and the artifact fingerprints differ. Evidence:
    `tests/test_calibration_evaluation.py` (`TestLogLossEvaluationResult`,
    `TestLogLossCrossMetricProvenance`, `TestLogLossVersionGuards`).
+ - `[V]` The winner-correctness companion diagnostics artifact
+   `WinnerCorrectnessDiagnosticsResult` derives exactly three quantities from
+   the exact metric-eligible evaluation population, with no caller-supplied
+   derived values: the empirical winner-correctness rate
+   (`correct_count / count`, which on this binary target is also the ordinary
+   decision accuracy, committed as ONE numeric field with no duplicate
+   accuracy or base-rate identity), the mean selected probability
+   (`math.fsum(p_i) / count` over the same uncalibrated selected semantic
+   probabilities used by Brier and log loss, never labelled confidence or
+   predicted correctness), and the empirical constant Brier reference
+   (`math.fsum((q - y_i)^2) / count` with `q` the empirical correctness rate,
+   equal to `q * (1 - q)` within floating-point evaluation). Excluded cohort
+   rows never enter any denominator: two eligible correct rows plus eight
+   taxonomy misses give `count = 2`, rate `1.0`, `source_count = 10`, and
+   `taxonomy_miss_count = 8`, never a rate of `0.2`. Evidence:
+   `tests/test_calibration_evaluation.py` (`TestWinnerDiagnosticsAccuracy`,
+   `TestWinnerDiagnosticsMeanSelectedProbability`,
+   `TestWinnerDiagnosticsConstantReference`,
+   `TestWinnerDiagnosticsExclusionProvenance`).
+ - `[V]` `WinnerCorrectnessDiagnosticsResult` (fingerprint version 1) commits
+   the same dataset, cohort, exclusion, and input-score provenance as Brier
+   and exact log loss: the evaluation dataset fingerprint and payload version,
+   the source cohort fingerprint and payload version, `source_count`, the
+   evaluated `count`, the three exclusion counts, the target
+   (`winner_correctness`), and the input-score identity and version
+   (`uncalibrated-selected-probability`, version 1), plus `correct_count`,
+   `incorrect_count`, and each diagnostic's identity and version. On one
+   dataset the three evaluators agree on all of that provenance while their
+   artifact fingerprints all differ. The only supported construction path is
+   `evaluate_uncalibrated_winner_diagnostics(dataset)` (direct construction
+   and `dataclasses.replace(result)` raise `InvalidDecisionError`;
+   `dataclasses.replace(result, empirical_correctness_rate=...)` is rejected
+   by `dataclasses` itself with a `ValueError`). Identical numeric diagnostics
+   from cohorts with different exclusions never collapse to the same
+   diagnostics fingerprint. Evidence: `tests/test_calibration_evaluation.py`
+   (`TestWinnerDiagnosticsConstruction`,
+   `TestWinnerDiagnosticsCrossArtifactAlignment`, `TestWinnerDiagnosticsIdentity`,
+   `TestWinnerDiagnosticsVersionGuards`).
 
 These claims are deterministic implementation claims about the evaluation
 foundation only. They are NOT claims that any model is calibrated, that any

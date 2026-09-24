@@ -47,20 +47,29 @@ __all__ = [
     "BRIER_METRIC_VERSION",
     "CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION",
     "CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION",
+    "EMPIRICAL_CONSTANT_BRIER_REFERENCE_ID",
+    "EMPIRICAL_CONSTANT_BRIER_REFERENCE_VERSION",
+    "EMPIRICAL_CORRECTNESS_RATE_ID",
+    "EMPIRICAL_CORRECTNESS_RATE_VERSION",
     "LOG_LOSS_BOUNDARY_POLICY",
     "LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION",
     "LOG_LOSS_LOG_BASE",
     "LOG_LOSS_METRIC_ID",
     "LOG_LOSS_METRIC_VERSION",
     "LOG_LOSS_TARGET",
+    "MEAN_SELECTED_PROBABILITY_ID",
+    "MEAN_SELECTED_PROBABILITY_VERSION",
     "UNCALIBRATED_SELECTED_PROBABILITY_ID",
     "UNCALIBRATED_SELECTED_PROBABILITY_VERSION",
+    "WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION",
     "BrierEvaluationResult",
     "CalibrationEvaluationCohort",
     "CalibrationEvaluationDataset",
     "EvaluationSplitRole",
     "LogLossEvaluationResult",
+    "WinnerCorrectnessDiagnosticsResult",
     "evaluate_uncalibrated_winner_brier",
+    "evaluate_uncalibrated_winner_diagnostics",
     "evaluate_uncalibrated_winner_log_loss",
 ]
 
@@ -72,6 +81,7 @@ CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION = 1
 CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION = 2
 BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION = 2
 LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION = 2
+WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION = 1
 
 # ---------------------------------------------------------------------------
 # Score semantics identity
@@ -106,6 +116,35 @@ LOG_LOSS_BOUNDARY_POLICY = "exact"
 LOG_LOSS_LOG_BASE = "e"
 
 # ---------------------------------------------------------------------------
+# Companion diagnostics identity
+# ---------------------------------------------------------------------------
+
+#: The empirical winner-correctness rate over the metric-eligible projection:
+#: ``correct_count / count``. On this binary winner-correctness target this ONE
+#: quantity is both the empirical correctness rate and the ordinary decision
+#: accuracy on the evaluated rows; it is deliberately NOT stored twice under
+#: two names. It is a rate over the evaluated population, NOT a per-example
+#: predicted probability, and it is never written into
+#: ``predicted_correctness``.
+EMPIRICAL_CORRECTNESS_RATE_ID = "empirical-winner-correctness-rate"
+EMPIRICAL_CORRECTNESS_RATE_VERSION = 1
+
+#: The mean of the uncalibrated selected semantic probabilities over the
+#: metric-eligible projection. Its semantics remain the UNCALIBRATED selected
+#: semantic probability in aggregate; it is NOT a confidence, NOT predicted
+#: correctness, and NOT a calibrated probability.
+MEAN_SELECTED_PROBABILITY_ID = "mean-uncalibrated-selected-probability"
+MEAN_SELECTED_PROBABILITY_VERSION = 1
+
+#: The Brier value that a constant score equal to the evaluated population's
+#: empirical correctness rate would obtain on these SAME evaluated rows. This
+#: is a hindsight, in-sample, descriptive reference point derived from the
+#: evaluation outcomes themselves; it is NOT an operational predictor, NOT a
+#: training-derived baseline, and NOT calibration evidence.
+EMPIRICAL_CONSTANT_BRIER_REFERENCE_ID = "empirical-correctness-rate-constant-brier-reference"
+EMPIRICAL_CONSTANT_BRIER_REFERENCE_VERSION = 1
+
+# ---------------------------------------------------------------------------
 # Construction tokens for the supported-path-only artifacts
 # ---------------------------------------------------------------------------
 
@@ -113,6 +152,7 @@ _COHORT_CONSTRUCTION_TOKEN = object()
 _DATASET_CONSTRUCTION_TOKEN = object()
 _BRIER_RESULT_CONSTRUCTION_TOKEN = object()
 _LOG_LOSS_RESULT_CONSTRUCTION_TOKEN = object()
+_DIAGNOSTICS_RESULT_CONSTRUCTION_TOKEN = object()
 
 _BOOL_TRUE_NAME = "true"
 _BOOL_FALSE_NAME = "false"
@@ -963,3 +1003,248 @@ def evaluate_uncalibrated_winner_log_loss(
             f"CalibrationEvaluationDataset, got {type(dataset).__name__}"
         )
     return LogLossEvaluationResult(dataset, _construction_token=_LOG_LOSS_RESULT_CONSTRUCTION_TOKEN)
+
+
+@dataclass(frozen=True, slots=True)
+class WinnerCorrectnessDiagnosticsResult:
+    """Immutable, provenance-rich companion diagnostics for one evaluation run.
+
+    This artifact answers "what do these evaluated rows look like" next to the
+    Brier and exact log-loss metrics. It commits three diagnostics over the
+    SAME metric-eligible projection the metrics score:
+
+    - the empirical winner-correctness rate (``correct_count / count``). On
+      this binary winner-correctness target this ONE quantity is also the
+      ordinary decision accuracy on the evaluated rows; it is stored once,
+      under one identity, never duplicated as a second ``accuracy`` or
+      ``base_rate`` field.
+    - the mean uncalibrated selected semantic probability: aggregate raw-score
+      behaviour, NOT a confidence and NOT predicted correctness.
+    - the empirical constant Brier reference: the Brier value a constant score
+      equal to the empirical correctness rate would obtain on these SAME
+      evaluated rows. It is a hindsight, in-sample, descriptive reference
+      derived from the evaluation outcomes themselves, NOT an operational
+      predictor available before observing the outcomes, NOT a
+      training-derived baseline, and NOT calibration evidence. All-correct
+      gives rate ``1`` and reference ``0``; all-wrong gives rate ``0`` and
+      reference ``0``; that endpoint behaviour is deliberate and is exactly
+      why the reference is a hindsight prevalence reference. No Brier skill
+      score, relative improvement, or winner/loser verdict is derived from it.
+
+    The supported construction contract is the module-level evaluator
+    :func:`evaluate_uncalibrated_winner_diagnostics`. Direct construction and
+    ``dataclasses.replace`` reconstruction are rejected so a caller cannot
+    combine one dataset with fabricated diagnostics. This is an API discipline
+    within the supported construction contract, not a security boundary;
+    low-level Python escape hatches such as ``object.__new__`` are not
+    supported construction paths and are not defended against.
+
+    ``dataclasses.replace(result)`` reaches ``__init__`` with no construction
+    token and is rejected with :class:`InvalidDecisionError`.
+    ``dataclasses.replace(result, value=...)`` is rejected earlier by
+    ``dataclasses`` itself (a ``ValueError``, because every field is declared
+    with ``init=False``) and never reaches ``__init__``; that rejection is
+    intentional and is NOT an :class:`InvalidDecisionError`.
+
+    ``count`` is the number of observations actually scored (the evaluated
+    count), NOT the source cohort size. Excluded cohort rows never enter
+    ``count``, the correctness rate, the mean selected probability, or the
+    constant reference. The cohort provenance fields record the declared
+    source cohort identity and the explicit exclusion accounting. No
+    caller-supplied derived value exists, and ``canonical_payload`` generates
+    every nested object fresh; no caller-owned mapping is stored.
+    """
+
+    target: str = field(init=False, repr=False)
+    input_score_id: str = field(init=False, repr=False)
+    input_score_version: int = field(init=False, repr=False)
+    evaluation_dataset_fingerprint: str = field(init=False, repr=False)
+    evaluation_dataset_fingerprint_version: int = field(init=False, repr=False)
+    source_cohort_fingerprint: str = field(init=False, repr=False)
+    source_cohort_fingerprint_version: int = field(init=False, repr=False)
+    source_count: int = field(init=False, repr=False)
+    taxonomy_miss_count: int = field(init=False, repr=False)
+    unresolved_count: int = field(init=False, repr=False)
+    unadjudicated_resolved_count: int = field(init=False, repr=False)
+    count: int = field(init=False, repr=False)
+    correct_count: int = field(init=False, repr=False)
+    incorrect_count: int = field(init=False, repr=False)
+    empirical_correctness_rate: float = field(init=False, repr=False)
+    mean_selected_probability: float = field(init=False, repr=False)
+    empirical_constant_brier_reference: float = field(init=False, repr=False)
+
+    def __init__(
+        self,
+        dataset: CalibrationEvaluationDataset | None = None,
+        *,
+        _construction_token: object = None,
+    ) -> None:
+        if _construction_token is not _DIAGNOSTICS_RESULT_CONSTRUCTION_TOKEN:
+            raise InvalidDecisionError(
+                "WinnerCorrectnessDiagnosticsResult cannot be constructed "
+                "directly or with dataclasses.replace; use "
+                "evaluate_uncalibrated_winner_diagnostics(dataset), the only "
+                "supported construction path"
+            )
+        if not isinstance(dataset, CalibrationEvaluationDataset):
+            raise InvalidDecisionError(
+                "the supported WinnerCorrectnessDiagnosticsResult construction "
+                "path requires a CalibrationEvaluationDataset, got "
+                f"{type(dataset).__name__}"
+            )
+        count = len(dataset.observations)
+        labels: list[float] = []
+        probabilities: list[float] = []
+        for observation in dataset.observations:
+            labels.append(1.0 if observation.correct else 0.0)
+            probabilities.append(_selected_probability(observation))
+        correct_count = math.fsum(labels)
+        if not correct_count.is_integer():
+            raise InvalidDecisionError(
+                "the derived winner-correctness labels are not binary; the "
+                "winner-correctness diagnostics cannot be computed"
+            )
+        correct_count = int(correct_count)
+        incorrect_count = count - correct_count
+        empirical_correctness_rate = correct_count / count
+        mean_selected_probability = math.fsum(probabilities) / count
+        empirical_constant_brier_reference = (
+            math.fsum((empirical_correctness_rate - label) ** 2 for label in labels) / count
+        )
+        object.__setattr__(self, "target", BRIER_TARGET)
+        object.__setattr__(self, "input_score_id", UNCALIBRATED_SELECTED_PROBABILITY_ID)
+        object.__setattr__(self, "input_score_version", UNCALIBRATED_SELECTED_PROBABILITY_VERSION)
+        object.__setattr__(self, "evaluation_dataset_fingerprint", dataset.fingerprint)
+        object.__setattr__(
+            self,
+            "evaluation_dataset_fingerprint_version",
+            CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION,
+        )
+        object.__setattr__(self, "source_cohort_fingerprint", dataset.source_cohort_fingerprint)
+        object.__setattr__(
+            self,
+            "source_cohort_fingerprint_version",
+            CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION,
+        )
+        object.__setattr__(self, "source_count", dataset.source_count)
+        object.__setattr__(self, "taxonomy_miss_count", dataset.taxonomy_miss_count)
+        object.__setattr__(self, "unresolved_count", dataset.unresolved_count)
+        object.__setattr__(
+            self, "unadjudicated_resolved_count", dataset.unadjudicated_resolved_count
+        )
+        object.__setattr__(self, "count", count)
+        object.__setattr__(self, "correct_count", correct_count)
+        object.__setattr__(self, "incorrect_count", incorrect_count)
+        object.__setattr__(self, "empirical_correctness_rate", empirical_correctness_rate)
+        object.__setattr__(self, "mean_selected_probability", mean_selected_probability)
+        object.__setattr__(
+            self, "empirical_constant_brier_reference", empirical_constant_brier_reference
+        )
+
+    def canonical_payload(self) -> dict[str, JSONValue]:
+        """Return the exact payload the fingerprint hashes.
+
+        Commits the diagnostics identity, the input-score identity, the
+        evaluation dataset identity with its payload schema version, the
+        source cohort identity, the explicit exclusion accounting, the label
+        and rate accounting, and each diagnostic with its own identity and
+        version. Every nested object is generated fresh here; no caller-owned
+        mapping is stored or emitted. Timestamps, wall-clock time, hostnames,
+        and logging metadata are deliberately excluded.
+        """
+        return {
+            "v": WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION,
+            "target": self.target,
+            "input_score_id": self.input_score_id,
+            "input_score_version": self.input_score_version,
+            "evaluation_dataset_fingerprint": self.evaluation_dataset_fingerprint,
+            "evaluation_dataset_fingerprint_version": (self.evaluation_dataset_fingerprint_version),
+            "source_cohort_fingerprint": self.source_cohort_fingerprint,
+            "source_cohort_fingerprint_version": self.source_cohort_fingerprint_version,
+            "source_count": self.source_count,
+            "count": self.count,
+            "exclusions": {
+                "taxonomy_miss": self.taxonomy_miss_count,
+                "unresolved": self.unresolved_count,
+                "unadjudicated_resolved": self.unadjudicated_resolved_count,
+            },
+            "correct_count": self.correct_count,
+            "incorrect_count": self.incorrect_count,
+            "diagnostics": {
+                "empirical_correctness_rate": {
+                    "id": EMPIRICAL_CORRECTNESS_RATE_ID,
+                    "version": EMPIRICAL_CORRECTNESS_RATE_VERSION,
+                    "value": self.empirical_correctness_rate,
+                },
+                "mean_selected_probability": {
+                    "id": MEAN_SELECTED_PROBABILITY_ID,
+                    "version": MEAN_SELECTED_PROBABILITY_VERSION,
+                    "value": self.mean_selected_probability,
+                },
+                "empirical_constant_brier_reference": {
+                    "id": EMPIRICAL_CONSTANT_BRIER_REFERENCE_ID,
+                    "version": EMPIRICAL_CONSTANT_BRIER_REFERENCE_VERSION,
+                    "constant_probability": self.empirical_correctness_rate,
+                    "value": self.empirical_constant_brier_reference,
+                },
+            },
+        }
+
+    @property
+    def fingerprint(self) -> str:
+        """Stable identity of the diagnostics artifact.
+
+        The hash of :meth:`canonical_payload`, deterministic for the object
+        lifetime: every payload field is an immutable scalar, string, or
+        freshly generated nested object fixed at construction.
+        """
+        return fingerprint(self.canonical_payload())
+
+
+def evaluate_uncalibrated_winner_diagnostics(
+    dataset: CalibrationEvaluationDataset,
+) -> WinnerCorrectnessDiagnosticsResult:
+    """Evaluate the winner-correctness companion diagnostics.
+
+    Over the metric-eligible projection of the dataset (excluded cohort rows
+    never enter any denominator):
+
+    - ``y_i = 1`` when the observation is correct, ``0`` otherwise;
+      ``correct_count = sum(y_i)``, ``incorrect_count = count -
+      correct_count``, and ``correct_count + incorrect_count == count``.
+    - ``empirical_correctness_rate = correct_count / count``. On this binary
+      winner-correctness target this is also the ordinary decision accuracy
+      on the evaluated rows. It is a rate over the evaluated population, NOT
+      a per-example predicted probability, and it is never written into
+      ``predicted_correctness``.
+    - ``mean_selected_probability = fsum(p_i) / count`` where ``p_i`` is the
+      uncalibrated selected semantic probability extracted by the SAME
+      ``_selected_probability`` helper the metrics use. Its semantics remain
+      the uncalibrated selected semantic probability in aggregate; it is NOT
+      a confidence, NOT predicted correctness, and NOT a calibrated
+      probability.
+    - ``empirical_constant_brier_reference = fsum((q - y_i)^2) / count``
+      where ``q`` is the empirical correctness rate; algebraically
+      ``q * (1 - q)``. It answers "what Brier value would a constant score
+      equal to this evaluated population's empirical correctness rate obtain
+      on these same evaluated rows?" It is a hindsight, in-sample, descriptive
+      reference derived from the evaluation outcomes themselves, NOT an
+      operational predictor, NOT a training-derived baseline, and NOT
+      calibration evidence. No Brier skill score, relative improvement, or
+      winner/loser verdict is derived from it, and no constant log-loss,
+      entropy, or cross-entropy reference exists.
+
+    This is a read-only offline measurement: it does not mutate the dataset or
+    any observation, does not set ``calibrated`` or ``predicted_correctness``
+    anywhere, does not create a :class:`~probvenance.calibration.CalibrationProfile`,
+    and does not touch the runtime.
+    """
+    if not isinstance(dataset, CalibrationEvaluationDataset):
+        raise InvalidDecisionError(
+            "evaluate_uncalibrated_winner_diagnostics requires a "
+            f"CalibrationEvaluationDataset, got {type(dataset).__name__}"
+        )
+    return WinnerCorrectnessDiagnosticsResult(
+        dataset,
+        _construction_token=_DIAGNOSTICS_RESULT_CONSTRUCTION_TOKEN,
+    )

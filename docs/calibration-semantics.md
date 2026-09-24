@@ -21,6 +21,11 @@ Evaluation metrics:        pre-calibration winner-correctness Brier and exact
                            (src/probvenance/calibration_evaluation.py); result
                            fingerprint v2 commits source cohort identity and
                            exclusion accounting
+Companion diagnostics:     implemented (src/probvenance/calibration_evaluation.py):
+                           winner-correctness companion diagnostics artifact
+                           (empirical correctness rate, mean selected
+                           probability, empirical constant Brier reference)
+                           with result fingerprint v1
 Fitting algorithms:        not implemented
 Calibration runtime:       not implemented
 predicted_correctness:     None for every result the runtime can currently produce
@@ -1048,6 +1053,69 @@ section 14.1, punishing confident errors far more sharply than Brier. As in
 section 14.1, this pre-calibration run does not grant that interpretation to the
 raw uncalibrated selected semantic probability, so the metric is a diagnostic
 baseline and not calibration-quality evidence.
+
+### 14.2.1 Companion winner-correctness diagnostics
+
+Alongside Brier and exact log loss, the evaluation module produces one
+companion diagnostics artifact for the pre-calibration winner-correctness
+target: `WinnerCorrectnessDiagnosticsResult`, built by
+`evaluate_uncalibrated_winner_diagnostics(dataset)` over the same
+metric-eligible projection. It commits three derived quantities, each with its
+own identity:
+
+```text
+empirical winner-correctness rate   correct_count / count
+mean selected probability           mean of the uncalibrated selected
+                                    semantic probabilities p_i
+empirical constant Brier reference  mean((q - y_i)^2) with q the
+                                    empirical correctness rate
+```
+
+The empirical winner-correctness rate is ONE quantity. On this binary
+winner-correctness target, `mean(Y_correct)` is simultaneously the empirical
+base rate of `Y_correct` and the ordinary decision accuracy on the evaluated
+rows. The artifact therefore carries exactly one numeric field for it
+(`empirical_correctness_rate`); no duplicate `accuracy` or `base_rate` metric
+identity exists. It is a population-level rate over the evaluated rows, never a
+per-example predicted probability for a new observation, and it is never
+written into `predicted_correctness`.
+
+The mean selected probability is aggregate raw-score behaviour: the average of
+the uncalibrated selected semantic probabilities over the same evaluated rows.
+It stays the uncalibrated selected semantic probability in aggregate form; it
+is not confidence, not predicted correctness, and not a calibrated probability.
+
+The empirical constant Brier reference is a hindsight, in-sample, descriptive
+reference point. It answers exactly one question: what Brier value would a
+constant score equal to this evaluated population's empirical correctness rate
+obtain on these same evaluated rows? It is derived from the outcomes of the
+same evaluation dataset it describes, so it is not an operational predictor
+available before observing the evaluation outcomes, and it is not a
+training-derived baseline. It must not be presented as a naive production
+baseline, a best baseline, an expected deployment baseline, or a deployable
+baseline of any kind. The endpoint behaviour is deliberate: an all-correct
+population has `q = 1` and reference `0`, and an all-wrong population has
+`q = 0` and reference `0`. That is exactly what a hindsight prevalence
+reference does, and it is why the reference must not be turned into a skill
+score, a relative improvement, a percentage better, or any winner-versus-loser
+verdict. No constant base-rate log loss, entropy reference, or cross-entropy
+reference is derived from it.
+
+No calibration-gap, overconfidence, or underconfidence metric is derived from
+the difference between the mean selected probability and the empirical
+correctness rate. A single global mean difference cannot describe calibration:
+two populations can share the same mean and the same rate while having
+completely different conditional reliability structure. Reliability analysis
+and ECE (sections 14.3 to 14.5) are the designated tools for that question and
+remain unimplemented.
+
+Together the three diagnostics help interpret a Brier value on the evaluated
+rows: the rate says how often the winner was correct, the mean selected
+probability says how large the raw scores were on average, and the constant
+reference says what a prevalence-matched constant score would have scored on
+the same rows. None of the three is calibration evidence: the rate carries no
+score information, the mean score carries no correctness structure, and the
+reference is a hindsight in-sample quantity rather than a forecast property.
 
 ### 14.3 Expected calibration error
 

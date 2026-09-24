@@ -95,7 +95,9 @@ runtime profile application do not exist, and `predicted_correctness` remains
 `None` for every result the runtime can produce.
 
 - Evaluation harness (started: declared evaluation source cohort, metric-eligible
-  dataset projection, Brier, log loss).
+  dataset projection, Brier, log loss; delivered: winner-correctness companion
+  diagnostics artifact with the empirical correctness rate, the mean selected
+  probability, and the empirical constant Brier reference).
 - Expected calibration error (ECE).
 - Temperature scaling.
 - Calibration profile.
