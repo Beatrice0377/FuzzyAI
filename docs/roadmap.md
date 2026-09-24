@@ -124,12 +124,19 @@ evaluator consumes that one artifact rather than re-binding labels from a
 separately supplied source dataset. Explicit runtime-linked profile application
 is implemented (`apply_profile_to_runtime_evaluation`): a caller may apply one
 exact compatible profile to one uncalibrated runtime `Evaluation` to produce a
-calibrated result and a trace that mirror the profile identity. Profile
+calibrated result and a trace that mirror the profile identity. Versioned
+canonical JSON serialization and identity-verified loading are implemented
+(Phase 4C.5, `serialize_calibration_profile` / `load_calibration_profile`): a
+deterministic document materializes the nested binding and
+ground-truth-semantics payloads, and the loader re-verifies every nested
+identity and the restored profile fingerprint rather than trusting the
+document, with optional out-of-band expected-fingerprint pinning. Profile
 registries, profile lookup, profile matching policy beyond exact binding match,
-profile serialization, automatic runtime profile selection, the remaining
-metrics, and automatic runtime calibration (deriving scores without an explicit
-caller-supplied profile) do not exist, and `predicted_correctness` remains `None`
-for every runtime result that no caller has explicitly calibrated.
+a profile store or cross-process loading from a store, automatic runtime
+profile selection, the remaining metrics, and automatic runtime calibration
+(deriving scores without an explicit caller-supplied profile) do not exist, and
+`predicted_correctness` remains `None` for every runtime result that no caller
+has explicitly calibrated.
 
 - Evaluation harness (started: declared evaluation source cohort, metric-eligible
   dataset projection, Brier, log loss; delivered: winner-correctness companion

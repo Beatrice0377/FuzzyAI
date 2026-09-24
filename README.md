@@ -21,11 +21,14 @@ equal-width reliability, and the binned absolute-gap aggregate consume that one
 artifact.
 Explicit runtime-linked profile application is implemented: a caller may apply
 one exact compatible profile to one uncalibrated runtime `Evaluation` to obtain
-a calibrated result and a trace that mirror the profile identity. Automatic
-runtime profile selection, profile registries, lookup, and serialization do not
-exist, and `predicted_correctness` remains `None` for every runtime result that
-no caller has explicitly calibrated. Abstention and every other Choice strategy
-are not implemented.
+a calibrated result and a trace that mirror the profile identity. A profile also
+has a versioned canonical JSON serialization and an identity-verified loader:
+the loader reconstructs the nested binding and ground-truth-semantics
+identities and re-verifies every fingerprint rather than trusting the document.
+Automatic runtime profile selection, profile registries, lookup, and a profile
+store do not exist, and `predicted_correctness` remains `None` for every
+runtime result that no caller has explicitly calibrated. Abstention and every
+other Choice strategy are not implemented.
 
 Probvenance is a provider-agnostic probabilistic decision runtime. It turns language
 models into evaluable, calibratable, trackable semantic-probability decision

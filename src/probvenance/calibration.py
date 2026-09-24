@@ -21,9 +21,11 @@ binding do not match its training data.
 
 Still NOT implemented here (out of scope): alternative calibration methods
 (temperature scaling, isotonic regression), profile registries, nearest-profile
-matching, profile serialization or cross-process loading, runtime profile
-application, and evaluation metrics (which live in
-``probvenance.calibration_evaluation``).
+matching, a profile store or cross-process loading from a store, automatic
+runtime calibration, and evaluation metrics (which live in
+``probvenance.calibration_evaluation``). A versioned canonical JSON
+serialization and identity-verified loading ARE implemented here
+(:func:`serialize_calibration_profile`, :func:`load_calibration_profile`).
 
 Public API note: this foundation is intentionally NOT frozen as public API
 yet. Nothing from this module is exported through ``probvenance.__all__`` or
@@ -33,6 +35,7 @@ imported into ``probvenance/__init__.py``; the module is importable as
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -61,6 +64,20 @@ CALIBRATION_DATASET_FINGERPRINT_VERSION = 2
 
 CALIBRATION_PROFILE_FINGERPRINT_VERSION = 1
 """Version of the calibration profile fingerprint payload schema."""
+
+CALIBRATION_PROFILE_SERIALIZATION_VERSION = 1
+"""Wire-format version of the serialized calibration profile document.
+
+Deliberately independent of :data:`CALIBRATION_PROFILE_FINGERPRINT_VERSION`:
+the document schema describes HOW a profile is materialized, while the
+fingerprint schema describes WHAT the profile identity is. A
+serialization-only change bumps this constant and leaves the profile
+artifact identity untouched. The v1 loader fails closed on any other
+serialization version.
+"""
+
+CALIBRATION_PROFILE_SERIALIZATION_TYPE = "probvenance.calibration-profile"
+"""Artifact-type marker for a serialized calibration profile document."""
 
 GROUND_TRUTH_SEMANTICS_FINGERPRINT_VERSION = 1
 """Version of the ground-truth semantics fingerprint payload schema."""
@@ -1354,28 +1371,37 @@ class CalibrationProfile:
     fingerprint says which observations were fitted, NOT that they were a
     good fitting population.
 
-    A supported public fitter now exists:
+    A supported public fitter exists:
     :func:`fit_l2_logistic_selected_probability` produces a profile from a
     fitting :class:`CalibrationDataset`. That fitter proves only that its
-    declared fitting problem was solved; evaluating the fitted mapping on
-    held-out data, and runtime profile application, are later phases.
+    declared fitting problem was solved; it is not evidence that the mapping
+    improves calibration on held-out data. Offline profile application and
+    explicit runtime-linked application are implemented in later phases.
     Applying a profile does not require a runtime ground-truth record: the
     profile's ground-truth semantics identity describes what the fitted
     ``predicted_correctness`` refers to, and the event being predicted
     normally has no ground truth yet.
 
-    Internally, construction goes through the module-private
+    A profile may also be restored from a serialized document through the
+    supported identity-verified loader
+    :func:`load_calibration_profile`, which re-derives and re-verifies every
+    nested identity before returning. Restoration is not fitting: it does not
+    require a :class:`CalibrationDataset` and does not refit.
+
+    Internally, construction goes through one of two module-private paths:
     :meth:`_from_fitted_state`, which derives the binding, the ground-truth
     semantics identity, the target identity, the input-score identity, and
     the training dataset fingerprint from a fitted
-    :class:`CalibrationDataset`. Direct field construction is rejected, and
-    so is ``dataclasses.replace`` reconstruction: both rebuild a profile
-    through the constructor without the construction capability, and neither
-    passes through the internal construction path that derives the
-    identity from a dataset. Lower-level Python escape hatches such as
-    ``object.__new__``, ``copy``, and ``pickle`` are inherent to the
+    :class:`CalibrationDataset`; or :meth:`_from_serialized_state`, which
+    restores those identity fields from a document the loader has already
+    verified. Direct field construction is rejected, and so is
+    ``dataclasses.replace`` reconstruction: both rebuild a profile through
+    the constructor without the construction capability, and neither passes
+    through a supported construction path. Lower-level Python escape hatches
+    such as ``object.__new__``, ``copy``, and ``pickle`` are inherent to the
     language, are not supported construction paths, and are not defended
-    against.
+    against. The JSON loader is unrelated to ``pickle``-style Python object
+    deserialization.
     """
 
     binding: CalibrationBinding
@@ -1555,6 +1581,56 @@ class CalibrationProfile:
             _construction_token=_PROFILE_CONSTRUCTION_TOKEN,
         )
 
+    @classmethod
+    def _from_serialized_state(
+        cls,
+        *,
+        binding: CalibrationBinding,
+        ground_truth_semantics: GroundTruthSemanticsIdentity,
+        target_id: str,
+        target_version: int,
+        input_score_id: str,
+        input_score_version: int,
+        method_id: str,
+        method_version: int,
+        method_configuration: Mapping[str, JSONValue],
+        fitted_parameters: Mapping[str, JSONValue],
+        training_dataset_fingerprint: str,
+        training_dataset_fingerprint_version: int,
+    ) -> CalibrationProfile:
+        """Restore a profile from an already verified serialized identity.
+
+        The second supported construction path, alongside
+        :meth:`_from_fitted_state`. Unlike the fitter path, the identity is
+        not derived from a dataset: it was committed when the profile was
+        originally fitted and the loader has already verified it. The same
+        structural validation and taxonomy coherence contract still run, so
+        deserialization cannot resurrect a profile the Profile contract
+        would reject.
+        """
+        _require_coherent_taxonomy_identity(binding, ground_truth_semantics)
+        configuration = _freeze_method_state(
+            _require_method_state_mapping("method_configuration", method_configuration)
+        )
+        parameters = _freeze_method_state(
+            _require_method_state_mapping("fitted_parameters", fitted_parameters)
+        )
+        return cls(
+            binding=binding,
+            ground_truth_semantics=ground_truth_semantics,
+            target_id=target_id,
+            target_version=target_version,
+            input_score_id=input_score_id,
+            input_score_version=input_score_version,
+            method_id=method_id,
+            method_version=method_version,
+            method_configuration=configuration,
+            fitted_parameters=parameters,
+            training_dataset_fingerprint=training_dataset_fingerprint,
+            training_dataset_fingerprint_version=training_dataset_fingerprint_version,
+            _construction_token=_PROFILE_CONSTRUCTION_TOKEN,
+        )
+
     def require_binding_match(self, binding: CalibrationBinding) -> None:
         """Require an exact binding match or raise.
 
@@ -1614,6 +1690,403 @@ class CalibrationProfile:
     def fingerprint(self) -> str:
         """Versioned fingerprint of the calibration profile identity."""
         return fingerprint(self.canonical_payload())
+
+
+# ---------------------------------------------------------------------------
+# CalibrationProfile serialization and identity-verified loading (Phase 4C.5)
+# ---------------------------------------------------------------------------
+#
+# ``canonical_payload()`` commits the nested binding and ground-truth-semantics
+# identities by fingerprint and schema version only, so it cannot rebuild those
+# objects: ``load(canonical_json(profile.canonical_payload()))`` is not a
+# supported round trip. This envelope materializes both nested identity
+# payloads alongside the frozen profile identity payload. It is not a second
+# profile identity (there is no serialization fingerprint), and the loader
+# never trusts a claimed hash: every nested identity is reconstructed and
+# independently re-verified.
+
+_ENVELOPE_KEYS = frozenset(
+    {
+        "artifact_type",
+        "serialization_version",
+        "profile_fingerprint",
+        "profile_identity",
+        "materialized_binding",
+        "materialized_ground_truth_semantics",
+    }
+)
+
+_PROFILE_IDENTITY_KEYS = frozenset(
+    {
+        "v",
+        "binding",
+        "ground_truth_semantics",
+        "target_id",
+        "target_version",
+        "input_score_id",
+        "input_score_version",
+        "method_id",
+        "method_version",
+        "method_configuration",
+        "fitted_parameters",
+        "training_dataset_fingerprint",
+        "training_dataset_fingerprint_version",
+    }
+)
+
+_PROFILE_BINDING_IDENTITY_KEYS = frozenset({"binding_fingerprint", "binding_fingerprint_version"})
+
+_PROFILE_GROUND_TRUTH_IDENTITY_KEYS = frozenset(
+    {
+        "ground_truth_semantics_fingerprint",
+        "ground_truth_semantics_fingerprint_version",
+    }
+)
+
+_MATERIALIZED_BINDING_KEYS = frozenset(
+    {
+        "probability_formulation_fingerprint",
+        "probability_formulation_fingerprint_version",
+        "model",
+        "model_revision",
+        "tokenizer",
+        "tokenizer_revision",
+        "rendering_semantics",
+        "task_id",
+        "domain_id",
+        "taxonomy_id",
+        "taxonomy_version",
+    }
+)
+
+_MATERIALIZED_GROUND_TRUTH_KEYS = frozenset(
+    {"labeling_rule", "ambiguity_policy", "taxonomy_id", "taxonomy_version"}
+)
+
+
+def _reject_duplicate_object_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject a JSON object with a duplicated key.
+
+    Python's default parser silently keeps the last value, which is too
+    permissive for an identity-bearing artifact: ``{"method_id": "A",
+    "method_id": "B"}`` would otherwise load as ``"B"``.
+    """
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise InvalidDecisionError(
+                f"the serialized calibration profile contains a duplicate object key {key!r}"
+            )
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(name: str) -> Any:
+    """Reject the non-standard ``NaN`` / ``Infinity`` / ``-Infinity`` literals."""
+    raise InvalidDecisionError(
+        f"the serialized calibration profile contains a non-finite JSON number {name!r}"
+    )
+
+
+def _strict_json_float(text: str) -> float:
+    """Parse a JSON float, rejecting a value that overflows to a non-finite one.
+
+    ``1e9999`` is valid JSON text but parses to ``inf``, which must never
+    enter an identity-bearing artifact.
+    """
+    value = float(text)
+    if not math.isfinite(value):
+        raise InvalidDecisionError(
+            f"the serialized calibration profile contains a non-finite JSON number {text!r}"
+        )
+    return value
+
+
+def _require_exact_keys(name: str, mapping: Any, expected: frozenset[str]) -> dict[str, Any]:
+    """Require an object whose key set is exactly ``expected``.
+
+    Version discipline: an unknown key or a missing key is rejected rather
+    than silently ignored or defaulted. Future schema evolution uses a new
+    serialization version.
+    """
+    if not isinstance(mapping, dict):
+        raise InvalidDecisionError(f"{name} must be a JSON object, got {type(mapping).__name__}")
+    actual = set(mapping)
+    if actual != expected:
+        missing = sorted(expected - actual)
+        unexpected = sorted(actual - expected)
+        raise InvalidDecisionError(
+            f"{name} has an invalid key set: missing {missing}, unexpected {unexpected}"
+        )
+    return mapping
+
+
+def _restore_calibration_binding(payload: Any) -> CalibrationBinding:
+    """Reconstruct a :class:`CalibrationBinding` from its materialized payload.
+
+    The binding is materialized in full so a restored profile can still
+    enforce exact runtime binding checks; nothing is reconstructed from
+    other profile fields. The reconstructed object's fingerprint is verified
+    against the profile identity claim by the caller, never trusted here.
+    """
+    binding_payload = _require_exact_keys(
+        "materialized_binding", payload, _MATERIALIZED_BINDING_KEYS
+    )
+    return CalibrationBinding(
+        probability_formulation_fingerprint=binding_payload["probability_formulation_fingerprint"],
+        probability_formulation_fingerprint_version=binding_payload[
+            "probability_formulation_fingerprint_version"
+        ],
+        model=binding_payload["model"],
+        model_revision=binding_payload["model_revision"],
+        tokenizer=binding_payload["tokenizer"],
+        tokenizer_revision=binding_payload["tokenizer_revision"],
+        rendering_semantics=binding_payload["rendering_semantics"],
+        task_id=binding_payload["task_id"],
+        domain_id=binding_payload["domain_id"],
+        taxonomy_id=binding_payload["taxonomy_id"],
+        taxonomy_version=binding_payload["taxonomy_version"],
+    )
+
+
+def _restore_ground_truth_semantics_identity(
+    payload: Any,
+) -> GroundTruthSemanticsIdentity:
+    """Restore an already committed ground-truth semantics identity.
+
+    This is a restoration path, not a derivation path. An ordinary semantics
+    identity is derived from a :class:`GroundTruthProvenance` via
+    :meth:`GroundTruthSemanticsIdentity.from_provenance`, because the
+    identity is a projection of the label lineage. Loading a serialized
+    profile is different: the semantics identity was already committed when
+    the profile was fitted, so it is restored directly. No fake
+    ``label_source`` / ``adjudicated`` / :class:`GroundTruthProvenance` is
+    fabricated to route through ``from_provenance``.
+    """
+    semantics_payload = _require_exact_keys(
+        "materialized_ground_truth_semantics", payload, _MATERIALIZED_GROUND_TRUTH_KEYS
+    )
+    return GroundTruthSemanticsIdentity(
+        labeling_rule=semantics_payload["labeling_rule"],
+        ambiguity_policy=semantics_payload["ambiguity_policy"],
+        taxonomy_id=semantics_payload["taxonomy_id"],
+        taxonomy_version=semantics_payload["taxonomy_version"],
+    )
+
+
+def serialize_calibration_profile(profile: CalibrationProfile) -> str:
+    """Serialize a profile to a deterministic canonical JSON document.
+
+    The result is :func:`probvenance.fingerprint.canonical_json` of the
+    envelope, so repeated serialization of one profile is byte-for-byte
+    identical: there is no timestamp, no random identifier, and no host or
+    path metadata. The envelope carries the frozen profile identity payload
+    plus the fully materialized binding and ground-truth-semantics payloads
+    needed to restore the fitted artifact. Training observations are never
+    serialized.
+
+    This produces a string; it performs no filesystem or database I/O.
+    """
+    if not isinstance(profile, CalibrationProfile):
+        raise InvalidDecisionError(
+            f"profile must be a CalibrationProfile, got {type(profile).__name__} ({profile!r})"
+        )
+    envelope: dict[str, JSONValue] = {
+        "artifact_type": CALIBRATION_PROFILE_SERIALIZATION_TYPE,
+        "serialization_version": CALIBRATION_PROFILE_SERIALIZATION_VERSION,
+        "profile_fingerprint": profile.fingerprint,
+        "profile_identity": profile.canonical_payload(),
+        "materialized_binding": profile.binding.canonical_payload(),
+        "materialized_ground_truth_semantics": (profile.ground_truth_semantics.canonical_payload()),
+    }
+    return canonical_json(envelope)
+
+
+def load_calibration_profile(
+    serialized: str,
+    *,
+    expected_profile_fingerprint: str | None = None,
+    expected_profile_fingerprint_version: int | None = None,
+) -> CalibrationProfile:
+    """Restore a profile from a serialized document, verifying its identity.
+
+    No claimed hash is trusted merely because it is present. The loader
+    parses strictly, validates the schema, reconstructs the nested typed
+    identities, re-verifies each nested fingerprint against the profile
+    identity claim, restores the profile, and finally re-verifies both the
+    restored canonical identity payload and the restored profile fingerprint
+    against the document. Any inconsistency raises
+    :class:`~probvenance.errors.InvalidDecisionError`; there is no best-effort
+    load.
+
+    The optional ``expected_profile_fingerprint`` /
+    ``expected_profile_fingerprint_version`` must be supplied together or not
+    at all, and support a caller that obtained the expected identity through a
+    separate trusted channel. Embedded fingerprint consistency proves internal
+    coherence only; it is NOT cryptographic authenticity, and this loader
+    performs no signature or MAC verification.
+    """
+    if not isinstance(serialized, str):
+        raise InvalidDecisionError(
+            f"serialized must be a str, got {type(serialized).__name__} ({serialized!r})"
+        )
+    if (expected_profile_fingerprint is None) != (expected_profile_fingerprint_version is None):
+        raise InvalidDecisionError(
+            "expected_profile_fingerprint and expected_profile_fingerprint_version "
+            "must be supplied together or not at all"
+        )
+
+    try:
+        document = json.loads(
+            serialized,
+            object_pairs_hook=_reject_duplicate_object_keys,
+            parse_constant=_reject_json_constant,
+            parse_float=_strict_json_float,
+        )
+    except json.JSONDecodeError as error:
+        raise InvalidDecisionError(
+            f"the serialized calibration profile is not valid JSON: {error}"
+        ) from error
+    except RecursionError as error:
+        raise InvalidDecisionError(
+            "the serialized calibration profile is nested too deeply to parse as JSON"
+        ) from error
+
+    if not isinstance(document, dict):
+        raise InvalidDecisionError(
+            "the serialized calibration profile must be a JSON object, got "
+            f"{type(document).__name__}"
+        )
+    _require_exact_keys("serialized calibration profile", document, _ENVELOPE_KEYS)
+
+    artifact_type = document["artifact_type"]
+    if artifact_type != CALIBRATION_PROFILE_SERIALIZATION_TYPE:
+        raise InvalidDecisionError(
+            "the serialized calibration profile has an unsupported artifact type: "
+            f"expected {CALIBRATION_PROFILE_SERIALIZATION_TYPE!r}, got {artifact_type!r}"
+        )
+    serialization_version = document["serialization_version"]
+    if (
+        isinstance(serialization_version, bool)
+        or not isinstance(serialization_version, int)
+        or serialization_version != CALIBRATION_PROFILE_SERIALIZATION_VERSION
+    ):
+        raise InvalidDecisionError(
+            "the serialized calibration profile has an unsupported serialization "
+            f"version: expected {CALIBRATION_PROFILE_SERIALIZATION_VERSION}, got "
+            f"{serialization_version!r}"
+        )
+
+    identity = _require_exact_keys(
+        "profile_identity", document["profile_identity"], _PROFILE_IDENTITY_KEYS
+    )
+    if identity["v"] != CALIBRATION_PROFILE_FINGERPRINT_VERSION:
+        raise InvalidDecisionError(
+            "the serialized calibration profile has an unsupported profile identity "
+            f"version: expected {CALIBRATION_PROFILE_FINGERPRINT_VERSION}, got "
+            f"{identity['v']!r}"
+        )
+    binding_identity = _require_exact_keys(
+        "profile_identity['binding']",
+        identity["binding"],
+        _PROFILE_BINDING_IDENTITY_KEYS,
+    )
+    ground_truth_identity = _require_exact_keys(
+        "profile_identity['ground_truth_semantics']",
+        identity["ground_truth_semantics"],
+        _PROFILE_GROUND_TRUTH_IDENTITY_KEYS,
+    )
+
+    binding = _restore_calibration_binding(document["materialized_binding"])
+    if binding_identity["binding_fingerprint_version"] != CALIBRATION_BINDING_FINGERPRINT_VERSION:
+        raise InvalidDecisionError(
+            "the serialized calibration profile declares an unsupported binding "
+            "fingerprint version: expected "
+            f"{CALIBRATION_BINDING_FINGERPRINT_VERSION}, got "
+            f"{binding_identity['binding_fingerprint_version']!r}"
+        )
+    if binding.fingerprint != binding_identity["binding_fingerprint"]:
+        raise InvalidDecisionError(
+            "the materialized calibration binding does not match the binding identity "
+            "committed by the profile: reconstructed binding fingerprint "
+            f"{binding.fingerprint!r} vs committed "
+            f"{binding_identity['binding_fingerprint']!r}"
+        )
+
+    ground_truth_semantics = _restore_ground_truth_semantics_identity(
+        document["materialized_ground_truth_semantics"]
+    )
+    if (
+        ground_truth_identity["ground_truth_semantics_fingerprint_version"]
+        != GROUND_TRUTH_SEMANTICS_FINGERPRINT_VERSION
+    ):
+        raise InvalidDecisionError(
+            "the serialized calibration profile declares an unsupported ground-truth "
+            "semantics fingerprint version: expected "
+            f"{GROUND_TRUTH_SEMANTICS_FINGERPRINT_VERSION}, got "
+            f"{ground_truth_identity['ground_truth_semantics_fingerprint_version']!r}"
+        )
+    if (
+        ground_truth_semantics.fingerprint
+        != ground_truth_identity["ground_truth_semantics_fingerprint"]
+    ):
+        raise InvalidDecisionError(
+            "the materialized ground-truth semantics do not match the semantics "
+            "identity committed by the profile: reconstructed fingerprint "
+            f"{ground_truth_semantics.fingerprint!r} vs committed "
+            f"{ground_truth_identity['ground_truth_semantics_fingerprint']!r}"
+        )
+
+    restored = CalibrationProfile._from_serialized_state(
+        binding=binding,
+        ground_truth_semantics=ground_truth_semantics,
+        target_id=identity["target_id"],
+        target_version=identity["target_version"],
+        input_score_id=identity["input_score_id"],
+        input_score_version=identity["input_score_version"],
+        method_id=identity["method_id"],
+        method_version=identity["method_version"],
+        method_configuration=identity["method_configuration"],
+        fitted_parameters=identity["fitted_parameters"],
+        training_dataset_fingerprint=identity["training_dataset_fingerprint"],
+        training_dataset_fingerprint_version=identity["training_dataset_fingerprint_version"],
+    )
+
+    if canonical_json(restored.canonical_payload()) != canonical_json(identity):
+        raise InvalidDecisionError(
+            "the restored calibration profile identity does not match the serialized "
+            "profile identity payload"
+        )
+    if restored.fingerprint != document["profile_fingerprint"]:
+        raise InvalidDecisionError(
+            "the restored calibration profile fingerprint does not match the "
+            "serialized profile fingerprint: restored "
+            f"{restored.fingerprint!r} vs serialized "
+            f"{document['profile_fingerprint']!r}"
+        )
+
+    if expected_profile_fingerprint is not None:
+        if isinstance(expected_profile_fingerprint_version, bool) or not isinstance(
+            expected_profile_fingerprint_version, int
+        ):
+            raise InvalidDecisionError(
+                "the expected profile fingerprint version must be an integer, got "
+                f"{expected_profile_fingerprint_version!r}"
+            )
+        if expected_profile_fingerprint_version != CALIBRATION_PROFILE_FINGERPRINT_VERSION:
+            raise InvalidDecisionError(
+                "the expected profile fingerprint version is not supported: expected "
+                f"{CALIBRATION_PROFILE_FINGERPRINT_VERSION}, got "
+                f"{expected_profile_fingerprint_version!r}"
+            )
+        if restored.fingerprint != expected_profile_fingerprint:
+            raise InvalidDecisionError(
+                "the restored calibration profile does not match the expected profile "
+                f"fingerprint: restored {restored.fingerprint!r} vs expected "
+                f"{expected_profile_fingerprint!r}"
+            )
+
+    return restored
 
 
 # ---------------------------------------------------------------------------

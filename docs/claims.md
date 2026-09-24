@@ -854,9 +854,11 @@ exists, and derived-score application contracts exist: offline
 (`apply_profile_to_runtime_evaluation`). A result carries a
 `predicted_correctness` only when a caller explicitly applies one exact
 compatible profile; the runtime does not calibrate by default, and automatic
-profile selection, a registry or lookup, and profile persistence do not exist.
-A fitted profile is evidence about a fitting problem, not about calibration
-quality.
+profile selection, a registry or lookup, and a profile store or persistence
+layer do not exist. A profile does have a versioned canonical JSON
+serialization and an identity-verified loader, but the library performs no
+filesystem or database I/O. A fitted profile is evidence about a fitting
+problem, not about calibration quality.
 
 ## Experimental records
 
@@ -1222,6 +1224,38 @@ them generalises to other models, revisions, prompts, or tasks.
   constructed calibrated result remains valid: construction validates structure,
   not provenance attestation. Evidence:
   `tests/test_runtime_calibration.py::TestManualResultStateMachine`.
+
+### CalibrationProfile serialization (Phase 4C.5)
+
+- [V] `CalibrationProfile` has a versioned canonical JSON serialization
+  envelope that materializes the full `CalibrationBinding` and
+  `GroundTruthSemanticsIdentity` needed to restore the fitted artifact without
+  serializing its training rows. The envelope is not a second profile
+  identity, and its wire-format version is independent of the profile
+  fingerprint schema version. Evidence:
+  `tests/test_profile_serialization.py::TestRoundTrip`,
+  `...::TestScopeBoundaries`.
+
+- [V] Loading never trusts embedded hashes: the loader reconstructs the nested
+  typed identities, verifies their fingerprints against the profile identity,
+  reconstructs the profile, and verifies both its canonical identity payload
+  and its profile fingerprint before returning it. A malformed or
+  identity-inconsistent document fails closed with `InvalidDecisionError`.
+  Evidence: `tests/test_profile_serialization.py::TestTamperAttacks`,
+  `...::TestStrictParser`.
+
+- [V] Serialization is identity-preserving: `serialize` then `load` preserves
+  the exact `CalibrationProfile` fingerprint, the nested binding and
+  ground-truth-semantics identities, the fitted method state, and both offline
+  and runtime-linked application results. Evidence:
+  `tests/test_profile_serialization.py::TestRoundTrip`,
+  `...::TestApplicationEquivalence`.
+
+- [V] A caller may additionally pin an independently obtained expected profile
+  fingerprint/version, supplied together or not at all. Embedded fingerprint
+  consistency is not cryptographic authenticity and no signing contract
+  exists. Evidence:
+  `tests/test_profile_serialization.py::TestExpectedIdentityPinning`.
 
 ## Current hypotheses
 

@@ -78,6 +78,11 @@ Calibration runtime:       explicit runtime-linked application implemented
                            (apply_profile_to_runtime_evaluation); automatic
                            profile selection, registry, and lookup not
                            implemented
+Profile serialization:     versioned canonical JSON serialization and
+                           identity-verified loading implemented
+                           (serialize_calibration_profile,
+                           load_calibration_profile); no filesystem or
+                           database store, no registry, no signing
 predicted_correctness:     None unless an explicit compatible
                            CalibrationProfile is applied through
                            apply_profile_to_runtime_evaluation
@@ -99,8 +104,11 @@ mismatch. One scalar fitting method
 (`fit_l2_logistic_selected_probability`) is implemented: an L2-regularized
 logistic map of the selected probability onto winner correctness. Profile
 registries, profile lookup, automatic profile selection, alternative
-calibration methods, profile serialization, and the remaining metrics remain
-unimplemented, and this document does not add any. Offline profile application
+calibration methods, and the remaining metrics remain unimplemented, and this
+document does not add any. Profile serialization IS implemented: a versioned
+canonical JSON envelope materializes the nested binding and
+ground-truth-semantics identities, and the loader re-verifies every identity
+before restoring the artifact. Offline profile application
 and the post-calibration (derived-score) evaluation foundation ARE implemented
 in `src/probvenance/calibration_evaluation.py`. Explicit runtime-linked profile
 application is implemented in `src/probvenance/calibration.py` as
@@ -119,7 +127,7 @@ backed by tests in `tests/test_calibration.py` and
 Phase 2B.1 total-variation figures in section 1, and the `scoring_label_mass`
 observations in sections 6.2, 13.3, and 20.4) is `[E]` EXPERIMENTAL under its
 named conditions, and the portions still not implemented (alternative methods,
-profile registries and lookup, automatic selection, profile serialization, and
+profile registries and lookup, automatic selection, a profile store, and
 the remaining metrics) remain design statements without verified claims.
 
 The question it answers:
@@ -476,6 +484,10 @@ and it does not prove that a caller-constructed result's probabilities were
 emitted by the supplied trace.
 Lower-level Python escape hatches such as `object.__new__`, `copy`, and
 `pickle` are not supported construction paths and are not defended against.
+A serialized profile has its own supported JSON loading path
+(`load_calibration_profile`); it is unrelated to Python object
+deserialization such as `pickle`, and `pickle` remains an unsupported escape
+hatch for the profile itself.
 
 ### 8.1 Required measurement
 
@@ -847,9 +859,10 @@ labeling rules or ambiguity policies measure different statistical targets, so
 two datasets under one binding but with different ground-truth semantics must
 never feed one profile identity. Two profiles that differ in any component are
 different artifacts and are never interchangeable. The profile identity and
-artifact, one offline fitting method, offline profile application, and explicit
-runtime-linked application are implemented; automatic profile selection,
-registries, and lookup remain unimplemented.
+artifact, one offline fitting method, offline profile application, explicit
+runtime-linked application, and versioned canonical JSON serialization with
+identity-verified loading are implemented; automatic profile selection,
+registries, lookup, and a profile store remain unimplemented.
 
 ### 12.3 Matching is exact by default
 
@@ -939,9 +952,20 @@ Three provenance states are distinguished:
   same two fields. `predicted_correctness` is `None` for every result the
   runtime produces by default, and is populated only when a caller explicitly
   applies one exact compatible profile.
-- Automatic profile selection, a profile registry or lookup, a profile
-  store/materialization, cross-process loading, and automatic runtime
-  calibration are NOT IMPLEMENTED.
+- Versioned canonical JSON serialization with identity-verified loading is
+  IMPLEMENTED. `serialize_calibration_profile` emits a deterministic canonical
+  document that materializes the full binding and ground-truth-semantics
+  payloads; `load_calibration_profile` reconstructs those typed identities,
+  re-verifies each nested fingerprint against the profile identity claim,
+  restores the profile, and re-verifies both its canonical identity payload
+  and its profile fingerprint before returning it. A caller may additionally
+  pin an independently obtained expected profile fingerprint/version.
+- A profile store, cross-process loading from a store, a registry, and
+  automatic profile selection are NOT IMPLEMENTED. The library produces and
+  consumes a JSON string; it performs no filesystem or database I/O.
+- Cryptographic signing, MACs, certificates, and key management are NOT
+  IMPLEMENTED: embedded fingerprint consistency is not authenticity.
+- Automatic runtime calibration is NOT IMPLEMENTED.
 
 ### 12.6 Taxonomy compatibility precondition for fitting and application
 
@@ -1013,6 +1037,52 @@ binding taxonomy contradicts its concrete ground-truth taxonomy, unless a
 future explicit taxonomy-mapping identity is introduced. A tested compatibility
 helper is deferred until it has a real caller, so that no dead policy code is
 added.
+
+### 12.7 Serialization and identity-verified loading
+
+Profile identity and serialization answer different questions.
+`CalibrationProfile.canonical_payload()` answers WHICH exact calibration
+artifact a profile is, and it commits the nested binding and
+ground-truth-semantics identities by fingerprint and schema version only. It
+therefore cannot rebuild those nested objects, so
+`load(canonical_json(profile.canonical_payload()))` is not a supported round
+trip. The serialization envelope materializes both nested identity payloads
+alongside the frozen profile identity payload.
+
+The serialization format is not a second profile identity: there is no
+serialization fingerprint. `CalibrationProfile.fingerprint` remains the
+artifact identity. The wire-format version
+(`CALIBRATION_PROFILE_SERIALIZATION_VERSION`) is deliberately independent of
+the fingerprint schema version, because the document schema describes HOW a
+profile is materialized while the fingerprint describes WHAT its identity is.
+A serialization-only change bumps the serialization version and leaves the
+artifact identity untouched. Training observations are never serialized, and
+loading neither requires a `CalibrationDataset` nor refits: it restores an
+already fitted artifact.
+
+The loader never trusts a claimed hash. It parses strictly, validates the
+schema and version, reconstructs the nested typed identities, re-verifies each
+nested fingerprint against the profile identity claim, restores the profile,
+and finally re-verifies both the restored canonical identity payload and the
+restored profile fingerprint before returning it. Malformed or
+identity-inconsistent documents fail closed with
+`InvalidDecisionError`; there is no best-effort load. Strict parsing rejects
+duplicate object keys at every level, non-finite numbers, a non-object top
+level, unknown or missing keys, and input nested too deeply to parse, so no
+low-level parser exception escapes the supported loader.
+
+Embedded self-consistency is NOT authenticity. A document whose payload and
+fingerprints are consistently rewritten by a malicious party passes embedded
+verification, because those hashes are computed from the same payload. A
+caller that obtained the expected profile fingerprint through a separate
+trusted channel may pass `expected_profile_fingerprint` /
+`expected_profile_fingerprint_version` (together or not at all), which detects
+such a rewrite. No signing, MAC, certificate, or key management exists: a
+SHA-256 fingerprint check is not a signature.
+
+No store, registry, lookup, or automatic selection is introduced. The library
+produces and consumes a JSON string and performs no filesystem or database
+I/O; the caller persists the text however it chooses.
 
 ## 13. Calibration method identity
 
