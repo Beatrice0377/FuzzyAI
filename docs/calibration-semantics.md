@@ -773,6 +773,13 @@ winner-correctness evaluation artifact and is owned by no single metric. A
 target with the same ID but a different version is a different target
 semantics identity, not the same target under a new label.
 
+The target identity is owned by the calibration foundation module, not by the
+evaluation layer, because the profile identity above composes it with
+`CalibrationBinding` and `GroundTruthSemanticsIdentity`. Those two already live
+in the calibration foundation, so keeping the target there lets profile fitting
+consume all three without the calibration foundation depending on the
+evaluation layer, which itself depends on the calibration foundation.
+
 The binding alone is not the profile identity: one binding can carry several
 profiles, for different targets, methods, or fitting datasets. The ground-truth
 semantics identity is included because the same probability population does not

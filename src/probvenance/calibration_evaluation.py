@@ -33,6 +33,8 @@ from fractions import Fraction
 from probvenance.calibration import (
     CALIBRATION_BINDING_FINGERPRINT_VERSION,
     GROUND_TRUTH_SEMANTICS_FINGERPRINT_VERSION,
+    WINNER_CORRECTNESS_TARGET_ID,
+    WINNER_CORRECTNESS_TARGET_VERSION,
     CalibrationBinding,
     CalibrationObservation,
     CalibrationObservationStatus,
@@ -104,25 +106,6 @@ BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION = 3
 LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION = 3
 #: Bumped 1 -> 2 for the same Phase 4C.0 target-identity reason.
 WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION = 2
-
-# ---------------------------------------------------------------------------
-# Calibration target identity
-# ---------------------------------------------------------------------------
-
-#: The single implemented calibration target: whether the recorded selected
-#: semantic value equals the resolved ground truth. This target is shared by
-#: every winner-correctness evaluation artifact and is owned by no single
-#: metric; the target no longer belongs to Brier. A target with the same id but
-#: a different version is a different target semantics identity, because the
-#: meaning of the label could have changed. Exact identity only: no
-#: target-version compatibility policy is implemented.
-#:
-#: Two constants are deliberately sufficient here. A CalibrationTargetIdentity
-#: type becomes justified only when several targets exist, when a target
-#: carries structured configuration, or when target compatibility needs
-#: behaviour; none of those is true yet.
-WINNER_CORRECTNESS_TARGET_ID = "winner_correctness"
-WINNER_CORRECTNESS_TARGET_VERSION = 1
 
 # ---------------------------------------------------------------------------
 # Score semantics identity

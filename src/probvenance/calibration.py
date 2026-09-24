@@ -51,6 +51,31 @@ GROUND_TRUTH_SEMANTICS_FINGERPRINT_VERSION = 1
 RENDERING_SEMANTICS_VERSION = 1
 """Version of the centralized rendering-semantics canonical projection."""
 
+# ---------------------------------------------------------------------------
+# Calibration target identity
+# ---------------------------------------------------------------------------
+
+#: The single implemented calibration target: whether the recorded selected
+#: semantic value equals the resolved ground truth. This target is shared by
+#: every winner-correctness evaluation artifact and is owned by no single
+#: metric; the target no longer belongs to Brier. A target with the same id but
+#: a different version is a different target semantics identity, because the
+#: meaning of the label could have changed. Exact identity only: no
+#: target-version compatibility policy is implemented.
+#:
+#: It lives here, in the calibration foundation, rather than in the evaluation
+#: layer, because the future CalibrationProfile identity composes it together
+#: with CalibrationBinding and GroundTruthSemanticsIdentity, which are defined
+#: in this module. Owning it in the evaluation layer would force this module to
+#: import the evaluation layer, which already imports this module.
+#:
+#: Two constants are deliberately sufficient here. A CalibrationTargetIdentity
+#: type becomes justified only when several targets exist, when a target
+#: carries structured configuration, or when target compatibility needs
+#: behaviour; none of those is true yet.
+WINNER_CORRECTNESS_TARGET_ID = "winner_correctness"
+WINNER_CORRECTNESS_TARGET_VERSION = 1
+
 _OBSERVATION_CONSTRUCTION_TOKEN: Final[object] = object()
 """Construction capability held only by ``CalibrationObservation.from_evaluation``.
 
