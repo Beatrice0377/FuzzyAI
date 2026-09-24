@@ -412,6 +412,59 @@ class TestRootBehavior:
 
 
 # ---------------------------------------------------------------------------
+# Layout corruption classification (Phase 4C.6a)
+# ---------------------------------------------------------------------------
+
+
+class TestLayoutCorruptionClassification:
+    def test_store_version_component_as_file_is_integrity_error(self, tmp_path: Path) -> None:
+        store = store_at(tmp_path)
+        store.root.mkdir(parents=True)
+        (store.root / f"store-v{CALIBRATION_PROFILE_DIRECTORY_STORE_VERSION}").write_text(
+            "not a directory", encoding="utf-8"
+        )
+        profile = fitted_profile()
+        with pytest.raises(CalibrationProfileStoreIntegrityError):
+            store.get(**key_of(profile))
+        with pytest.raises(CalibrationProfileStoreIntegrityError):
+            store.put(profile)
+
+    def test_profile_version_component_as_file_is_integrity_error(self, tmp_path: Path) -> None:
+        store = store_at(tmp_path)
+        version_directory = (
+            store.root
+            / f"store-v{CALIBRATION_PROFILE_DIRECTORY_STORE_VERSION}"
+            / f"profile-fingerprint-v{CALIBRATION_PROFILE_FINGERPRINT_VERSION}"
+        )
+        version_directory.parent.mkdir(parents=True)
+        version_directory.write_text("not a directory", encoding="utf-8")
+        profile = fitted_profile()
+        with pytest.raises(CalibrationProfileStoreIntegrityError):
+            store.get(**key_of(profile))
+        with pytest.raises(CalibrationProfileStoreIntegrityError):
+            store.put(profile)
+
+    def test_missing_root_is_not_found(self, tmp_path: Path) -> None:
+        store = store_at(tmp_path)
+        with pytest.raises(CalibrationProfileNotFoundError):
+            store.get(profile_fingerprint="0" * 64, profile_fingerprint_version=1)
+        assert not store.root.exists()
+
+    def test_missing_target_in_valid_layout_is_not_found(self, tmp_path: Path) -> None:
+        store = store_at(tmp_path)
+        profile = fitted_profile()
+        stored_path(store, profile).parent.mkdir(parents=True)
+        with pytest.raises(CalibrationProfileNotFoundError):
+            store.get(**key_of(profile))
+
+    def test_missing_store_directory_is_not_found(self, tmp_path: Path) -> None:
+        store = store_at(tmp_path)
+        store.root.mkdir(parents=True)
+        with pytest.raises(CalibrationProfileNotFoundError):
+            store.get(profile_fingerprint="0" * 64, profile_fingerprint_version=1)
+
+
+# ---------------------------------------------------------------------------
 # Semantic equivalence (PART 39, PART 40, PART 41, PART 42, PART 43)
 # ---------------------------------------------------------------------------
 

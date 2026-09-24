@@ -1145,6 +1145,14 @@ not the canonical serialization, or describes a different identity raises
 `CalibrationProfileStoreIntegrityError`. Operational failures raise
 `CalibrationProfileStoreError`. None of these are collapsed into not-found.
 
+The same distinction applies to the managed layout itself. A missing managed
+directory component means the exact profile is absent. A managed layout
+component that exists but is not the required directory type is store
+corruption and fails with an integrity error, because the store-v1 layout
+invariant is violated. Only the root directory is classified separately: a root
+that exists but is not a directory is an operational store failure, not an
+integrity failure and not absence.
+
 Stored bytes are exactly `serialize_calibration_profile(profile)` encoded as
 UTF-8, with no pretty printing, newline, BOM, or metadata wrapper. `get()`
 restores the artifact only through `load_calibration_profile`, supplying the

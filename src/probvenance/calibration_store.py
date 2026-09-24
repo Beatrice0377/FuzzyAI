@@ -110,6 +110,7 @@ class DirectoryCalibrationProfileStore:
         serialized = serialize_calibration_profile(profile)
         target = self._path_for(fingerprint, version)
         self._require_usable_root()
+        self._require_managed_directories(target)
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
         except OSError as error:
@@ -140,6 +141,7 @@ class DirectoryCalibrationProfileStore:
         self._validate_identity(profile_fingerprint, profile_fingerprint_version)
         self._require_usable_root()
         target = self._path_for(profile_fingerprint, profile_fingerprint_version)
+        self._require_managed_directories(target)
         if not target.exists():
             raise CalibrationProfileNotFoundError(
                 f"no calibration profile is stored for profile fingerprint "
@@ -206,6 +208,24 @@ class DirectoryCalibrationProfileStore:
             raise CalibrationProfileStoreError(
                 f"the calibration profile store root is not a directory: {self._root}"
             )
+
+    def _require_managed_directories(self, target: Path) -> None:
+        """Reject a managed layout component that exists but is not a directory.
+
+        An absent managed directory means the exact profile is simply absent. A
+        component that exists as an incompatible filesystem object means the
+        managed store layout was damaged, which is corruption and never
+        ordinary absence.
+        """
+        for path, role in (
+            (target.parent.parent, "store layout version directory"),
+            (target.parent, "profile fingerprint version directory"),
+        ):
+            if path.exists() and not path.is_dir():
+                raise CalibrationProfileStoreIntegrityError(
+                    f"the managed calibration profile store {role} exists but is not a "
+                    f"directory, so the store layout is damaged: {path}"
+                )
 
     def _read_text(self, target: Path) -> str:
         try:
