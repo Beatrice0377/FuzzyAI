@@ -10,8 +10,10 @@ CalibrationDataset:        implemented (src/probvenance/calibration.py)
 CalibrationProfile:        implemented (src/probvenance/calibration.py):
                            identity/artifact foundation, plus one scalar
                            fitting method
-                           (fit_l2_logistic_selected_probability); no runtime
-                           application
+                           (fit_l2_logistic_selected_probability), plus
+                           explicit runtime-linked application
+                           (apply_profile_to_runtime_evaluation); no automatic
+                           profile selection
 Evaluation cohort:         implemented (src/probvenance/calibration_evaluation.py):
                            declared evaluation source cohort, full observation
                            statuses retained, cohort fingerprint v1
@@ -72,8 +74,13 @@ evaluation:                implemented (src/probvenance/calibration_evaluation.p
                             identity
 Fitting algorithms:        implemented (one scalar fitting method, Phase 4C.2
                            and Phase 4C.2a; no automatic method selection)
-Calibration runtime:       not implemented
-predicted_correctness:     None for every result the runtime can currently produce
+Calibration runtime:       explicit runtime-linked application implemented
+                           (apply_profile_to_runtime_evaluation); automatic
+                           profile selection, registry, and lookup not
+                           implemented
+predicted_correctness:     None unless an explicit compatible
+                           CalibrationProfile is applied through
+                           apply_profile_to_runtime_evaluation
 ```
 
 This document originated as a design document. The Phase 4A data foundation
@@ -91,11 +98,19 @@ and it fails closed on a concrete taxonomy contradiction or an exact binding
 mismatch. One scalar fitting method
 (`fit_l2_logistic_selected_probability`) is implemented: an L2-regularized
 logistic map of the selected probability onto winner correctness. Profile
-registries, profile lookup, alternative calibration methods, the remaining
-metrics, and runtime profile application remain unimplemented, and this
-document does not add any. Offline profile application and the post-calibration
-(derived-score) evaluation foundation ARE implemented in
-`src/probvenance/calibration_evaluation.py`.
+registries, profile lookup, automatic profile selection, alternative
+calibration methods, profile serialization, and the remaining metrics remain
+unimplemented, and this document does not add any. Offline profile application
+and the post-calibration (derived-score) evaluation foundation ARE implemented
+in `src/probvenance/calibration_evaluation.py`. Explicit runtime-linked profile
+application is implemented in `src/probvenance/calibration.py` as
+`apply_profile_to_runtime_evaluation`: the caller supplies the exact profile and
+declares the task/domain/taxonomy identity it knows, and the function fails
+closed unless the profile's binding exactly matches the binding reconstructed
+from the runtime trace. It reuses the same numerical method path as offline
+application, so offline and runtime scores cannot drift. It does not select,
+look up, or serialize a profile, and it is never invoked automatically by
+`Probvenance.evaluate` or `Probvenance.evaluate_with_trace`.
 
 This document is in part a design proposal. The deterministic data model and
 the evaluation foundation carry `[V]` VERIFIED claims in `docs/claims.md`,
@@ -103,8 +118,9 @@ backed by tests in `tests/test_calibration.py` and
 `tests/test_calibration_evaluation.py`. Every measured number it cites (the
 Phase 2B.1 total-variation figures in section 1, and the `scoring_label_mass`
 observations in sections 6.2, 13.3, and 20.4) is `[E]` EXPERIMENTAL under its
-named conditions, and the not-yet-implemented portions (fitting, profiles,
-runtime application) remain design statements without verified claims.
+named conditions, and the portions still not implemented (alternative methods,
+profile registries and lookup, automatic selection, profile serialization, and
+the remaining metrics) remain design statements without verified claims.
 
 The question it answers:
 
@@ -831,8 +847,9 @@ labeling rules or ambiguity policies measure different statistical targets, so
 two datasets under one binding but with different ground-truth semantics must
 never feed one profile identity. Two profiles that differ in any component are
 different artifacts and are never interchangeable. The profile identity and
-artifact, one offline fitting method, and offline profile application are
-implemented; runtime profile application remains unimplemented.
+artifact, one offline fitting method, offline profile application, and explicit
+runtime-linked application are implemented; automatic profile selection,
+registries, and lookup remain unimplemented.
 
 ### 12.3 Matching is exact by default
 
@@ -901,12 +918,16 @@ version provenance.
 A calibrated result must be auditable back to the exact profile artifact that
 produced it, otherwise a downstream consumer cannot tell which fitted numbers,
 binding, ground-truth semantics, target, method, and training population the
-value came from. This round records the requirement only. The storage location
-is deliberately NOT frozen yet: it may end up on the calibrated result's own
-provenance, on a separate calibration-application artifact, or as a
-`DecisionTrace` extension, and the design constitution still leaves that open.
-`predicted_correctness` remains `None` for every result the runtime can
-currently produce.
+value came from. The storage location is now realized: the calibrated
+`DecisionResult` carries `calibration_profile_fingerprint` and
+`calibration_profile_fingerprint_version`, and the `DecisionTrace` mirrors the
+same two fields, so the exact profile artifact is linked from both. The profile
+fingerprint is an identity link only; it does not assert that the profile is
+valid for every population, that it improves calibration, or that its training
+data was independent. `predicted_correctness` is `None` for every result the
+runtime produces by default, and is populated only when a caller explicitly
+applies one exact compatible profile through
+`apply_profile_to_runtime_evaluation`.
 
 ### 12.6 Taxonomy compatibility precondition for fitting and application
 
@@ -1125,9 +1146,11 @@ distinguished by input-score identity:
   `src/probvenance/calibration_evaluation.py` as the
   `evaluate_post_calibration_winner_*` family over a
   `ProfileAppliedEvaluationDataset`, which carries both the derived label and
-  the produced score per row. The runtime still keeps
-  `predicted_correctness = None` and `calibrated = False`, because offline
-  application does not touch the runtime result.
+  the produced score per row. Offline application evaluates a declared
+  evaluation dataset and does not touch a runtime result. A runtime result
+  keeps `predicted_correctness = None` and `calibrated = False` unless a caller
+  explicitly applies one exact compatible profile through
+  `apply_profile_to_runtime_evaluation`.
 
 The pre-calibration baseline must NOT be presented as calibration-quality
 evidence: no calibrator was involved in producing it, so it cannot show how
@@ -1664,9 +1687,48 @@ DecisionResult
   -> predicted_correctness
 ```
 
-If no profile matches, `predicted_correctness = None`.
+If no profile is applied, `predicted_correctness = None`. Online application is
+explicit and caller-driven. `apply_profile_to_runtime_evaluation` takes one
+uncalibrated runtime `Evaluation` and one exact `CalibrationProfile`:
 
-### 18.3 Abstention boundary
+```text
+evaluate_with_trace(...)            -> uncalibrated Evaluation
+apply_profile_to_runtime_evaluation -> calibrated Evaluation
+```
+
+The profile must already be compatible: the function reconstructs a
+`CalibrationBinding` from the runtime trace's provenance plus the task/domain/
+taxonomy declarations the CALLER supplies, and requires an exact match against
+the profile's binding. Optional declarations are never copied from the profile
+to manufacture a match. There is no registry, no lookup, and no nearest profile:
+the caller supplies the profile directly. The runtime never selects a profile on
+its own, and `Probvenance.evaluate` and `Probvenance.evaluate_with_trace` never
+auto-calibrate.
+
+Application reads the probability attached to the already-selected semantic
+value; it never re-runs `argmax` and never re-breaks a tie. It uses the same
+numerical method path as offline application, so offline and runtime scores
+agree exactly for the same profile and selected probability.
+
+### 18.3 What `calibrated = True` means
+
+`calibrated = True` records that a supported `CalibrationProfile` was applied
+through the declared application contract and `predicted_correctness` was
+populated. It does NOT mean the profile is empirically well calibrated, that it
+improves Brier score or log loss, or that it has statistical validity. The
+boolean records application state, not quality.
+
+The applied result also carries `calibration_profile_fingerprint` and
+`calibration_profile_fingerprint_version`, and the `DecisionTrace` mirrors both.
+The fingerprint identifies the exact profile artifact used; it does not mean the
+profile is valid for every population, that it improves calibration, or that its
+training data was independent. Applying a profile does not change
+`probability_true`, `ChoiceResult.probabilities`, `ChoiceResult.value`,
+`Certainty`, `method`, `trace_id`, or `execution_fingerprint`: the semantic
+outcome distribution stays the uncalibrated one, and `predicted_correctness` is
+a separate calibrated correctness estimate.
+
+### 18.4 Abstention boundary
 
 Calibrated predicted correctness is an input to a future policy, not the policy.
 This document does not implement or define `accept`, `abstain`, `review`, or

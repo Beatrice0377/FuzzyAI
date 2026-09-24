@@ -7,6 +7,7 @@ Terminology note: the "how peaked" number is called *concentration*
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 from probvenance.errors import InvalidProbabilityError
@@ -103,17 +104,68 @@ class Certainty:
         )
 
 
+def _validate_calibration_provenance(
+    calibration_profile_fingerprint: Any,
+    calibration_profile_fingerprint_version: Any,
+) -> None:
+    """Validate the shared ``(profile fingerprint, version)`` provenance pair.
+
+    Both must be ``None`` (uncalibrated) or both set, with a non-empty string
+    fingerprint and an ``int >= 1`` (non-bool) version. ``DecisionResult`` and
+    ``DecisionTrace`` share this one rule so their provenance mirrors cannot
+    drift apart.
+    """
+    if calibration_profile_fingerprint is not None and (
+        not isinstance(calibration_profile_fingerprint, str)
+        or not calibration_profile_fingerprint.strip()
+    ):
+        raise InvalidProbabilityError(
+            "calibration_profile_fingerprint must be None or a non-empty string, "
+            f"got {calibration_profile_fingerprint!r}"
+        )
+    if calibration_profile_fingerprint_version is not None and (
+        isinstance(calibration_profile_fingerprint_version, bool)
+        or not isinstance(calibration_profile_fingerprint_version, int)
+        or calibration_profile_fingerprint_version < 1
+    ):
+        raise InvalidProbabilityError(
+            "calibration_profile_fingerprint_version must be None or an int >= 1, "
+            f"got {calibration_profile_fingerprint_version!r}"
+        )
+    if (calibration_profile_fingerprint is None) != (
+        calibration_profile_fingerprint_version is None
+    ):
+        raise InvalidProbabilityError(
+            "calibration_profile_fingerprint and calibration_profile_fingerprint_version "
+            "must be set together, got fingerprint "
+            f"{calibration_profile_fingerprint!r} and version "
+            f"{calibration_profile_fingerprint_version!r}"
+        )
+
+
 def _validate_result_fields(
     certainty: Any,
     method: Any,
     trace_id: Any,
     predicted_correctness: Any,
     calibrated: Any,
+    calibration_profile_fingerprint: Any,
+    calibration_profile_fingerprint_version: Any,
 ) -> None:
     """Shared validation for all :class:`DecisionResult` subclasses.
 
     Called explicitly from each concrete ``__post_init__`` because dataclass
     inheritance does not chain ``__post_init__``.
+
+    The calibration fields form a small state machine. A calibrated result
+    carries a finite ``predicted_correctness`` in [0, 1] AND the exact
+    ``(fingerprint, version)`` pair of the applied profile. An uncalibrated
+    result carries none of the three. Half-states are rejected.
+
+    This is STRUCTURAL validity only: a coherent hand-built calibrated result
+    is accepted, and acceptance is NOT attestation that the named profile
+    really produced the number. The supported runtime-linked application path
+    is the provenance-producing one.
     """
     if not isinstance(certainty, Certainty):
         raise InvalidProbabilityError(
@@ -129,22 +181,45 @@ def _validate_result_fields(
         raise InvalidProbabilityError(
             f"calibrated must be a bool, got {type(calibrated).__name__} ({calibrated!r})"
         )
-    if predicted_correctness is not None:
-        if (
-            isinstance(predicted_correctness, bool)
-            or not isinstance(predicted_correctness, (int, float))
-            or not math.isfinite(predicted_correctness)
-            or predicted_correctness < 0.0
-            or predicted_correctness > 1.0
-        ):
+    if predicted_correctness is not None and (
+        isinstance(predicted_correctness, bool)
+        or not isinstance(predicted_correctness, (int, float))
+        or not math.isfinite(predicted_correctness)
+        or predicted_correctness < 0.0
+        or predicted_correctness > 1.0
+    ):
+        raise InvalidProbabilityError(
+            "predicted_correctness must be None or a finite float in [0, 1], "
+            f"got {predicted_correctness!r}"
+        )
+    _validate_calibration_provenance(
+        calibration_profile_fingerprint,
+        calibration_profile_fingerprint_version,
+    )
+    if calibrated:
+        if predicted_correctness is None:
             raise InvalidProbabilityError(
-                "predicted_correctness must be None or a finite float in [0, 1], "
-                f"got {predicted_correctness!r}"
+                "a calibrated result must carry predicted_correctness; "
+                "calibrated=True with predicted_correctness=None is a forbidden half-state"
             )
-        if not calibrated:
+        if calibration_profile_fingerprint is None:
+            raise InvalidProbabilityError(
+                "a calibrated result must carry the exact calibration profile identity "
+                "(calibration_profile_fingerprint and "
+                "calibration_profile_fingerprint_version); a calibrated result without "
+                "profile provenance is a forbidden half-state"
+            )
+    else:
+        if predicted_correctness is not None:
             raise InvalidProbabilityError(
                 "predicted_correctness may only be set when calibrated is True "
                 "(uncalibrated results must leave predicted_correctness as None)"
+            )
+        if calibration_profile_fingerprint is not None:
+            raise InvalidProbabilityError(
+                "an uncalibrated result must not carry calibration profile provenance "
+                "(calibration_profile_fingerprint/version must both be None when "
+                "calibrated is False)"
             )
 
 
@@ -155,6 +230,20 @@ class DecisionResult:
     Phase 1 never auto-fills ``predicted_correctness`` and never sets
     ``calibrated=True`` on its own: an uncalibrated result has
     ``predicted_correctness=None`` and ``calibrated=False``.
+
+    ``calibrated`` records APPLICATION STATE, not quality: it means a supported
+    :class:`~probvenance.calibration.CalibrationProfile` was applied through the
+    declared calibration application contract and ``predicted_correctness`` is
+    populated. It does NOT mean the result is empirically well calibrated, that
+    Brier or log loss improved, or that any statistical guarantee holds.
+
+    ``calibration_profile_fingerprint`` and
+    ``calibration_profile_fingerprint_version`` are the EXACT identity of the
+    profile that produced ``predicted_correctness``. The profile object itself
+    is never stored on a result, and none of its internals (method
+    configuration, training dataset fingerprint, fitted parameters,
+    ground-truth semantics, binding) are duplicated here. The fingerprint is
+    the identity link; the profile is looked up elsewhere if needed.
     """
 
     certainty: Certainty
@@ -162,6 +251,8 @@ class DecisionResult:
     trace_id: str | None = None
     predicted_correctness: float | None = None
     calibrated: bool = False
+    calibration_profile_fingerprint: str | None = None
+    calibration_profile_fingerprint_version: int | None = None
 
     def __post_init__(self) -> None:
         _validate_result_fields(
@@ -170,6 +261,8 @@ class DecisionResult:
             self.trace_id,
             self.predicted_correctness,
             self.calibrated,
+            self.calibration_profile_fingerprint,
+            self.calibration_profile_fingerprint_version,
         )
 
 
@@ -190,6 +283,8 @@ class BoolResult(DecisionResult):
             self.trace_id,
             self.predicted_correctness,
             self.calibrated,
+            self.calibration_profile_fingerprint,
+            self.calibration_profile_fingerprint_version,
         )
         p = self.probability_true
         if isinstance(p, bool) or not isinstance(p, (int, float)):
@@ -229,6 +324,8 @@ class ChoiceResult(DecisionResult):
             self.trace_id,
             self.predicted_correctness,
             self.calibrated,
+            self.calibration_profile_fingerprint,
+            self.calibration_profile_fingerprint_version,
         )
         probabilities = self.probabilities
         if not isinstance(probabilities, Mapping):
@@ -258,9 +355,10 @@ class ChoiceResult(DecisionResult):
             raise InvalidProbabilityError(
                 f"probabilities must sum to 1.0 (tolerance {_SUM_TOLERANCE}), got sum {total!r}"
             )
-        # Values are floats (immutable), so copying into a plain dict fully
-        # isolates this result; key order is preserved for tie-breaking.
-        object.__setattr__(self, "probabilities", dict(probabilities))
+        # Values are floats (immutable) and the mapping is wrapped read-only, so
+        # this result is a true snapshot: the recorded selection can never drift
+        # after construction. Key order is preserved for tie-breaking.
+        object.__setattr__(self, "probabilities", MappingProxyType(dict(probabilities)))
 
     @property
     def value(self) -> str:

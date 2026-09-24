@@ -18,7 +18,7 @@ from probvenance.diagnostics import ChoiceScoringDiagnostics, ScoringDiagnostics
 from probvenance.errors import InvalidDecisionError
 from probvenance.fingerprint import JSONValue, canonical_json, fingerprint
 from probvenance.plans import CandidateLabelMapping, InferencePlan, RawEvidence, ScoringStrategy
-from probvenance.results import BoolResult, DecisionResult
+from probvenance.results import BoolResult, DecisionResult, _validate_calibration_provenance
 
 POSITIVE_TOKEN_ID_KEY = "positive_token_id"
 NEGATIVE_TOKEN_ID_KEY = "negative_token_id"
@@ -75,6 +75,18 @@ class DecisionTrace:
     statement about comparability or calibration.
     ``probability_true`` is the binary ``P(True)`` and ``None`` for
     categorical decisions, which have no true/false outcome space.
+    ``calibration_profile_fingerprint`` and
+    ``calibration_profile_fingerprint_version`` identify the exact calibration
+    artifact used for the returned result, and are ``None`` for an uncalibrated
+    trace. They are primitive identity mirrors of the result's own provenance,
+    so this module never imports the calibration layer. They do NOT mean the
+    profile is valid for every population, that it improves calibration, or
+    that the training data was independent.
+
+    There is deliberately no whole-``DecisionTrace`` serialization schema
+    version: ``to_dict`` is a stable key set, and
+    ``execution_fingerprint`` (``EXECUTION_FINGERPRINT_VERSION``) identifies
+    execution semantics only, so it is never bumped by calibration provenance.
     """
 
     trace_id: str
@@ -117,6 +129,14 @@ class DecisionTrace:
     compiler_version: int | None = None
     assembler_id: str | None = None
     assembler_version: int | None = None
+    calibration_profile_fingerprint: str | None = None
+    calibration_profile_fingerprint_version: int | None = None
+
+    def __post_init__(self) -> None:
+        _validate_calibration_provenance(
+            self.calibration_profile_fingerprint,
+            self.calibration_profile_fingerprint_version,
+        )
 
     def to_dict(self) -> dict[str, JSONValue]:
         """A JSON-compatible plain dict of every field (evidence nested)."""
@@ -179,6 +199,10 @@ class DecisionTrace:
             "compiler_version": self.compiler_version,
             "assembler_id": self.assembler_id,
             "assembler_version": self.assembler_version,
+            "calibration_profile_fingerprint": self.calibration_profile_fingerprint,
+            "calibration_profile_fingerprint_version": (
+                self.calibration_profile_fingerprint_version
+            ),
         }
         return payload
 

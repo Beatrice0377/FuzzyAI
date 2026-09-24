@@ -1160,11 +1160,56 @@ them generalises to other models, revisions, prompts, or tasks.
   `tests/test_profile_application.py::TestPostMetricLabelBinding`.
 
 - [V] A fitted profile produces a `predicted-winner-correctness` score offline
-  only. The runtime still produces no calibrated result: a runtime
+  only unless a caller explicitly applies it through
+  `apply_profile_to_runtime_evaluation`. Without that explicit call, a runtime
   `DecisionResult` keeps `predicted_correctness is None` and `calibrated is
-  False`, the `DecisionTrace` schema is unchanged, and no supported path sets a
-  runtime calibration field. Evidence:
-  `tests/test_profile_application.py::TestScopeBoundaries`.
+  False`, and no supported path sets a runtime calibration field. Evidence:
+  `tests/test_profile_application.py::TestScopeBoundaries`,
+  `tests/test_runtime_calibration.py::TestUncalibratedByDefault`.
+
+### Runtime-linked calibration application (Phase 4C.4)
+
+- [V] An uncalibrated runtime `Evaluation` can be explicitly transformed, with
+  one exact compatible `CalibrationProfile`, into a new runtime-linked
+  `Evaluation` whose result carries predicted winner correctness and
+  `calibrated = True`. The transformation is caller-driven: `Probvenance.evaluate`
+  and `Probvenance.evaluate_with_trace` never auto-calibrate, there is no profile
+  registry or lookup, and the original `Evaluation` is unchanged. Evidence:
+  `tests/test_runtime_calibration.py::TestCalibratedResultAndTrace`,
+  `...::TestUncalibratedByDefault`.
+
+- [V] A calibrated `DecisionResult` records the exact
+  `CalibrationProfile` fingerprint and fingerprint version that produced its
+  predicted correctness, and the `DecisionTrace` mirrors that same profile
+  provenance, while `probability_true`, `ChoiceResult.probabilities`,
+  `ChoiceResult.value`, `Certainty`, `method`, `trace_id`, and
+  `execution_fingerprint` are unchanged. Evidence:
+  `tests/test_runtime_calibration.py::TestCalibratedResultAndTrace`,
+  `...::TestExecutionIdentityUnchanged`.
+
+- [V] Runtime profile application reconstructs `CalibrationBinding` from the
+  runtime trace provenance plus the task, domain, and taxonomy declarations the
+  caller explicitly supplies, and requires an exact profile binding match. It
+  never copies optional declarations from the profile to manufacture
+  compatibility: a profile whose declarations are not independently supplied by
+  the caller fails closed. Evidence:
+  `tests/test_runtime_calibration.py::TestBindingMatch`.
+
+- [V] Offline and runtime-linked profile application share one numerical method
+  application path and produce the same predicted correctness for the same
+  profile and selected semantic probability. Application reads the probability
+  attached to the recorded selected value and never recomputes the winner or
+  re-runs tie-breaking. Evidence:
+  `tests/test_runtime_calibration.py::TestOfflineRuntimeEquivalence`.
+
+- [V] A `DecisionResult` state machine forbids half-calibrated states: a
+  calibrated result without profile identity, a profile identity without
+  `calibrated = True`, a fingerprint without its version or a version without
+  its fingerprint, and a non-empty predicted correctness on an uncalibrated
+  result are all rejected at construction. A structurally coherent manually
+  constructed calibrated result remains valid: construction validates structure,
+  not provenance attestation. Evidence:
+  `tests/test_runtime_calibration.py::TestManualResultStateMachine`.
 
 ## Current hypotheses
 

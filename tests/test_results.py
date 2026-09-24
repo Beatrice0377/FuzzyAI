@@ -179,9 +179,13 @@ class TestBoolResult:
             probability_true=0.5,
             predicted_correctness=0.9,
             calibrated=True,
+            calibration_profile_fingerprint="a" * 64,
+            calibration_profile_fingerprint_version=1,
         )
         assert r.predicted_correctness == 0.9
         assert r.calibrated is True
+        assert r.calibration_profile_fingerprint == "a" * 64
+        assert r.calibration_profile_fingerprint_version == 1
 
     def test_empty_method_rejected(self) -> None:
         with pytest.raises(InvalidProbabilityError, match="method"):

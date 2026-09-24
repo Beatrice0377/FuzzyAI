@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Any, Final
@@ -2147,46 +2147,35 @@ def _require_l2_logistic_fitted_parameters(
     return slope, intercept
 
 
-def predicted_winner_correctness(
+def _apply_profile_to_selected_probability(
     profile: CalibrationProfile,
-    observation: CalibrationObservation,
+    selected_probability: float,
 ) -> float:
-    """Apply one exact fitted profile to one observation's selected score.
+    """Apply one exact fitted profile to one already-selected probability.
 
-    This is the single truth source for the post-calibration
-    :data:`PREDICTED_WINNER_CORRECTNESS_ID` score. It returns the profile
-    produced estimate of the probability that the observation's RECORDED
-    selected semantic value is correct under the profile's winner-correctness
-    ground-truth semantics.
+    This is the SINGLE numerical Profile application truth source. Both the
+    offline path (:func:`predicted_winner_correctness`, which extracts the
+    probability from a :class:`CalibrationObservation`) and the runtime-linked
+    path (:func:`apply_profile_to_runtime_evaluation`, which extracts it from a
+    :class:`~probvenance.results.DecisionResult`) consume exactly this function,
+    so the two paths can never drift.
 
     Application is a pure function of the profile's fitted state: the profile
-    is never refitted, the optimizer is never invoked, ``l2_strength`` plays no
-    role, and the winner is never recomputed. The selected probability is the
-    probability attached to the recorded ``selected_value`` (retrieved through
-    the SAME :func:`_selected_probability` extractor the fitter and the
-    uncalibrated evaluators use), never a fresh ``argmax`` over the recorded
-    distribution, so no tie-breaking is re-run.
+    is never refitted, the optimizer is never invoked, and ``l2_strength``
+    plays no role. Dispatch is on the profile's explicit ``method_id`` /
+    ``method_version``; an unsupported method fails closed with no
+    parameter-shape guessing and no identity fallback, and the fitted state
+    must contain exactly the coefficients the supported method declares, so a
+    malformed internal profile also fails closed.
 
-    Dispatch is on the profile's explicit ``method_id`` / ``method_version``.
-    An unsupported method fails closed: parameter names are never interpreted
-    as evidence of a mapping, and there is no identity fallback. The fitted
-    state must contain exactly the mapping coefficients the supported method
-    declares, so a malformed internal profile also fails closed.
-
-    ``p = 0`` and ``p = 1`` are ordinary finite inputs; the mapping output is
-    never clipped. It is not guaranteed to be strictly interior: for a fitted
-    ``slope * p + intercept`` large enough in magnitude the binary64 result of
-    the logistic map rounds to exactly ``0.0`` or ``1.0`` (see
-    :func:`_stable_sigmoid`), and such an endpoint is returned as produced.
+    ``p = 0`` and ``p = 1`` are ordinary finite inputs and the output is never
+    clipped: for a large enough ``|slope * p + intercept|`` the binary64
+    logistic map rounds to exactly ``0.0`` or ``1.0``, and such an endpoint is
+    returned as produced.
     """
     if not isinstance(profile, CalibrationProfile):
         raise InvalidDecisionError(
             f"profile must be a CalibrationProfile, got {type(profile).__name__} ({profile!r})"
-        )
-    if not isinstance(observation, CalibrationObservation):
-        raise InvalidDecisionError(
-            "observation must be a CalibrationObservation, got "
-            f"{type(observation).__name__} ({observation!r})"
         )
     if profile.target_id != WINNER_CORRECTNESS_TARGET_ID or (
         profile.target_version != WINNER_CORRECTNESS_TARGET_VERSION
@@ -2207,11 +2196,202 @@ def predicted_winner_correctness(
         profile.method_version != L2_LOGISTIC_SELECTED_PROBABILITY_METHOD_VERSION
     ):
         raise InvalidDecisionError(
-            "the profile method is not supported by offline profile application: "
+            "the profile method is not supported by profile application: "
             f"got {profile.method_id!r} v{profile.method_version}, supported "
             f"{L2_LOGISTIC_SELECTED_PROBABILITY_METHOD_ID!r} "
             f"v{L2_LOGISTIC_SELECTED_PROBABILITY_METHOD_VERSION}"
         )
     slope, intercept = _require_l2_logistic_fitted_parameters(profile.fitted_parameters)
-    probability = _selected_probability(observation)
-    return _stable_sigmoid(slope * probability + intercept)
+    if isinstance(selected_probability, bool) or not isinstance(selected_probability, (int, float)):
+        raise InvalidDecisionError(
+            "selected_probability must be a real number, got "
+            f"{type(selected_probability).__name__} ({selected_probability!r})"
+        )
+    if not math.isfinite(selected_probability) or not (0.0 <= selected_probability <= 1.0):
+        raise InvalidDecisionError(
+            f"selected_probability must be a finite float in [0, 1], got {selected_probability!r}"
+        )
+    return _stable_sigmoid(slope * float(selected_probability) + intercept)
+
+
+def predicted_winner_correctness(
+    profile: CalibrationProfile,
+    observation: CalibrationObservation,
+) -> float:
+    """Apply one exact fitted profile to one observation's selected score.
+
+    This is the single truth source for the post-calibration
+    :data:`PREDICTED_WINNER_CORRECTNESS_ID` score. It returns the profile
+    produced estimate of the probability that the observation's RECORDED
+    selected semantic value is correct under the profile's winner-correctness
+    ground-truth semantics.
+
+    Application is a pure function of the profile's fitted state: the profile
+    is never refitted, the optimizer is never invoked, ``l2_strength`` plays no
+    role, and the winner is never recomputed. The selected probability is the
+    probability attached to the recorded ``selected_value`` (retrieved through
+    the SAME :func:`_selected_probability` extractor the fitter and the
+    uncalibrated evaluators use), never a fresh ``argmax`` over the recorded
+    distribution, so no tie-breaking is re-run. The actual mapping is applied by
+    :func:`_apply_profile_to_selected_probability`, the shared numerical kernel
+    that runtime-linked application also consumes.
+
+    ``p = 0`` and ``p = 1`` are ordinary finite inputs; the mapping output is
+    never clipped. It is not guaranteed to be strictly interior: for a fitted
+    ``slope * p + intercept`` large enough in magnitude the binary64 result of
+    the logistic map rounds to exactly ``0.0`` or ``1.0`` (see
+    :func:`_stable_sigmoid`), and such an endpoint is returned as produced.
+    """
+    if not isinstance(profile, CalibrationProfile):
+        raise InvalidDecisionError(
+            f"profile must be a CalibrationProfile, got {type(profile).__name__} ({profile!r})"
+        )
+    if not isinstance(observation, CalibrationObservation):
+        raise InvalidDecisionError(
+            "observation must be a CalibrationObservation, got "
+            f"{type(observation).__name__} ({observation!r})"
+        )
+    return _apply_profile_to_selected_probability(profile, _selected_probability(observation))
+
+
+def _runtime_selected_probability(result: BoolResult | ChoiceResult) -> float:
+    """Return the probability attached to a runtime result's selected value.
+
+    The selected value is read from the result, never recomputed: for a
+    :class:`~probvenance.results.BoolResult` the selected semantic value is
+    ``true`` when ``probability_true > 0.5`` (matching the binary tie rule that
+    ``0.5`` selects ``false``), and for a
+    :class:`~probvenance.results.ChoiceResult` it is the recorded
+    ``result.value`` whose deterministic tie-breaking already happened at
+    result construction. No ``argmax`` is re-run, no tie is re-broken, and no
+    scoring label or token id is consulted.
+    """
+    if isinstance(result, BoolResult):
+        if _select_bool_value(result.probability_true):
+            return result.probability_true
+        return result.probability_false
+    if isinstance(result, ChoiceResult):
+        return result.probabilities[result.value]
+    raise InvalidDecisionError(
+        "runtime-linked calibration application supports BoolResult and ChoiceResult, got "
+        f"{type(result).__name__}"
+    )
+
+
+def apply_profile_to_runtime_evaluation(
+    evaluation: Evaluation,
+    profile: CalibrationProfile,
+    *,
+    task_id: str | None = None,
+    domain_id: str | None = None,
+    taxonomy_id: str | None = None,
+    taxonomy_version: int | None = None,
+) -> Evaluation:
+    """Return a calibrated copy of an uncalibrated runtime ``Evaluation``.
+
+    This is the only supported path that may legitimately produce a
+    ``DecisionResult`` with ``calibrated=True`` and a populated
+    ``predicted_correctness``. It is an explicit, caller-driven transformation:
+    the caller supplies the exact :class:`CalibrationProfile` to apply and
+    declares the task/domain/taxonomy identity it knows. There is no registry,
+    no lookup, no nearest profile, and no fallback.
+
+    The profile must already be compatible with the evaluation, established by
+    reconstructing a :class:`CalibrationBinding` from the trace's provenance
+    plus the CALLER's declarations and requiring an exact match against the
+    profile's binding. Optional declaration values are never copied from the
+    profile to manufacture a match. Ground truth is not required at runtime:
+    the profile's ground-truth semantics define what ``predicted_correctness``
+    means, and runtime application does not prove those label semantics match a
+    future observed label.
+
+    The numerical mapping is :func:`_apply_profile_to_selected_probability`,
+    the same kernel the offline path consumes, so the two can never drift. The
+    input evaluation must be uncalibrated, and the original result and trace
+    are never mutated: a new result of the same concrete type and a new trace
+    are returned, with the execution fingerprint and the semantic outcome
+    distribution unchanged. ``calibrated=True`` records that a profile was
+    applied, not that the profile is statistically valid or improves any
+    metric.
+    """
+    if not isinstance(evaluation, Evaluation):
+        raise InvalidDecisionError(
+            f"evaluation must be an Evaluation, got {type(evaluation).__name__} ({evaluation!r})"
+        )
+    if not isinstance(profile, CalibrationProfile):
+        raise InvalidDecisionError(
+            f"profile must be a CalibrationProfile, got {type(profile).__name__} ({profile!r})"
+        )
+    result = evaluation.result
+    trace = evaluation.trace
+    if (
+        result.calibrated
+        or result.predicted_correctness is not None
+        or result.calibration_profile_fingerprint is not None
+        or result.calibration_profile_fingerprint_version is not None
+    ):
+        raise InvalidDecisionError(
+            "runtime-linked calibration application requires an uncalibrated result; "
+            "the supplied evaluation is already calibrated and is never recalibrated, "
+            "stacked, or overwritten"
+        )
+    if (
+        trace.calibration_profile_fingerprint is not None
+        or trace.calibration_profile_fingerprint_version is not None
+    ):
+        raise InvalidDecisionError(
+            "runtime-linked calibration application requires an uncalibrated trace; "
+            "the supplied trace already carries calibration provenance"
+        )
+    if result.trace_id is None or result.trace_id != trace.trace_id:
+        raise InvalidDecisionError(
+            "the result and trace must share one non-null trace id before calibration "
+            f"application, got result.trace_id={result.trace_id!r} and "
+            f"trace.trace_id={trace.trace_id!r}"
+        )
+    if trace.decision_family == "bool":
+        if not isinstance(result, BoolResult):
+            raise InvalidDecisionError(
+                f"a bool decision_family requires a BoolResult, got {type(result).__name__}"
+            )
+    elif trace.decision_family == "choice":
+        if not isinstance(result, ChoiceResult):
+            raise InvalidDecisionError(
+                f"a choice decision_family requires a ChoiceResult, got {type(result).__name__}"
+            )
+    else:
+        raise InvalidDecisionError(f"unsupported decision_family {trace.decision_family!r}")
+    runtime_binding = CalibrationBinding.from_trace(
+        trace,
+        task_id=task_id,
+        domain_id=domain_id,
+        taxonomy_id=taxonomy_id,
+        taxonomy_version=taxonomy_version,
+    )
+    profile.require_binding_match(runtime_binding)
+    predicted_correctness = _apply_profile_to_selected_probability(
+        profile,
+        _runtime_selected_probability(result),
+    )
+    calibrated_result = replace(
+        result,
+        predicted_correctness=predicted_correctness,
+        calibrated=True,
+        calibration_profile_fingerprint=profile.fingerprint,
+        calibration_profile_fingerprint_version=CALIBRATION_PROFILE_FINGERPRINT_VERSION,
+    )
+    calibrated_trace = replace(
+        trace,
+        calibration_profile_fingerprint=profile.fingerprint,
+        calibration_profile_fingerprint_version=CALIBRATION_PROFILE_FINGERPRINT_VERSION,
+    )
+    if (
+        calibrated_result.calibration_profile_fingerprint
+        != calibrated_trace.calibration_profile_fingerprint
+        or calibrated_result.calibration_profile_fingerprint_version
+        != calibrated_trace.calibration_profile_fingerprint_version
+    ):
+        raise InvalidDecisionError(
+            "the calibrated result and trace must carry the same calibration provenance"
+        )
+    return Evaluation(result=calibrated_result, trace=calibrated_trace)

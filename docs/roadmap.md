@@ -121,11 +121,15 @@ post-calibration Brier, post-calibration exact log loss, post-calibration
 companion diagnostics, post-calibration equal-width reliability, and the
 post-calibration binned absolute-gap aggregate. Every post-calibration metric
 evaluator consumes that one artifact rather than re-binding labels from a
-separately supplied source dataset. Profile
+separately supplied source dataset. Explicit runtime-linked profile application
+is implemented (`apply_profile_to_runtime_evaluation`): a caller may apply one
+exact compatible profile to one uncalibrated runtime `Evaluation` to produce a
+calibrated result and a trace that mirror the profile identity. Profile
 registries, profile lookup, profile matching policy beyond exact binding match,
-the remaining metrics, runtime profile application, and runtime calibration
-(derived scores on a `DecisionResult`) do not exist, and `predicted_correctness`
-remains `None` for every result the runtime can produce.
+profile serialization, automatic runtime profile selection, the remaining
+metrics, and automatic runtime calibration (deriving scores without an explicit
+caller-supplied profile) do not exist, and `predicted_correctness` remains `None`
+for every runtime result that no caller has explicitly calibrated.
 
 - Evaluation harness (started: declared evaluation source cohort, metric-eligible
   dataset projection, Brier, log loss; delivered: winner-correctness companion

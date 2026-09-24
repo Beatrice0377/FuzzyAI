@@ -19,9 +19,13 @@ records both the derived winner-correctness target label and the produced score
 per row, and post-calibration Brier, exact log loss, companion diagnostics,
 equal-width reliability, and the binned absolute-gap aggregate consume that one
 artifact.
-Runtime calibration application does not exist, so `predicted_correctness`
-remains `None` for every result the runtime can produce. Abstention and every
-other Choice strategy are not implemented.
+Explicit runtime-linked profile application is implemented: a caller may apply
+one exact compatible profile to one uncalibrated runtime `Evaluation` to obtain
+a calibrated result and a trace that mirror the profile identity. Automatic
+runtime profile selection, profile registries, lookup, and serialization do not
+exist, and `predicted_correctness` remains `None` for every runtime result that
+no caller has explicitly calibrated. Abstention and every other Choice strategy
+are not implemented.
 
 Probvenance is a provider-agnostic probabilistic decision runtime. It turns language
 models into evaluable, calibratable, trackable semantic-probability decision
