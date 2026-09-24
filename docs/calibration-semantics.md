@@ -967,12 +967,17 @@ legitimately record a mismatch, so their admission is unchanged.
 
 Explicit cross-taxonomy fitting or application requires an identity-bearing
 mapping contract; that contract is not implemented yet and no speculative
-mapping framework is created here. Cross-taxonomy observations cannot enter a
-fitting dataset at all: `CalibrationDataset` pooling rejects any member whose
-ground-truth semantics identity differs from the dataset's, so the constraint
-is enforced at both the dataset boundary and profile construction. A tested
-compatibility helper is deferred until it has a real caller, so that no dead
-policy code is added.
+mapping framework is created here. The taxonomy axes stay orthogonal at the
+dataset boundary: `CalibrationDataset` may structurally contain a population
+whose binding taxonomy and ground-truth taxonomy differ, because those remain
+orthogonal provenance axes. `CalibrationDataset` rejects pooling different
+exact bindings or different exact ground-truth-semantics identities; it does
+not require the two taxonomy axes to equal each other. The initial profile
+fitting and application contract then fails closed when the dataset's concrete
+binding taxonomy contradicts its concrete ground-truth taxonomy, unless a
+future explicit taxonomy-mapping identity is introduced. A tested compatibility
+helper is deferred until it has a real caller, so that no dead policy code is
+added.
 
 ## 13. Calibration method identity
 

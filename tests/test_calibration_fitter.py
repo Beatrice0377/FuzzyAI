@@ -534,6 +534,36 @@ class TestInheritedProfileContract:
                 CalibrationDataset.create([observation]), l2_strength=1.0
             )
 
+    def test_cross_taxonomy_population_is_admissible_but_fitting_fails_closed(self):
+        """Pin the orthogonal-axes contract at both boundaries.
+
+        A dataset whose binding taxonomy and ground-truth taxonomy differ is
+        structurally representable, because those remain orthogonal provenance
+        axes: `CalibrationDataset` rejects pooling different exact bindings or
+        different exact ground-truth-semantics identities, but it does not
+        require the two taxonomy axes to equal each other. The initial profile
+        contract then fails closed at fitting.
+        """
+        runtime, _ = make_choice_runtime()
+        evaluation = runtime.evaluate_with_trace(make_choice_decision())
+        from probvenance.calibration import CalibrationObservation
+
+        observation = CalibrationObservation.from_evaluation(
+            evaluation,
+            resolved_truth("shipping", taxonomy_id="legacy-support", taxonomy_version=1),
+            taxonomy_id="support",
+            taxonomy_version=3,
+        )
+
+        dataset = CalibrationDataset.create([observation])
+        assert dataset.binding.taxonomy_id == "support"
+        assert dataset.binding.taxonomy_version == 3
+        assert dataset.ground_truth_semantics.taxonomy_id == "legacy-support"
+        assert dataset.ground_truth_semantics.taxonomy_version == 1
+
+        with pytest.raises(InvalidDecisionError, match="taxonomy"):
+            fit_l2_logistic_selected_probability(dataset, l2_strength=1.0)
+
     def test_taxonomy_version_mismatch_still_fails_closed(self):
         runtime, _ = make_choice_runtime()
         evaluation = runtime.evaluate_with_trace(make_choice_decision())
