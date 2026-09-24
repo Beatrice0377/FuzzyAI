@@ -588,12 +588,12 @@ class TestScopeBoundaries:
         assert not hasattr(CalibrationProfile, "predict")
         assert not hasattr(CalibrationProfile, "apply")
 
-    def test_no_post_calibration_metric_exists(self):
-        import probvenance.calibration_evaluation as evaluation_module
+    def test_fitter_module_contains_no_post_calibration_metric(self):
+        import probvenance.calibration as calibration_module
 
-        source = inspect.getsource(evaluation_module)
-        for forbidden in ("post_calibration", "post-calibration", "calibrated_brier"):
-            assert forbidden not in source
+        source = inspect.getsource(calibration_module)
+        assert "evaluate_post_calibration" not in source
+        assert "calibrated_brier" not in source
 
     def test_fitter_performs_no_hyperparameter_search(self):
         source = inspect.getsource(

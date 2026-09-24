@@ -1066,8 +1066,13 @@ class TestNoConflation:
     def test_evaluation_does_not_create_a_calibration_profile(self):
         import probvenance.calibration_evaluation as evaluation_module
 
-        assert not hasattr(evaluation_module, "CalibrationProfile")
-        assert "_from_fitted_state" not in inspect.getsource(evaluation_module)
+        source = inspect.getsource(evaluation_module)
+        # The offline application artifact consumes the Profile TYPE, so the
+        # module may reference it. What must stay true is that the evaluation
+        # layer never CREATES a profile: it never calls the internal builder and
+        # never reaches the profile construction capability.
+        assert "_from_fitted_state" not in source
+        assert "_PROFILE_CONSTRUCTION_TOKEN" not in source
 
     def test_evaluation_does_not_mutate_observations_or_dataset(self):
         o1 = bool_observation()

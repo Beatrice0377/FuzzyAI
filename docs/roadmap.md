@@ -108,11 +108,21 @@ NLL + positive L2 on both slope and intercept`, no endpoint epsilon, clipping,
 label smoothing, or logit transform, and a deterministic `newton-backtracking`
 v2 solver whose success condition is a strong-convexity objective-gap
 certificate rather than a fixed absolute gradient threshold (Phase 4C.2a). The
-profile fingerprint version is unchanged by it. Profile
+profile fingerprint version is unchanged by it. Offline profile application is
+implemented (Phase 4C.3, `apply_profile_to_evaluation_dataset`): one exact
+`CalibrationProfile` is applied to one binding-compatible and
+ground-truth-semantics-compatible evaluation dataset to produce one immutable
+`ProfileAppliedEvaluationDataset` that commits the profile identity and the
+source evaluation population identity, with one
+`predicted-winner-correctness` score per eligible observation. The
+post-calibration evaluation foundation is implemented on top of that artifact:
+post-calibration Brier, post-calibration exact log loss, post-calibration
+companion diagnostics, post-calibration equal-width reliability, and the
+post-calibration binned absolute-gap aggregate. Profile
 registries, profile lookup, profile matching policy beyond exact binding match,
-the remaining metrics, runtime profile application, and post-calibration
-(derived-score) evaluation do not exist, and `predicted_correctness` remains
-`None` for every result the runtime can produce.
+the remaining metrics, runtime profile application, and runtime calibration
+(derived scores on a `DecisionResult`) do not exist, and `predicted_correctness`
+remains `None` for every result the runtime can produce.
 
 - Evaluation harness (started: declared evaluation source cohort, metric-eligible
   dataset projection, Brier, log loss; delivered: winner-correctness companion

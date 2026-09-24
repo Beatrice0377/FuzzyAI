@@ -1088,6 +1088,69 @@ them generalises to other models, revisions, prompts, or tasks.
   `experiments/choice_signal/results/choice-signal-qwen35-2b.jsonl`,
   `experiments/choice_signal/cross_model.py`.
 
+### Offline profile application and post-calibration evaluation (Phase 4C.3)
+
+- [V] One exact `CalibrationProfile` can be applied offline to one compatible
+  `CalibrationEvaluationDataset` to produce an immutable, provenance-bearing
+  `predicted-winner-correctness` score artifact. Application requires exact
+  `CalibrationBinding` identity and exact `GroundTruthSemanticsIdentity`, fails
+  closed on an unsupported profile method or malformed fitted state, does not
+  refit, does not invoke the optimizer, does not clip endpoints, and never
+  recomputes the winner or re-runs tie-breaking: the selected probability is
+  retrieved for the recorded `selected_value` through the same extractor the
+  fitter and the raw evaluators use. Evidence:
+  `tests/test_profile_application.py::TestCompatibilityChecks`,
+  `...::TestLogisticApplication`, `...::TestPredictedCorrectnessIdentity`.
+
+- [V] The application artifact commits the profile identity and the source
+  evaluation population identity, so equal numeric scores from different
+  profiles or different source cohorts do not collapse. Two profiles whose
+  fitted parameters differ but which happen to emit identical scores produce
+  different application fingerprints and different post-calibration metric
+  fingerprints, and the same eligible rows with different excluded source rows
+  produce different application and post-calibration metric fingerprints while
+  the scored values stay equal. Evidence:
+  `tests/test_profile_application.py::TestPrePostCoherence`,
+  `...::TestApplicationArtifact`.
+
+- [V] Post-calibration Brier and post-calibration exact log loss use the same
+  metric mathematics as the pre-calibration metrics but commit
+  `predicted-winner-correctness` v1 as the input-score identity rather than
+  `uncalibrated-selected-probability` v1, and the pre/post metric pair agrees on
+  the evaluation dataset fingerprint, the source cohort fingerprint, the
+  source count, the evaluated count, and the target identity. Exact log-loss
+  endpoints stay unclipped and a non-finite result is encoded as the structured
+  `positive_infinity` value rather than a raw JSON number. Evidence:
+  `tests/test_profile_application.py::TestPostCalibrationBrier`,
+  `...::TestPostCalibrationLogLoss`, `...::TestPrePostCoherence`.
+
+- [V] Post-calibration reliability uses the same frozen equal-width binning
+  contract over `predicted_correctness`, and the post-calibration binned
+  absolute-gap aggregate derives only from that reliability artifact. The
+  shared `equal-width` v1 boundary implementation is used by both the raw and
+  the post-calibration reliability evaluators, the post bin summary names the
+  score `mean_predicted_correctness` rather than `mean_selected_probability`,
+  and the post reliability and post gap carry their own semantic identities
+  because the pre-calibration ones are documented as raw-selected-probability
+  semantics. Evidence:
+  `tests/test_profile_application.py::TestPostCalibrationReliability`,
+  `...::TestPostCalibrationBinnedGap`, `...::TestFrozenIdentities`.
+
+- [V] Post-calibration labels are bound to observation identity, never to
+  caller position: the applied artifact's rows and the labels drawn from the
+  source evaluation dataset are aligned by observation fingerprint, so the same
+  observation multiset in any caller order yields the same post-calibration
+  metric payload and fingerprint, and a source dataset that does not cover the
+  applied artifact fails closed instead of silently mislabelling rows. Evidence:
+  `tests/test_profile_application.py::TestPostMetricLabelBinding`.
+
+- [V] A fitted profile produces a `predicted-winner-correctness` score offline
+  only. The runtime still produces no calibrated result: a runtime
+  `DecisionResult` keeps `predicted_correctness is None` and `calibrated is
+  False`, the `DecisionTrace` schema is unchanged, and no supported path sets a
+  runtime calibration field. Evidence:
+  `tests/test_profile_application.py::TestScopeBoundaries`.
+
 ## Current hypotheses
 
 - `[H]` An explicit scoring doctrine may improve cross-model semantic

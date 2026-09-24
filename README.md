@@ -11,10 +11,15 @@ binding, ground-truth semantics, target, input-score, method, fitted-parameter,
 and training-dataset provenance, and fails closed on a concrete taxonomy
 contradiction or an exact binding mismatch. One supported scalar fitting method
 is implemented: `fit_l2_logistic_selected_probability` fits an L2-regularized
-logistic map of the selected probability onto winner correctness. Runtime
-calibration application and post-calibration evaluation do not exist, so
-`predicted_correctness` remains `None` for every result the runtime can
-produce. Abstention and every other Choice strategy are not implemented.
+logistic map of the selected probability onto winner correctness. Offline
+profile application and the post-calibration evaluation foundation are
+implemented: one exact profile can be applied to one compatible evaluation
+dataset to produce an immutable predicted-winner-correctness artifact, and
+post-calibration Brier, exact log loss, companion diagnostics, equal-width
+reliability, and the binned absolute-gap aggregate consume that artifact.
+Runtime calibration application does not exist, so `predicted_correctness`
+remains `None` for every result the runtime can produce. Abstention and every
+other Choice strategy are not implemented.
 
 Probvenance is a provider-agnostic probabilistic decision runtime. It turns language
 models into evaluable, calibratable, trackable semantic-probability decision

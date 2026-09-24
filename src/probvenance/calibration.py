@@ -102,6 +102,25 @@ WINNER_CORRECTNESS_TARGET_VERSION = 1
 UNCALIBRATED_SELECTED_PROBABILITY_ID = "uncalibrated-selected-probability"
 UNCALIBRATED_SELECTED_PROBABILITY_VERSION = 1
 
+#: The post-calibration predicted-correctness score identity: the score
+#: produced by applying ONE exact fitted :class:`CalibrationProfile` to an
+#: observation under the profile's declared input-score semantics. It is
+#: intended to estimate ``P(winner_correctness = 1)`` under the profile's
+#: target and ground-truth semantics, which makes it a genuinely different
+#: score semantics from :data:`UNCALIBRATED_SELECTED_PROBABILITY_ID`; the two
+#: must never be conflated, so this score has its own identity instead of
+#: reusing the uncalibrated one.
+#:
+#: It is owned here, in the calibration foundation, rather than in the
+#: evaluation layer, because future runtime calibration must consume the same
+#: score semantics.
+#:
+#: A calibrated-score SEMANTICS is not evidence that the score is empirically
+#: well calibrated, that the calibrator improved anything, or that the model is
+#: globally calibrated. Those are evaluation conclusions, not score identity.
+PREDICTED_WINNER_CORRECTNESS_ID = "predicted-winner-correctness"
+PREDICTED_WINNER_CORRECTNESS_VERSION = 1
+
 _OBSERVATION_CONSTRUCTION_TOKEN: Final[object] = object()
 """Construction capability held only by ``CalibrationObservation.from_evaluation``.
 
@@ -2057,3 +2076,100 @@ def fit_l2_logistic_selected_probability(
         method_configuration=_l2_logistic_method_configuration(strength),
         fitted_parameters={"slope": slope, "intercept": intercept},
     )
+
+
+def _require_l2_logistic_fitted_parameters(
+    fitted_parameters: Mapping[str, JSONValue],
+) -> tuple[float, float]:
+    expected = {"slope", "intercept"}
+    if set(fitted_parameters) != expected:
+        raise InvalidDecisionError(
+            "the L2 logistic calibration method requires fitted parameters "
+            f"{sorted(expected)}, got {sorted(fitted_parameters)}"
+        )
+    slope_value = fitted_parameters["slope"]
+    intercept_value = fitted_parameters["intercept"]
+    if isinstance(slope_value, bool) or not isinstance(slope_value, (int, float)):
+        raise InvalidDecisionError(
+            f"the L2 logistic calibration method requires a real slope, got {slope_value!r}"
+        )
+    if isinstance(intercept_value, bool) or not isinstance(intercept_value, (int, float)):
+        raise InvalidDecisionError(
+            f"the L2 logistic calibration method requires a real intercept, got {intercept_value!r}"
+        )
+    slope = float(slope_value)
+    intercept = float(intercept_value)
+    if not math.isfinite(slope) or not math.isfinite(intercept):
+        raise InvalidDecisionError(
+            "the L2 logistic calibration method requires finite parameters, got "
+            f"slope {slope!r} and intercept {intercept!r}"
+        )
+    return slope, intercept
+
+
+def predicted_winner_correctness(
+    profile: CalibrationProfile,
+    observation: CalibrationObservation,
+) -> float:
+    """Apply one exact fitted profile to one observation's selected score.
+
+    This is the single truth source for the post-calibration
+    :data:`PREDICTED_WINNER_CORRECTNESS_ID` score. It returns the profile
+    produced estimate of the probability that the observation's RECORDED
+    selected semantic value is correct under the profile's winner-correctness
+    ground-truth semantics.
+
+    Application is a pure function of the profile's fitted state: the profile
+    is never refitted, the optimizer is never invoked, ``l2_strength`` plays no
+    role, and the winner is never recomputed. The selected probability is the
+    probability attached to the recorded ``selected_value`` (retrieved through
+    the SAME :func:`_selected_probability` extractor the fitter and the
+    uncalibrated evaluators use), never a fresh ``argmax`` over the recorded
+    distribution, so no tie-breaking is re-run.
+
+    Dispatch is on the profile's explicit ``method_id`` / ``method_version``.
+    An unsupported method fails closed: parameter names are never interpreted
+    as evidence of a mapping, and there is no identity fallback. The fitted
+    state must contain exactly the mapping coefficients the supported method
+    declares, so a malformed internal profile also fails closed.
+
+    ``p = 0`` and ``p = 1`` are ordinary finite inputs and the mapping output is
+    strictly inside ``(0, 1)``: values are never clipped, so no endpoint is
+    silently moved.
+    """
+    if not isinstance(profile, CalibrationProfile):
+        raise InvalidDecisionError(
+            f"profile must be a CalibrationProfile, got {type(profile).__name__} ({profile!r})"
+        )
+    if not isinstance(observation, CalibrationObservation):
+        raise InvalidDecisionError(
+            "observation must be a CalibrationObservation, got "
+            f"{type(observation).__name__} ({observation!r})"
+        )
+    if profile.target_id != WINNER_CORRECTNESS_TARGET_ID or (
+        profile.target_version != WINNER_CORRECTNESS_TARGET_VERSION
+    ):
+        raise InvalidDecisionError(
+            "the profile does not declare the winner-correctness target "
+            f"{WINNER_CORRECTNESS_TARGET_ID!r} v{WINNER_CORRECTNESS_TARGET_VERSION}; got "
+            f"{profile.target_id!r} v{profile.target_version}"
+        )
+    if profile.input_score_id != UNCALIBRATED_SELECTED_PROBABILITY_ID or (
+        profile.input_score_version != UNCALIBRATED_SELECTED_PROBABILITY_VERSION
+    ):
+        raise InvalidDecisionError(
+            "the profile does not declare the uncalibrated selected probability as its "
+            f"input score; got {profile.input_score_id!r} v{profile.input_score_version}"
+        )
+    if profile.method_id != L2_LOGISTIC_SELECTED_PROBABILITY_METHOD_ID or (
+        profile.method_version != L2_LOGISTIC_SELECTED_PROBABILITY_METHOD_VERSION
+    ):
+        raise InvalidDecisionError(
+            "the profile method is not supported by offline profile application: "
+            f"got {profile.method_id!r} v{profile.method_version}, supported "
+            f"{L2_LOGISTIC_SELECTED_PROBABILITY_METHOD_ID!r} "
+            f"v{L2_LOGISTIC_SELECTED_PROBABILITY_METHOD_VERSION}"
+        )
+    slope, intercept = _require_l2_logistic_fitted_parameters(profile.fitted_parameters)
+    probability = _selected_probability(observation)
+    return _stable_sigmoid(slope * probability + intercept)

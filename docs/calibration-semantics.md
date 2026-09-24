@@ -44,8 +44,34 @@ aggregate:                 implemented (src/probvenance/calibration_evaluation.p
                             v1, result fingerprint v1); it is a binned
                             absolute-gap diagnostic, NOT a calibration-error
                             claim; the ordinary calibration-error
-                            interpretation remains ungranted
-Fitting algorithms:        not implemented
+                            interpretation remains ungranted for the RAW
+                            selected score, because it is not semantically
+                            P(Y_correct = 1). The POST-calibration binned
+                            absolute gap over predicted-winner-correctness
+                            does grant that ordinary interpretation, while
+                            remaining a finite-sample, binning-dependent, and
+                            sample-sensitive estimate
+Offline profile
+application:               implemented (src/probvenance/calibration_evaluation.py):
+                            one exact CalibrationProfile applied to one
+                            binding- and ground-truth-semantics-compatible
+                            evaluation dataset produces one immutable
+                            ProfileAppliedEvaluationDataset committing the
+                            profile identity and the source population
+                            identity, with one predicted-winner-correctness v1
+                            score per eligible observation
+Post-calibration
+evaluation:                implemented (src/probvenance/calibration_evaluation.py):
+                            post-calibration Brier, post-calibration exact
+                            natural-log log loss, post-calibration companion
+                            diagnostics, post-calibration equal-width
+                            reliability, and the post-calibration binned
+                            absolute-gap aggregate, all consuming one exact
+                            ProfileAppliedEvaluationDataset; each commits
+                            predicted-winner-correctness v1 as the input-score
+                            identity
+Fitting algorithms:        implemented (one scalar fitting method, Phase 4C.2
+                           and Phase 4C.2a; no automatic method selection)
 Calibration runtime:       not implemented
 predicted_correctness:     None for every result the runtime can currently produce
 ```

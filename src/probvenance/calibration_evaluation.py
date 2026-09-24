@@ -32,7 +32,10 @@ from fractions import Fraction
 
 from probvenance.calibration import (
     CALIBRATION_BINDING_FINGERPRINT_VERSION,
+    CALIBRATION_PROFILE_FINGERPRINT_VERSION,
     GROUND_TRUTH_SEMANTICS_FINGERPRINT_VERSION,
+    PREDICTED_WINNER_CORRECTNESS_ID,
+    PREDICTED_WINNER_CORRECTNESS_VERSION,
     UNCALIBRATED_SELECTED_PROBABILITY_ID,
     UNCALIBRATED_SELECTED_PROBABILITY_VERSION,
     WINNER_CORRECTNESS_TARGET_ID,
@@ -40,9 +43,11 @@ from probvenance.calibration import (
     CalibrationBinding,
     CalibrationObservation,
     CalibrationObservationStatus,
+    CalibrationProfile,
     GroundTruthSemanticsIdentity,
     _require_non_empty_str,
     _selected_probability,
+    predicted_winner_correctness,
 )
 from probvenance.errors import InvalidDecisionError
 from probvenance.fingerprint import JSONValue, canonical_json, fingerprint
@@ -64,8 +69,22 @@ __all__ = [
     "LOG_LOSS_LOG_BASE",
     "LOG_LOSS_METRIC_ID",
     "LOG_LOSS_METRIC_VERSION",
+    "MEAN_PREDICTED_CORRECTNESS_ID",
+    "MEAN_PREDICTED_CORRECTNESS_VERSION",
     "MEAN_SELECTED_PROBABILITY_ID",
     "MEAN_SELECTED_PROBABILITY_VERSION",
+    "POST_CALIBRATION_BINNED_ABSOLUTE_GAP_RESULT_FINGERPRINT_VERSION",
+    "POST_CALIBRATION_BRIER_RESULT_FINGERPRINT_VERSION",
+    "POST_CALIBRATION_DIAGNOSTICS_RESULT_FINGERPRINT_VERSION",
+    "POST_CALIBRATION_LOG_LOSS_RESULT_FINGERPRINT_VERSION",
+    "POST_CALIBRATION_RELIABILITY_RESULT_FINGERPRINT_VERSION",
+    "POST_CALIBRATION_WINNER_BINNED_ABSOLUTE_GAP_ID",
+    "POST_CALIBRATION_WINNER_BINNED_ABSOLUTE_GAP_VERSION",
+    "POST_CALIBRATION_WINNER_RELIABILITY_ID",
+    "POST_CALIBRATION_WINNER_RELIABILITY_VERSION",
+    "PREDICTED_WINNER_CORRECTNESS_ID",
+    "PREDICTED_WINNER_CORRECTNESS_VERSION",
+    "PROFILE_APPLIED_EVALUATION_DATASET_FINGERPRINT_VERSION",
     "UNCALIBRATED_SELECTED_PROBABILITY_ID",
     "UNCALIBRATED_SELECTED_PROBABILITY_VERSION",
     "WINNER_BINNED_ABSOLUTE_GAP_ID",
@@ -82,10 +101,24 @@ __all__ = [
     "CalibrationEvaluationDataset",
     "EvaluationSplitRole",
     "LogLossEvaluationResult",
+    "PostCalibrationBrierEvaluationResult",
+    "PostCalibrationLogLossEvaluationResult",
+    "PostCalibrationReliabilityBinSummary",
+    "PostCalibrationWinnerBinnedAbsoluteGapResult",
+    "PostCalibrationWinnerDiagnosticsResult",
+    "PostCalibrationWinnerReliabilityResult",
+    "ProfileAppliedEvaluationDataset",
+    "ProfileAppliedEvaluationRow",
     "ReliabilityBinSummary",
     "WinnerBinnedAbsoluteGapResult",
     "WinnerCorrectnessDiagnosticsResult",
     "WinnerReliabilityResult",
+    "apply_profile_to_evaluation_dataset",
+    "evaluate_post_calibration_winner_binned_absolute_gap",
+    "evaluate_post_calibration_winner_brier",
+    "evaluate_post_calibration_winner_diagnostics",
+    "evaluate_post_calibration_winner_log_loss",
+    "evaluate_post_calibration_winner_reliability",
     "evaluate_uncalibrated_winner_brier",
     "evaluate_uncalibrated_winner_diagnostics",
     "evaluate_uncalibrated_winner_log_loss",
@@ -211,6 +244,43 @@ WINNER_BINNED_ABSOLUTE_GAP_VERSION = 1
 WINNER_BINNED_ABSOLUTE_GAP_RESULT_FINGERPRINT_VERSION = 2
 
 # ---------------------------------------------------------------------------
+# Phase 4C.3 post-calibration (offline profile application) identity
+# ---------------------------------------------------------------------------
+
+#: The canonical-payload schema version of the offline profile-application
+#: artifact. New in Phase 4C.3; no earlier schema existed.
+PROFILE_APPLIED_EVALUATION_DATASET_FINGERPRINT_VERSION = 1
+
+#: Mean predicted correctness: the mean of the profile-produced predicted
+#: winner-correctness score over the evaluated projection. It is deliberately
+#: NOT :data:`MEAN_SELECTED_PROBABILITY_ID`: the underlying score semantics
+#: changed after profile application, so it needs its own identity.
+MEAN_PREDICTED_CORRECTNESS_ID = "mean-predicted-winner-correctness"
+MEAN_PREDICTED_CORRECTNESS_VERSION = 1
+
+#: Post-calibration reliability semantic identity. This is deliberately NOT
+#: :data:`WINNER_RELIABILITY_CURVE_ID`, whose semantics are frozen as a
+#: pre-calibration summary over raw selected-score regions; reusing it would
+#: silently redefine that identity. The binning POLICY is still the shared
+#: :data:`EQUAL_WIDTH_BINNING_ID` contract.
+POST_CALIBRATION_WINNER_RELIABILITY_ID = "post-calibration-winner-reliability-curve"
+POST_CALIBRATION_WINNER_RELIABILITY_VERSION = 1
+
+#: Post-calibration binned absolute-gap semantic identity. Deliberately NOT
+#: :data:`WINNER_BINNED_ABSOLUTE_GAP_ID`, whose semantics are frozen as a
+#: discrepancy between raw selected-score bin means and empirical rates.
+POST_CALIBRATION_WINNER_BINNED_ABSOLUTE_GAP_ID = (
+    "post-calibration-winner-correctness-equal-width-binned-absolute-gap"
+)
+POST_CALIBRATION_WINNER_BINNED_ABSOLUTE_GAP_VERSION = 1
+
+POST_CALIBRATION_BRIER_RESULT_FINGERPRINT_VERSION = 1
+POST_CALIBRATION_LOG_LOSS_RESULT_FINGERPRINT_VERSION = 1
+POST_CALIBRATION_DIAGNOSTICS_RESULT_FINGERPRINT_VERSION = 1
+POST_CALIBRATION_RELIABILITY_RESULT_FINGERPRINT_VERSION = 1
+POST_CALIBRATION_BINNED_ABSOLUTE_GAP_RESULT_FINGERPRINT_VERSION = 1
+
+# ---------------------------------------------------------------------------
 # Construction tokens for the supported-path-only artifacts
 # ---------------------------------------------------------------------------
 
@@ -221,6 +291,12 @@ _LOG_LOSS_RESULT_CONSTRUCTION_TOKEN = object()
 _DIAGNOSTICS_RESULT_CONSTRUCTION_TOKEN = object()
 _RELIABILITY_RESULT_CONSTRUCTION_TOKEN = object()
 _BINNED_ABSOLUTE_GAP_RESULT_CONSTRUCTION_TOKEN = object()
+_PROFILE_APPLIED_EVALUATION_DATASET_CONSTRUCTION_TOKEN = object()
+_POST_CALIBRATION_BRIER_RESULT_CONSTRUCTION_TOKEN = object()
+_POST_CALIBRATION_LOG_LOSS_RESULT_CONSTRUCTION_TOKEN = object()
+_POST_CALIBRATION_DIAGNOSTICS_RESULT_CONSTRUCTION_TOKEN = object()
+_POST_CALIBRATION_RELIABILITY_RESULT_CONSTRUCTION_TOKEN = object()
+_POST_CALIBRATION_BINNED_ABSOLUTE_GAP_RESULT_CONSTRUCTION_TOKEN = object()
 
 
 class EvaluationSplitRole(StrEnum):
@@ -257,6 +333,42 @@ def _binary_log_loss_term(probability: float, correct: bool) -> float:
     if probability == 0.0:
         return 0.0
     return -math.log1p(-probability)
+
+
+def _encode_exact_metric_value(value: float) -> dict[str, JSONValue]:
+    """Encode a metric value that may be positive infinity.
+
+    Canonical JSON forbids non-finite floats, so a finite value is encoded as
+    ``{"kind": "finite", "number": <finite float>}`` and positive infinity as
+    ``{"kind": "positive_infinity", "number": None}``. A finite value and
+    positive infinity therefore have different canonical payloads and different
+    fingerprints, and a missing value is never confused with mathematical
+    positive infinity. Both the pre-calibration and the post-calibration exact
+    log loss share this ONE encoding policy.
+    """
+    if value == math.inf:
+        return {"kind": "positive_infinity", "number": None}
+    return {"kind": "finite", "number": value}
+
+
+def _equal_width_bin_index(probability: float, bin_count: int) -> int:
+    """Return the equal-width bin index that owns ``probability``.
+
+    This is the ONE boundary implementation shared by the uncalibrated and the
+    post-calibration reliability artifacts. It compares the STORED probability
+    value against the mathematical rational boundaries ``i / bin_count``: the
+    exact rational value of the stored float decides ownership, so binary
+    floating multiplication never silently defines a boundary. A rational
+    boundary with no exact float representation (for example ``1/3``) is handled
+    by comparing against the exact rational, and the stored float falls
+    deterministically on one side of it. ``probability = 1`` is clamped into the
+    final bin so the last interval is inclusive.
+    """
+    rational_index = Fraction.from_float(probability) * bin_count
+    index = int(rational_index)
+    if index >= bin_count:
+        index = bin_count - 1
+    return index
 
 
 # ---------------------------------------------------------------------------
@@ -952,13 +1064,7 @@ class LogLossEvaluationResult:
         different fingerprints, and a missing value is never confused with
         mathematical positive infinity.
         """
-        if self.value == math.inf:
-            encoded_value: dict[str, JSONValue] = {
-                "kind": "positive_infinity",
-                "number": None,
-            }
-        else:
-            encoded_value = {"kind": "finite", "number": self.value}
+        encoded_value: dict[str, JSONValue] = _encode_exact_metric_value(self.value)
         return {
             "v": LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION,
             "metric_id": self.metric_id,
@@ -1469,18 +1575,7 @@ class WinnerReliabilityResult:
         members: list[list[tuple[float, str, bool]]] = [[] for _ in range(bin_count)]
         for observation in dataset.observations:
             probability = _selected_probability(observation)
-            # The boundary contract compares the STORED probability value
-            # against the mathematical rational boundaries i/B. The exact
-            # rational value of the stored float decides ownership, so binary
-            # floating multiplication never silently defines a boundary: a
-            # rational boundary with no exact float representation (for
-            # example 1/3) is handled by comparing against the exact
-            # rational, and the stored float falls deterministically on one
-            # side of it.
-            rational_index = Fraction.from_float(probability) * bin_count
-            index = int(rational_index)
-            if index >= bin_count:
-                index = bin_count - 1
+            index = _equal_width_bin_index(probability, bin_count)
             members[index].append((probability, observation.fingerprint, bool(observation.correct)))
         bins: list[ReliabilityBinSummary] = []
         for index, bucket in enumerate(members):
@@ -1911,4 +2006,1208 @@ def evaluate_winner_binned_absolute_gap(
     return WinnerBinnedAbsoluteGapResult(
         reliability,
         _construction_token=_BINNED_ABSOLUTE_GAP_RESULT_CONSTRUCTION_TOKEN,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4C.3: offline profile application
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileAppliedEvaluationRow:
+    """One observation scored by one exact fitted calibration profile.
+
+    The row commits only what is local to the application: the source
+    observation identity and the profile-produced predicted-correctness score.
+    Binding, ground-truth semantics, the selected value, the probability
+    vector, and the profile identity are deliberately NOT duplicated per row:
+    they belong to the application artifact's provenance or to the upstream
+    observation identity.
+
+    ``predicted_correctness`` is a finite float in ``[0, 1]``. Exact ``0.0`` and
+    ``1.0`` are representable outputs and are stored as they were produced; they
+    are never clipped away.
+    """
+
+    observation_fingerprint: str
+    predicted_correctness: float
+
+    def __post_init__(self) -> None:
+        _require_non_empty_str("observation_fingerprint", self.observation_fingerprint)
+        value = self.predicted_correctness
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise InvalidDecisionError(
+                f"predicted_correctness must be a real number, got {value!r}"
+            )
+        number = float(value)
+        if not math.isfinite(number) or number < 0.0 or number > 1.0:
+            raise InvalidDecisionError(
+                f"predicted_correctness must be a finite float in [0, 1], got {number!r}"
+            )
+        object.__setattr__(self, "predicted_correctness", number)
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileAppliedEvaluationDataset:
+    """One declared evaluation dataset scored by one exact fitted profile.
+
+    This is the SINGLE truth source for every post-calibration evaluator: the
+    profile is applied ONCE semantically, here, and the post metrics consume the
+    recorded derived scores instead of each re-applying the profile.
+
+    Rows are ordered by observation fingerprint, so the artifact is
+    row-order independent: the same evaluation observation multiset in a
+    different caller row order produces the same canonical payload and the same
+    fingerprint. Multiplicity is preserved; a duplicated row stays duplicated
+    and is never collapsed into a set.
+
+    The provenance commits the source evaluation dataset and cohort identities,
+    the source cohort's exclusion accounting, the profile identity, and both
+    score identities: the profile's raw input score and the produced
+    predicted-correctness output score. The profile's internals (method,
+    configuration, fitted parameters, training dataset, binding and ground-truth
+    internals) are deliberately NOT duplicated here, because the profile
+    fingerprint already owns them and a second projection could drift.
+
+    The declared ``split_role`` / ``split_id`` are caller-declared provenance,
+    NOT proof of holdout: the profile commits its training dataset identity but
+    not an inspectable training membership set, so this artifact cannot and does
+    not claim that training and evaluation rows are disjoint, statistically
+    independent, or leakage-free.
+
+    Supported construction is :func:`apply_profile_to_evaluation_dataset`.
+    Direct construction and ``dataclasses.replace`` reconstruction are rejected.
+    """
+
+    rows: tuple[ProfileAppliedEvaluationRow, ...]
+    split_role: EvaluationSplitRole
+    split_id: str
+    evaluation_dataset_fingerprint: str = field(init=False, repr=False)
+    evaluation_dataset_fingerprint_version: int = field(init=False, repr=False)
+    source_cohort_fingerprint: str = field(init=False, repr=False)
+    source_cohort_fingerprint_version: int = field(init=False, repr=False)
+    profile_fingerprint: str = field(init=False, repr=False)
+    profile_fingerprint_version: int = field(init=False, repr=False)
+    target_id: str = field(init=False, repr=False)
+    target_version: int = field(init=False, repr=False)
+    input_score_id: str = field(init=False, repr=False)
+    input_score_version: int = field(init=False, repr=False)
+    output_score_id: str = field(init=False, repr=False)
+    output_score_version: int = field(init=False, repr=False)
+    source_count: int = field(init=False, repr=False)
+    taxonomy_miss_count: int = field(init=False, repr=False)
+    unresolved_count: int = field(init=False, repr=False)
+    unadjudicated_resolved_count: int = field(init=False, repr=False)
+
+    def __init__(
+        self,
+        rows: tuple[ProfileAppliedEvaluationRow, ...] | None = None,
+        split_role: EvaluationSplitRole | None = None,
+        split_id: str | None = None,
+        *,
+        _construction_token: object = None,
+    ) -> None:
+        if _construction_token is not _PROFILE_APPLIED_EVALUATION_DATASET_CONSTRUCTION_TOKEN:
+            raise InvalidDecisionError(
+                "ProfileAppliedEvaluationDataset cannot be constructed directly or "
+                "with dataclasses.replace; use "
+                "apply_profile_to_evaluation_dataset(dataset, profile), the only "
+                "supported construction path"
+            )
+        if not isinstance(rows, tuple) or not all(
+            isinstance(row, ProfileAppliedEvaluationRow) for row in rows
+        ):
+            raise InvalidDecisionError(
+                "the supported ProfileAppliedEvaluationDataset construction path "
+                "requires a tuple of ProfileAppliedEvaluationRow"
+            )
+        if not isinstance(split_role, EvaluationSplitRole):
+            raise InvalidDecisionError(
+                "split_role must be an EvaluationSplitRole (validation or test), "
+                f"got {split_role!r}"
+            )
+        _require_non_empty_str("split_id", split_id)
+        object.__setattr__(self, "rows", rows)
+        object.__setattr__(self, "split_role", split_role)
+        object.__setattr__(self, "split_id", split_id)
+
+    @property
+    def count(self) -> int:
+        """The number of observations actually scored by the profile."""
+        return len(self.rows)
+
+    def canonical_payload(self) -> dict[str, JSONValue]:
+        """Return the exact canonical JSON-compatible payload.
+
+        The payload commits the split metadata, the source evaluation dataset
+        and cohort identities, the profile identity, the raw input-score and
+        produced output-score identities, the explicit exclusion accounting, and
+        every application row in fingerprint order. Every nested object is
+        generated fresh; no NaN or infinity is ever serialized.
+        """
+        return {
+            "v": PROFILE_APPLIED_EVALUATION_DATASET_FINGERPRINT_VERSION,
+            "split_role": str(self.split_role.value),
+            "split_id": self.split_id,
+            "evaluation_dataset_fingerprint": self.evaluation_dataset_fingerprint,
+            "evaluation_dataset_fingerprint_version": (self.evaluation_dataset_fingerprint_version),
+            "source_cohort_fingerprint": self.source_cohort_fingerprint,
+            "source_cohort_fingerprint_version": self.source_cohort_fingerprint_version,
+            "profile": {
+                "profile_fingerprint": self.profile_fingerprint,
+                "profile_fingerprint_version": self.profile_fingerprint_version,
+            },
+            "target": {"target_id": self.target_id, "target_version": self.target_version},
+            "input_score": {
+                "input_score_id": self.input_score_id,
+                "input_score_version": self.input_score_version,
+            },
+            "output_score": {
+                "output_score_id": self.output_score_id,
+                "output_score_version": self.output_score_version,
+            },
+            "source_count": self.source_count,
+            "count": self.count,
+            "exclusions": {
+                "taxonomy_miss_count": self.taxonomy_miss_count,
+                "unresolved_count": self.unresolved_count,
+                "unadjudicated_resolved_count": self.unadjudicated_resolved_count,
+            },
+            "rows": [
+                {
+                    "observation_fingerprint": row.observation_fingerprint,
+                    "predicted_correctness": row.predicted_correctness,
+                }
+                for row in self.rows
+            ],
+        }
+
+    @property
+    def fingerprint(self) -> str:
+        """Content-addressed identity of the application artifact."""
+        return fingerprint(self.canonical_payload())
+
+
+def apply_profile_to_evaluation_dataset(
+    dataset: CalibrationEvaluationDataset,
+    profile: CalibrationProfile,
+) -> ProfileAppliedEvaluationDataset:
+    """Apply one exact fitted profile to one declared evaluation dataset.
+
+    The compatibility contract is exact and fail-closed, and it is checked
+    BEFORE any score is produced:
+
+    - the profile binding must equal the evaluation dataset binding under the
+      existing exact :class:`CalibrationBinding` identity (no family, model,
+      task, taxonomy, or nearest-profile fallback);
+    - the profile ground-truth semantics identity must equal the evaluation
+      dataset ground-truth semantics identity, because post-calibration
+      evaluation must measure the same definition of correctness the profile was
+      fitted to predict.
+
+    Ground-truth compatibility is an EVALUATION-only requirement: a runtime
+    event is normally scored before its truth is known, so this check does not
+    mean runtime application would require a ground-truth record.
+
+    Each eligible observation is scored through
+    :func:`~probvenance.calibration.predicted_winner_correctness`, the single
+    score truth source, and the rows are ordered by observation fingerprint.
+
+    This is a read-only offline derivation: it neither mutates the dataset or
+    the profile nor creates a runtime result, and it never sets
+    ``calibrated`` or ``predicted_correctness`` on any runtime artifact.
+    """
+    if not isinstance(dataset, CalibrationEvaluationDataset):
+        raise InvalidDecisionError(
+            "dataset must be a CalibrationEvaluationDataset, got "
+            f"{type(dataset).__name__} ({dataset!r})"
+        )
+    if not isinstance(profile, CalibrationProfile):
+        raise InvalidDecisionError(
+            f"profile must be a CalibrationProfile, got {type(profile).__name__} ({profile!r})"
+        )
+    profile.require_binding_match(dataset.binding)
+    profile_semantics_json = canonical_json(profile.ground_truth_semantics.canonical_payload())
+    dataset_semantics_json = canonical_json(dataset.ground_truth_semantics.canonical_payload())
+    if profile_semantics_json != dataset_semantics_json:
+        raise InvalidDecisionError(
+            "the profile ground-truth semantics do not match the evaluation dataset "
+            "ground-truth semantics: profile semantics fingerprint "
+            f"{profile.ground_truth_semantics.fingerprint!r} vs evaluation dataset "
+            f"semantics fingerprint {dataset.ground_truth_semantics.fingerprint!r}"
+        )
+    built: list[ProfileAppliedEvaluationRow] = []
+    for observation in dataset.observations:
+        score = predicted_winner_correctness(profile, observation)
+        built.append(
+            ProfileAppliedEvaluationRow(
+                observation_fingerprint=observation.fingerprint,
+                predicted_correctness=score,
+            )
+        )
+    built.sort(key=lambda row: row.observation_fingerprint)
+    applied = ProfileAppliedEvaluationDataset(
+        tuple(built),
+        dataset.split_role,
+        dataset.split_id,
+        _construction_token=_PROFILE_APPLIED_EVALUATION_DATASET_CONSTRUCTION_TOKEN,
+    )
+    object.__setattr__(applied, "evaluation_dataset_fingerprint", dataset.fingerprint)
+    object.__setattr__(
+        applied,
+        "evaluation_dataset_fingerprint_version",
+        CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION,
+    )
+    object.__setattr__(applied, "source_cohort_fingerprint", dataset.source_cohort_fingerprint)
+    object.__setattr__(
+        applied,
+        "source_cohort_fingerprint_version",
+        CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION,
+    )
+    object.__setattr__(applied, "profile_fingerprint", profile.fingerprint)
+    object.__setattr__(
+        applied, "profile_fingerprint_version", CALIBRATION_PROFILE_FINGERPRINT_VERSION
+    )
+    object.__setattr__(applied, "target_id", profile.target_id)
+    object.__setattr__(applied, "target_version", profile.target_version)
+    object.__setattr__(applied, "input_score_id", profile.input_score_id)
+    object.__setattr__(applied, "input_score_version", profile.input_score_version)
+    object.__setattr__(applied, "output_score_id", PREDICTED_WINNER_CORRECTNESS_ID)
+    object.__setattr__(applied, "output_score_version", PREDICTED_WINNER_CORRECTNESS_VERSION)
+    object.__setattr__(applied, "source_count", dataset.source_count)
+    object.__setattr__(applied, "taxonomy_miss_count", dataset.taxonomy_miss_count)
+    object.__setattr__(applied, "unresolved_count", dataset.unresolved_count)
+    object.__setattr__(
+        applied, "unadjudicated_resolved_count", dataset.unadjudicated_resolved_count
+    )
+    return applied
+
+
+# ---------------------------------------------------------------------------
+# Phase 4C.3: post-calibration evaluation
+# ---------------------------------------------------------------------------
+
+
+def _applied_correctness_labels(
+    source: CalibrationEvaluationDataset,
+    applied: ProfileAppliedEvaluationDataset,
+) -> list[float]:
+    """Binary correctness labels aligned to ``applied.rows`` by observation fingerprint.
+
+    The labels are bound to identity, never to caller position. The applied
+    artifact orders its rows by observation fingerprint, so this function
+    orders the source labels by the same key with the same stable sort; equal
+    fingerprints therefore keep the same relative order in both sequences and
+    multiplicity is preserved. A source dataset that does not cover the
+    applied artifact fails closed instead of silently mislabelling rows.
+    """
+    if len(source.observations) != applied.count:
+        raise InvalidDecisionError(
+            "the applied evaluation artifact does not cover the source evaluation dataset: "
+            f"{applied.count} applied rows for {len(source.observations)} eligible observations"
+        )
+    source_fingerprints = sorted(observation.fingerprint for observation in source.observations)
+    row_fingerprints = [row.observation_fingerprint for row in applied.rows]
+    if source_fingerprints != row_fingerprints:
+        raise InvalidDecisionError(
+            "the applied evaluation artifact does not cover the source evaluation dataset: "
+            "its rows are not the source dataset's eligible observations"
+        )
+    ordered = sorted(source.observations, key=lambda observation: observation.fingerprint)
+    return [1.0 if observation.correct else 0.0 for observation in ordered]
+
+
+@dataclass(frozen=True, slots=True)
+class PostCalibrationBrierEvaluationResult:
+    """Post-calibration Brier score over predicted winner correctness.
+
+    The mathematics are identical to the pre-calibration Brier metric
+    (``mean((q_i - y_i)^2)``), but ``q_i`` is now the profile-produced
+    :data:`PREDICTED_WINNER_CORRECTNESS_ID` score rather than the raw selected
+    semantic probability. The metric identity is therefore reused while the
+    committed input-score identity changes, which is what makes this artifact a
+    different measurement from the pre-calibration one.
+
+    ``value`` is finite because predicted correctness is finite in ``[0, 1]``
+    and the target label is binary, so the Brier value always lies in ``[0, 1]``.
+    """
+
+    metric_id: str = field(init=False, repr=False)
+    metric_version: int = field(init=False, repr=False)
+    target_id: str = field(init=False, repr=False)
+    target_version: int = field(init=False, repr=False)
+    input_score_id: str = field(init=False, repr=False)
+    input_score_version: int = field(init=False, repr=False)
+    application_fingerprint: str = field(init=False, repr=False)
+    application_fingerprint_version: int = field(init=False, repr=False)
+    evaluation_dataset_fingerprint: str = field(init=False, repr=False)
+    evaluation_dataset_fingerprint_version: int = field(init=False, repr=False)
+    source_cohort_fingerprint: str = field(init=False, repr=False)
+    source_cohort_fingerprint_version: int = field(init=False, repr=False)
+    profile_fingerprint: str = field(init=False, repr=False)
+    profile_fingerprint_version: int = field(init=False, repr=False)
+    source_count: int = field(init=False, repr=False)
+    taxonomy_miss_count: int = field(init=False, repr=False)
+    unresolved_count: int = field(init=False, repr=False)
+    unadjudicated_resolved_count: int = field(init=False, repr=False)
+    count: int = field(init=False, repr=False)
+    value: float = field(init=False, repr=False)
+
+    def __init__(
+        self,
+        source: CalibrationEvaluationDataset | None = None,
+        applied: ProfileAppliedEvaluationDataset | None = None,
+        *,
+        _construction_token: object = None,
+    ) -> None:
+        if _construction_token is not _POST_CALIBRATION_BRIER_RESULT_CONSTRUCTION_TOKEN:
+            raise InvalidDecisionError(
+                "PostCalibrationBrierEvaluationResult cannot be constructed directly or "
+                "with dataclasses.replace; use "
+                "evaluate_post_calibration_winner_brier(applied), the only supported "
+                "construction path"
+            )
+        if not isinstance(applied, ProfileAppliedEvaluationDataset):
+            raise InvalidDecisionError(
+                "the supported PostCalibrationBrierEvaluationResult construction path "
+                "requires a ProfileAppliedEvaluationDataset, got "
+                f"{type(applied).__name__}"
+            )
+        if not isinstance(source, CalibrationEvaluationDataset):
+            raise InvalidDecisionError(
+                "the supported PostCalibrationBrierEvaluationResult construction path "
+                "requires the source CalibrationEvaluationDataset, got "
+                f"{type(source).__name__}"
+            )
+        labels = _applied_correctness_labels(source, applied)
+        count = applied.count
+        squared_errors = [
+            (row.predicted_correctness - label) ** 2
+            for row, label in zip(applied.rows, labels, strict=True)
+        ]
+        value = math.fsum(squared_errors) / count
+        object.__setattr__(self, "metric_id", BRIER_METRIC_ID)
+        object.__setattr__(self, "metric_version", BRIER_METRIC_VERSION)
+        object.__setattr__(self, "target_id", WINNER_CORRECTNESS_TARGET_ID)
+        object.__setattr__(self, "target_version", WINNER_CORRECTNESS_TARGET_VERSION)
+        object.__setattr__(self, "input_score_id", PREDICTED_WINNER_CORRECTNESS_ID)
+        object.__setattr__(self, "input_score_version", PREDICTED_WINNER_CORRECTNESS_VERSION)
+        _bind_application_provenance(self, applied)
+        object.__setattr__(self, "count", count)
+        object.__setattr__(self, "value", value)
+
+    def canonical_payload(self) -> dict[str, JSONValue]:
+        """Return the exact canonical JSON-compatible payload."""
+        return {
+            "v": POST_CALIBRATION_BRIER_RESULT_FINGERPRINT_VERSION,
+            "metric": {"metric_id": self.metric_id, "metric_version": self.metric_version},
+            "target": {"target_id": self.target_id, "target_version": self.target_version},
+            "input_score": {
+                "input_score_id": self.input_score_id,
+                "input_score_version": self.input_score_version,
+            },
+            "application_fingerprint": self.application_fingerprint,
+            "application_fingerprint_version": self.application_fingerprint_version,
+            "evaluation_dataset_fingerprint": self.evaluation_dataset_fingerprint,
+            "evaluation_dataset_fingerprint_version": self.evaluation_dataset_fingerprint_version,
+            "source_cohort_fingerprint": self.source_cohort_fingerprint,
+            "source_cohort_fingerprint_version": self.source_cohort_fingerprint_version,
+            "profile": {
+                "profile_fingerprint": self.profile_fingerprint,
+                "profile_fingerprint_version": self.profile_fingerprint_version,
+            },
+            "source_count": self.source_count,
+            "count": self.count,
+            "exclusions": {
+                "taxonomy_miss_count": self.taxonomy_miss_count,
+                "unresolved_count": self.unresolved_count,
+                "unadjudicated_resolved_count": self.unadjudicated_resolved_count,
+            },
+            "value": self.value,
+        }
+
+    @property
+    def fingerprint(self) -> str:
+        """Content-addressed identity of the post-calibration Brier artifact."""
+        return fingerprint(self.canonical_payload())
+
+
+def _bind_application_provenance(
+    artifact: object,
+    applied: ProfileAppliedEvaluationDataset | PostCalibrationWinnerReliabilityResult,
+) -> None:
+    """Copy the application artifact's provenance onto a post-calibration result.
+
+    Every post-calibration result commits the full application lineage rather
+    than only the profile fingerprint, so identical numeric scores produced from
+    different source cohorts or different profiles cannot collapse to one
+    artifact identity.
+    """
+    object.__setattr__(artifact, "application_fingerprint", applied.fingerprint)
+    object.__setattr__(
+        artifact,
+        "application_fingerprint_version",
+        PROFILE_APPLIED_EVALUATION_DATASET_FINGERPRINT_VERSION,
+    )
+    object.__setattr__(
+        artifact, "evaluation_dataset_fingerprint", applied.evaluation_dataset_fingerprint
+    )
+    object.__setattr__(
+        artifact,
+        "evaluation_dataset_fingerprint_version",
+        applied.evaluation_dataset_fingerprint_version,
+    )
+    object.__setattr__(artifact, "source_cohort_fingerprint", applied.source_cohort_fingerprint)
+    object.__setattr__(
+        artifact,
+        "source_cohort_fingerprint_version",
+        applied.source_cohort_fingerprint_version,
+    )
+    object.__setattr__(artifact, "profile_fingerprint", applied.profile_fingerprint)
+    object.__setattr__(artifact, "profile_fingerprint_version", applied.profile_fingerprint_version)
+    object.__setattr__(artifact, "source_count", applied.source_count)
+    object.__setattr__(artifact, "taxonomy_miss_count", applied.taxonomy_miss_count)
+    object.__setattr__(artifact, "unresolved_count", applied.unresolved_count)
+    object.__setattr__(
+        artifact, "unadjudicated_resolved_count", applied.unadjudicated_resolved_count
+    )
+
+
+def evaluate_post_calibration_winner_brier(
+    source: CalibrationEvaluationDataset,
+    applied: ProfileAppliedEvaluationDataset,
+) -> PostCalibrationBrierEvaluationResult:
+    """Score the profile-produced predicted correctness with the Brier metric.
+
+    The formula is the same ``mean((q_i - y_i)^2)`` kernel the pre-calibration
+    Brier metric uses; only the score under evaluation differs. The profile is
+    never re-applied: the application artifact is the sole truth source.
+    """
+    return PostCalibrationBrierEvaluationResult(
+        source,
+        applied,
+        _construction_token=_POST_CALIBRATION_BRIER_RESULT_CONSTRUCTION_TOKEN,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PostCalibrationLogLossEvaluationResult:
+    """Post-calibration exact log loss over predicted winner correctness.
+
+    The endpoint policy is unchanged from the pre-calibration metric: the exact
+    natural-log terms are reused, so ``q = 1`` with ``y = 1`` and ``q = 0`` with
+    ``y = 0`` score ``0.0`` while the impossible outcomes score ``+inf``. There
+    is no epsilon, no clipping, and no smoothing. ``value`` is encoded through
+    the shared structured infinity policy, so a raw JSON infinity is never
+    serialized.
+    """
+
+    metric_id: str = field(init=False, repr=False)
+    metric_version: int = field(init=False, repr=False)
+    target_id: str = field(init=False, repr=False)
+    target_version: int = field(init=False, repr=False)
+    input_score_id: str = field(init=False, repr=False)
+    input_score_version: int = field(init=False, repr=False)
+    application_fingerprint: str = field(init=False, repr=False)
+    application_fingerprint_version: int = field(init=False, repr=False)
+    evaluation_dataset_fingerprint: str = field(init=False, repr=False)
+    evaluation_dataset_fingerprint_version: int = field(init=False, repr=False)
+    source_cohort_fingerprint: str = field(init=False, repr=False)
+    source_cohort_fingerprint_version: int = field(init=False, repr=False)
+    profile_fingerprint: str = field(init=False, repr=False)
+    profile_fingerprint_version: int = field(init=False, repr=False)
+    source_count: int = field(init=False, repr=False)
+    taxonomy_miss_count: int = field(init=False, repr=False)
+    unresolved_count: int = field(init=False, repr=False)
+    unadjudicated_resolved_count: int = field(init=False, repr=False)
+    count: int = field(init=False, repr=False)
+    value: float = field(init=False, repr=False)
+
+    def __init__(
+        self,
+        source: CalibrationEvaluationDataset | None = None,
+        applied: ProfileAppliedEvaluationDataset | None = None,
+        *,
+        _construction_token: object = None,
+    ) -> None:
+        if _construction_token is not _POST_CALIBRATION_LOG_LOSS_RESULT_CONSTRUCTION_TOKEN:
+            raise InvalidDecisionError(
+                "PostCalibrationLogLossEvaluationResult cannot be constructed directly or "
+                "with dataclasses.replace; use "
+                "evaluate_post_calibration_winner_log_loss(source, applied), the only "
+                "supported construction path"
+            )
+        if not isinstance(applied, ProfileAppliedEvaluationDataset):
+            raise InvalidDecisionError(
+                "the supported PostCalibrationLogLossEvaluationResult construction path "
+                "requires a ProfileAppliedEvaluationDataset, got "
+                f"{type(applied).__name__}"
+            )
+        if not isinstance(source, CalibrationEvaluationDataset):
+            raise InvalidDecisionError(
+                "the supported PostCalibrationLogLossEvaluationResult construction path "
+                "requires the source CalibrationEvaluationDataset, got "
+                f"{type(source).__name__}"
+            )
+        labels = _applied_correctness_labels(source, applied)
+        count = applied.count
+        terms = [
+            _binary_log_loss_term(row.predicted_correctness, bool(label))
+            for row, label in zip(applied.rows, labels, strict=True)
+        ]
+        value = math.inf if any(term == math.inf for term in terms) else math.fsum(terms) / count
+        object.__setattr__(self, "metric_id", LOG_LOSS_METRIC_ID)
+        object.__setattr__(self, "metric_version", LOG_LOSS_METRIC_VERSION)
+        object.__setattr__(self, "target_id", WINNER_CORRECTNESS_TARGET_ID)
+        object.__setattr__(self, "target_version", WINNER_CORRECTNESS_TARGET_VERSION)
+        object.__setattr__(self, "input_score_id", PREDICTED_WINNER_CORRECTNESS_ID)
+        object.__setattr__(self, "input_score_version", PREDICTED_WINNER_CORRECTNESS_VERSION)
+        _bind_application_provenance(self, applied)
+        object.__setattr__(self, "count", count)
+        object.__setattr__(self, "value", value)
+
+    def canonical_payload(self) -> dict[str, JSONValue]:
+        """Return the exact canonical JSON-compatible payload.
+
+        A non-finite value is encoded as the structured
+        ``{"kind": "positive_infinity", "number": None}`` object (shared with
+        the pre-calibration exact log loss) so no raw JSON infinity or NaN
+        reaches the payload.
+        """
+        return {
+            "v": POST_CALIBRATION_LOG_LOSS_RESULT_FINGERPRINT_VERSION,
+            "metric": {"metric_id": self.metric_id, "metric_version": self.metric_version},
+            "target": {"target_id": self.target_id, "target_version": self.target_version},
+            "input_score": {
+                "input_score_id": self.input_score_id,
+                "input_score_version": self.input_score_version,
+            },
+            "application_fingerprint": self.application_fingerprint,
+            "application_fingerprint_version": self.application_fingerprint_version,
+            "evaluation_dataset_fingerprint": self.evaluation_dataset_fingerprint,
+            "evaluation_dataset_fingerprint_version": self.evaluation_dataset_fingerprint_version,
+            "source_cohort_fingerprint": self.source_cohort_fingerprint,
+            "source_cohort_fingerprint_version": self.source_cohort_fingerprint_version,
+            "profile": {
+                "profile_fingerprint": self.profile_fingerprint,
+                "profile_fingerprint_version": self.profile_fingerprint_version,
+            },
+            "source_count": self.source_count,
+            "count": self.count,
+            "exclusions": {
+                "taxonomy_miss_count": self.taxonomy_miss_count,
+                "unresolved_count": self.unresolved_count,
+                "unadjudicated_resolved_count": self.unadjudicated_resolved_count,
+            },
+            "value": _encode_exact_metric_value(self.value),
+        }
+
+    @property
+    def fingerprint(self) -> str:
+        """Content-addressed identity of the post-calibration log-loss artifact."""
+        return fingerprint(self.canonical_payload())
+
+
+def evaluate_post_calibration_winner_log_loss(
+    source: CalibrationEvaluationDataset,
+    applied: ProfileAppliedEvaluationDataset,
+) -> PostCalibrationLogLossEvaluationResult:
+    """Score the profile-produced predicted correctness with exact log loss."""
+    return PostCalibrationLogLossEvaluationResult(
+        source,
+        applied,
+        _construction_token=_POST_CALIBRATION_LOG_LOSS_RESULT_CONSTRUCTION_TOKEN,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PostCalibrationWinnerDiagnosticsResult:
+    """Companion diagnostics next to the post-calibration metrics.
+
+    It commits the empirical winner-correctness rate (the same target statistic
+    as the pre-calibration diagnostics, under the same identity), the mean
+    profile-produced predicted correctness (its own identity, because the score
+    semantics changed), and the empirical constant Brier reference (unchanged
+    semantics: a hindsight, in-sample, descriptive reference derived from the
+    evaluation outcomes, NOT a deployable predictor).
+    """
+
+    target_id: str = field(init=False, repr=False)
+    target_version: int = field(init=False, repr=False)
+    input_score_id: str = field(init=False, repr=False)
+    input_score_version: int = field(init=False, repr=False)
+    application_fingerprint: str = field(init=False, repr=False)
+    application_fingerprint_version: int = field(init=False, repr=False)
+    evaluation_dataset_fingerprint: str = field(init=False, repr=False)
+    evaluation_dataset_fingerprint_version: int = field(init=False, repr=False)
+    source_cohort_fingerprint: str = field(init=False, repr=False)
+    source_cohort_fingerprint_version: int = field(init=False, repr=False)
+    profile_fingerprint: str = field(init=False, repr=False)
+    profile_fingerprint_version: int = field(init=False, repr=False)
+    source_count: int = field(init=False, repr=False)
+    taxonomy_miss_count: int = field(init=False, repr=False)
+    unresolved_count: int = field(init=False, repr=False)
+    unadjudicated_resolved_count: int = field(init=False, repr=False)
+    count: int = field(init=False, repr=False)
+    correct_count: int = field(init=False, repr=False)
+    incorrect_count: int = field(init=False, repr=False)
+    empirical_correctness_rate: float = field(init=False, repr=False)
+    mean_predicted_correctness: float = field(init=False, repr=False)
+    empirical_constant_brier_reference: float = field(init=False, repr=False)
+
+    def __init__(
+        self,
+        source: CalibrationEvaluationDataset | None = None,
+        applied: ProfileAppliedEvaluationDataset | None = None,
+        *,
+        _construction_token: object = None,
+    ) -> None:
+        if _construction_token is not _POST_CALIBRATION_DIAGNOSTICS_RESULT_CONSTRUCTION_TOKEN:
+            raise InvalidDecisionError(
+                "PostCalibrationWinnerDiagnosticsResult cannot be constructed directly or "
+                "with dataclasses.replace; use "
+                "evaluate_post_calibration_winner_diagnostics(source, applied), the only "
+                "supported construction path"
+            )
+        if not isinstance(applied, ProfileAppliedEvaluationDataset):
+            raise InvalidDecisionError(
+                "the supported PostCalibrationWinnerDiagnosticsResult construction path "
+                "requires a ProfileAppliedEvaluationDataset, got "
+                f"{type(applied).__name__}"
+            )
+        if not isinstance(source, CalibrationEvaluationDataset):
+            raise InvalidDecisionError(
+                "the supported PostCalibrationWinnerDiagnosticsResult construction path "
+                "requires the source CalibrationEvaluationDataset, got "
+                f"{type(source).__name__}"
+            )
+        labels = _applied_correctness_labels(source, applied)
+        count = applied.count
+        correct_count = math.fsum(labels)
+        if not correct_count.is_integer():
+            raise InvalidDecisionError(
+                "the derived winner-correctness labels are not binary; the "
+                "post-calibration diagnostics cannot be computed"
+            )
+        correct_count = int(correct_count)
+        empirical_correctness_rate = correct_count / count
+        mean_predicted_correctness = (
+            math.fsum(row.predicted_correctness for row in applied.rows) / count
+        )
+        empirical_constant_brier_reference = (
+            math.fsum((empirical_correctness_rate - label) ** 2 for label in labels) / count
+        )
+        object.__setattr__(self, "target_id", WINNER_CORRECTNESS_TARGET_ID)
+        object.__setattr__(self, "target_version", WINNER_CORRECTNESS_TARGET_VERSION)
+        object.__setattr__(self, "input_score_id", PREDICTED_WINNER_CORRECTNESS_ID)
+        object.__setattr__(self, "input_score_version", PREDICTED_WINNER_CORRECTNESS_VERSION)
+        _bind_application_provenance(self, applied)
+        object.__setattr__(self, "count", count)
+        object.__setattr__(self, "correct_count", correct_count)
+        object.__setattr__(self, "incorrect_count", count - correct_count)
+        object.__setattr__(self, "empirical_correctness_rate", empirical_correctness_rate)
+        object.__setattr__(self, "mean_predicted_correctness", mean_predicted_correctness)
+        object.__setattr__(
+            self, "empirical_constant_brier_reference", empirical_constant_brier_reference
+        )
+
+    def canonical_payload(self) -> dict[str, JSONValue]:
+        """Return the exact canonical JSON-compatible payload."""
+        return {
+            "v": POST_CALIBRATION_DIAGNOSTICS_RESULT_FINGERPRINT_VERSION,
+            "target": {"target_id": self.target_id, "target_version": self.target_version},
+            "input_score": {
+                "input_score_id": self.input_score_id,
+                "input_score_version": self.input_score_version,
+            },
+            "application_fingerprint": self.application_fingerprint,
+            "application_fingerprint_version": self.application_fingerprint_version,
+            "evaluation_dataset_fingerprint": self.evaluation_dataset_fingerprint,
+            "evaluation_dataset_fingerprint_version": self.evaluation_dataset_fingerprint_version,
+            "source_cohort_fingerprint": self.source_cohort_fingerprint,
+            "source_cohort_fingerprint_version": self.source_cohort_fingerprint_version,
+            "profile": {
+                "profile_fingerprint": self.profile_fingerprint,
+                "profile_fingerprint_version": self.profile_fingerprint_version,
+            },
+            "source_count": self.source_count,
+            "count": self.count,
+            "exclusions": {
+                "taxonomy_miss_count": self.taxonomy_miss_count,
+                "unresolved_count": self.unresolved_count,
+                "unadjudicated_resolved_count": self.unadjudicated_resolved_count,
+            },
+            "empirical_correctness_rate": self.empirical_correctness_rate,
+            "mean_predicted_correctness": {
+                "id": MEAN_PREDICTED_CORRECTNESS_ID,
+                "version": MEAN_PREDICTED_CORRECTNESS_VERSION,
+                "value": self.mean_predicted_correctness,
+            },
+            "empirical_constant_brier_reference": self.empirical_constant_brier_reference,
+        }
+
+    @property
+    def fingerprint(self) -> str:
+        """Content-addressed identity of the post-calibration diagnostics artifact."""
+        return fingerprint(self.canonical_payload())
+
+
+def evaluate_post_calibration_winner_diagnostics(
+    source: CalibrationEvaluationDataset,
+    applied: ProfileAppliedEvaluationDataset,
+) -> PostCalibrationWinnerDiagnosticsResult:
+    """Compute companion diagnostics over the profile-produced scores."""
+    return PostCalibrationWinnerDiagnosticsResult(
+        source,
+        applied,
+        _construction_token=_POST_CALIBRATION_DIAGNOSTICS_RESULT_CONSTRUCTION_TOKEN,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PostCalibrationReliabilityBinSummary:
+    """One equal-width predicted-correctness region of a post-calibration summary.
+
+    The interval contract is the shared equal-width v1 contract documented on
+    :class:`ReliabilityBinSummary`; only the binned score differs. The score
+    mean is named ``mean_predicted_correctness`` rather than
+    ``mean_selected_probability`` so the post-calibration score can never be
+    mistaken for the raw selected probability.
+    """
+
+    index: int
+    count: int
+    correct_count: int
+    mean_predicted_correctness: float | None
+    empirical_correctness_rate: float | None
+    observation_fingerprints: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if isinstance(self.index, bool) or not isinstance(self.index, int) or self.index < 0:
+            raise InvalidDecisionError(
+                "PostCalibrationReliabilityBinSummary index must be a non-negative real int, "
+                f"got {self.index!r}"
+            )
+        if isinstance(self.count, bool) or not isinstance(self.count, int) or self.count < 0:
+            raise InvalidDecisionError(
+                "PostCalibrationReliabilityBinSummary count must be a non-negative real int, "
+                f"got {self.count!r}"
+            )
+        if (
+            isinstance(self.correct_count, bool)
+            or not isinstance(self.correct_count, int)
+            or self.correct_count < 0
+            or self.correct_count > self.count
+        ):
+            raise InvalidDecisionError(
+                "PostCalibrationReliabilityBinSummary correct_count must be a real int with "
+                f"0 <= correct_count <= count, got {self.correct_count!r} for count {self.count}"
+            )
+        if len(self.observation_fingerprints) != self.count:
+            raise InvalidDecisionError(
+                "PostCalibrationReliabilityBinSummary observation_fingerprints must carry "
+                f"exactly one entry per counted observation: got "
+                f"{len(self.observation_fingerprints)} fingerprints for count {self.count}"
+            )
+        if self.count == 0:
+            if (
+                self.mean_predicted_correctness is not None
+                or self.empirical_correctness_rate is not None
+            ):
+                raise InvalidDecisionError(
+                    "an empty PostCalibrationReliabilityBinSummary must leave both statistics "
+                    "undefined (None); an empty interval is never an observed zero"
+                )
+            return
+        for name, value in (
+            ("mean_predicted_correctness", self.mean_predicted_correctness),
+            ("empirical_correctness_rate", self.empirical_correctness_rate),
+        ):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise InvalidDecisionError(
+                    f"a non-empty PostCalibrationReliabilityBinSummary requires a finite "
+                    f"{name}, got {value!r}"
+                )
+            number = float(value)
+            if not math.isfinite(number) or number < 0.0 or number > 1.0:
+                raise InvalidDecisionError(
+                    f"a non-empty PostCalibrationReliabilityBinSummary requires a finite "
+                    f"{name} in [0, 1], got {number!r}"
+                )
+
+
+@dataclass(frozen=True, slots=True)
+class PostCalibrationWinnerReliabilityResult:
+    """Post-calibration reliability summary over predicted correctness.
+
+    It bins the profile-produced :data:`PREDICTED_WINNER_CORRECTNESS_ID` score
+    against the winner-correctness label using the SHARED equal-width v1
+    boundary contract. Because the score is explicitly intended to represent
+    ``P(winner_correctness = 1)``, the regions now have their ordinary
+    correctness-calibration reading, unlike the pre-calibration summary. That
+    reading is still finite-sample, binning-dependent, and sample-sensitive, so
+    this remains an equal-width binned reliability description rather than a
+    claim about the true calibration error or that the model is calibrated.
+    """
+
+    reliability_id: str = field(init=False, repr=False)
+    reliability_version: int = field(init=False, repr=False)
+    target_id: str = field(init=False, repr=False)
+    target_version: int = field(init=False, repr=False)
+    input_score_id: str = field(init=False, repr=False)
+    input_score_version: int = field(init=False, repr=False)
+    binning_id: str = field(init=False, repr=False)
+    binning_version: int = field(init=False, repr=False)
+    bin_count: int = field(init=False, repr=False)
+    application_fingerprint: str = field(init=False, repr=False)
+    application_fingerprint_version: int = field(init=False, repr=False)
+    evaluation_dataset_fingerprint: str = field(init=False, repr=False)
+    evaluation_dataset_fingerprint_version: int = field(init=False, repr=False)
+    source_cohort_fingerprint: str = field(init=False, repr=False)
+    source_cohort_fingerprint_version: int = field(init=False, repr=False)
+    profile_fingerprint: str = field(init=False, repr=False)
+    profile_fingerprint_version: int = field(init=False, repr=False)
+    source_count: int = field(init=False, repr=False)
+    taxonomy_miss_count: int = field(init=False, repr=False)
+    unresolved_count: int = field(init=False, repr=False)
+    unadjudicated_resolved_count: int = field(init=False, repr=False)
+    count: int = field(init=False, repr=False)
+    bins: tuple[PostCalibrationReliabilityBinSummary, ...] = field(init=False, repr=False)
+
+    def __init__(
+        self,
+        source: CalibrationEvaluationDataset | None = None,
+        applied: ProfileAppliedEvaluationDataset | None = None,
+        *,
+        bin_count: int | None = None,
+        _construction_token: object = None,
+    ) -> None:
+        if _construction_token is not _POST_CALIBRATION_RELIABILITY_RESULT_CONSTRUCTION_TOKEN:
+            raise InvalidDecisionError(
+                "PostCalibrationWinnerReliabilityResult cannot be constructed directly or "
+                "with dataclasses.replace; use "
+                "evaluate_post_calibration_winner_reliability(source, applied, "
+                "bin_count=...), the only supported construction path"
+            )
+        if not isinstance(applied, ProfileAppliedEvaluationDataset):
+            raise InvalidDecisionError(
+                "the supported PostCalibrationWinnerReliabilityResult construction path "
+                "requires a ProfileAppliedEvaluationDataset, got "
+                f"{type(applied).__name__}"
+            )
+        if not isinstance(source, CalibrationEvaluationDataset):
+            raise InvalidDecisionError(
+                "the supported PostCalibrationWinnerReliabilityResult construction path "
+                "requires the source CalibrationEvaluationDataset, got "
+                f"{type(source).__name__}"
+            )
+        if isinstance(bin_count, bool) or not isinstance(bin_count, int):
+            raise InvalidDecisionError(
+                f"bin_count must be a real int (a bool is not acceptable), got {bin_count!r}"
+            )
+        if bin_count < 1:
+            raise InvalidDecisionError(f"bin_count must be at least 1, got {bin_count!r}")
+        labels = _applied_correctness_labels(source, applied)
+        members: list[list[tuple[float, str, bool]]] = [[] for _ in range(bin_count)]
+        for row, label in zip(applied.rows, labels, strict=True):
+            index = _equal_width_bin_index(row.predicted_correctness, bin_count)
+            members[index].append(
+                (row.predicted_correctness, row.observation_fingerprint, bool(label))
+            )
+        bins: list[PostCalibrationReliabilityBinSummary] = []
+        for index, bucket in enumerate(members):
+            bucket.sort(key=lambda item: (item[0], item[1]))
+            bucket_count = len(bucket)
+            if bucket_count == 0:
+                bins.append(
+                    PostCalibrationReliabilityBinSummary(
+                        index=index,
+                        count=0,
+                        correct_count=0,
+                        mean_predicted_correctness=None,
+                        empirical_correctness_rate=None,
+                        observation_fingerprints=(),
+                    )
+                )
+                continue
+            bucket_mean = math.fsum(item[0] for item in bucket) / bucket_count
+            bucket_correct = sum(1 for item in bucket if item[2])
+            bucket_rate = bucket_correct / bucket_count
+            bins.append(
+                PostCalibrationReliabilityBinSummary(
+                    index=index,
+                    count=bucket_count,
+                    correct_count=bucket_correct,
+                    mean_predicted_correctness=bucket_mean,
+                    empirical_correctness_rate=bucket_rate,
+                    observation_fingerprints=tuple(sorted(item[1] for item in bucket)),
+                )
+            )
+        object.__setattr__(self, "reliability_id", POST_CALIBRATION_WINNER_RELIABILITY_ID)
+        object.__setattr__(self, "reliability_version", POST_CALIBRATION_WINNER_RELIABILITY_VERSION)
+        object.__setattr__(self, "target_id", WINNER_CORRECTNESS_TARGET_ID)
+        object.__setattr__(self, "target_version", WINNER_CORRECTNESS_TARGET_VERSION)
+        object.__setattr__(self, "input_score_id", PREDICTED_WINNER_CORRECTNESS_ID)
+        object.__setattr__(self, "input_score_version", PREDICTED_WINNER_CORRECTNESS_VERSION)
+        object.__setattr__(self, "binning_id", EQUAL_WIDTH_BINNING_ID)
+        object.__setattr__(self, "binning_version", EQUAL_WIDTH_BINNING_VERSION)
+        object.__setattr__(self, "bin_count", bin_count)
+        _bind_application_provenance(self, applied)
+        object.__setattr__(self, "count", applied.count)
+        object.__setattr__(self, "bins", tuple(bins))
+
+    def canonical_payload(self) -> dict[str, JSONValue]:
+        """Return the exact canonical JSON-compatible payload."""
+        return {
+            "v": POST_CALIBRATION_RELIABILITY_RESULT_FINGERPRINT_VERSION,
+            "reliability": {
+                "reliability_id": self.reliability_id,
+                "reliability_version": self.reliability_version,
+            },
+            "target": {"target_id": self.target_id, "target_version": self.target_version},
+            "input_score": {
+                "input_score_id": self.input_score_id,
+                "input_score_version": self.input_score_version,
+            },
+            "binning": {
+                "binning_id": self.binning_id,
+                "binning_version": self.binning_version,
+                "bin_count": self.bin_count,
+            },
+            "application_fingerprint": self.application_fingerprint,
+            "application_fingerprint_version": self.application_fingerprint_version,
+            "evaluation_dataset_fingerprint": self.evaluation_dataset_fingerprint,
+            "evaluation_dataset_fingerprint_version": self.evaluation_dataset_fingerprint_version,
+            "source_cohort_fingerprint": self.source_cohort_fingerprint,
+            "source_cohort_fingerprint_version": self.source_cohort_fingerprint_version,
+            "profile": {
+                "profile_fingerprint": self.profile_fingerprint,
+                "profile_fingerprint_version": self.profile_fingerprint_version,
+            },
+            "source_count": self.source_count,
+            "count": self.count,
+            "exclusions": {
+                "taxonomy_miss_count": self.taxonomy_miss_count,
+                "unresolved_count": self.unresolved_count,
+                "unadjudicated_resolved_count": self.unadjudicated_resolved_count,
+            },
+            "bins": [
+                {
+                    "index": bin_summary.index,
+                    "count": bin_summary.count,
+                    "correct_count": bin_summary.correct_count,
+                    "mean_predicted_correctness": bin_summary.mean_predicted_correctness,
+                    "empirical_correctness_rate": bin_summary.empirical_correctness_rate,
+                    "observation_fingerprints": list(bin_summary.observation_fingerprints),
+                }
+                for bin_summary in self.bins
+            ],
+        }
+
+    @property
+    def fingerprint(self) -> str:
+        """Content-addressed identity of the post-calibration reliability artifact."""
+        return fingerprint(self.canonical_payload())
+
+
+def evaluate_post_calibration_winner_reliability(
+    source: CalibrationEvaluationDataset,
+    applied: ProfileAppliedEvaluationDataset,
+    *,
+    bin_count: int,
+) -> PostCalibrationWinnerReliabilityResult:
+    """Build the post-calibration equal-width reliability summary."""
+    return PostCalibrationWinnerReliabilityResult(
+        source,
+        applied,
+        bin_count=bin_count,
+        _construction_token=_POST_CALIBRATION_RELIABILITY_RESULT_CONSTRUCTION_TOKEN,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PostCalibrationWinnerBinnedAbsoluteGapResult:
+    """Derived aggregate over one post-calibration reliability summary.
+
+    It computes ``sum_b (n_b / n) * abs(mean_predicted_correctness_b -
+    empirical_correctness_rate_b)`` over the NON-EMPTY bins in fixed bin-index
+    order, with deterministic accumulation. It derives ONLY from the reliability
+    artifact: it never re-applies the profile, never re-bins rows, and never
+    reads observations directly, so the reliability summary remains the single
+    binning truth source.
+
+    The estimator form equals the conventional equal-width ECE form, and the
+    score now carries ``P(winner_correctness = 1)`` semantics, so the value has
+    the ordinary correctness-calibration reading. It is still a finite-sample,
+    binning-dependent, sample-sensitive estimate: it is NOT the true calibration
+    error and NOT proof that the model is calibrated.
+    """
+
+    aggregate_id: str = field(init=False, repr=False)
+    aggregate_version: int = field(init=False, repr=False)
+    target_id: str = field(init=False, repr=False)
+    target_version: int = field(init=False, repr=False)
+    input_score_id: str = field(init=False, repr=False)
+    input_score_version: int = field(init=False, repr=False)
+    reliability_fingerprint: str = field(init=False, repr=False)
+    reliability_fingerprint_version: int = field(init=False, repr=False)
+    reliability_id: str = field(init=False, repr=False)
+    reliability_version: int = field(init=False, repr=False)
+    binning_id: str = field(init=False, repr=False)
+    binning_version: int = field(init=False, repr=False)
+    bin_count: int = field(init=False, repr=False)
+    application_fingerprint: str = field(init=False, repr=False)
+    application_fingerprint_version: int = field(init=False, repr=False)
+    evaluation_dataset_fingerprint: str = field(init=False, repr=False)
+    evaluation_dataset_fingerprint_version: int = field(init=False, repr=False)
+    source_cohort_fingerprint: str = field(init=False, repr=False)
+    source_cohort_fingerprint_version: int = field(init=False, repr=False)
+    profile_fingerprint: str = field(init=False, repr=False)
+    profile_fingerprint_version: int = field(init=False, repr=False)
+    source_count: int = field(init=False, repr=False)
+    count: int = field(init=False, repr=False)
+    taxonomy_miss_count: int = field(init=False, repr=False)
+    unresolved_count: int = field(init=False, repr=False)
+    unadjudicated_resolved_count: int = field(init=False, repr=False)
+    value: float = field(init=False, repr=False)
+
+    def __init__(
+        self,
+        reliability: PostCalibrationWinnerReliabilityResult | None = None,
+        *,
+        _construction_token: object = None,
+    ) -> None:
+        if _construction_token is not (
+            _POST_CALIBRATION_BINNED_ABSOLUTE_GAP_RESULT_CONSTRUCTION_TOKEN
+        ):
+            raise InvalidDecisionError(
+                "PostCalibrationWinnerBinnedAbsoluteGapResult cannot be constructed "
+                "directly or with dataclasses.replace; use "
+                "evaluate_post_calibration_winner_binned_absolute_gap(reliability), the "
+                "only supported construction path"
+            )
+        if not isinstance(reliability, PostCalibrationWinnerReliabilityResult):
+            raise InvalidDecisionError(
+                "the supported PostCalibrationWinnerBinnedAbsoluteGapResult construction "
+                "path requires a PostCalibrationWinnerReliabilityResult, got "
+                f"{type(reliability).__name__}"
+            )
+        total = reliability.count
+        weighted_terms: list[float] = []
+        for bin_summary in reliability.bins:
+            if bin_summary.count == 0:
+                continue
+            mean_score = bin_summary.mean_predicted_correctness
+            observed_rate = bin_summary.empirical_correctness_rate
+            if mean_score is None or observed_rate is None:
+                raise InvalidDecisionError(
+                    "the source reliability summary reports a non-empty bin "
+                    f"(index {bin_summary.index}) with missing statistics; the upstream "
+                    "reliability invariant is broken and the binned absolute-gap aggregate "
+                    "cannot be computed"
+                )
+            absolute_gap = abs(mean_score - observed_rate)
+            weighted_term = bin_summary.count / total * absolute_gap
+            if not math.isfinite(absolute_gap) or not math.isfinite(weighted_term):
+                raise InvalidDecisionError(
+                    "the source reliability summary produced a non-finite bin statistic "
+                    f"(index {bin_summary.index}); the upstream reliability invariant is "
+                    "broken and the binned absolute-gap aggregate cannot be computed"
+                )
+            if weighted_term < 0.0:
+                raise InvalidDecisionError(
+                    "the source reliability summary produced a negative weighted term "
+                    f"(index {bin_summary.index}); the upstream reliability invariant is "
+                    "broken and the binned absolute-gap aggregate cannot be computed"
+                )
+            weighted_terms.append(weighted_term)
+        value = math.fsum(weighted_terms)
+        object.__setattr__(self, "aggregate_id", POST_CALIBRATION_WINNER_BINNED_ABSOLUTE_GAP_ID)
+        object.__setattr__(
+            self,
+            "aggregate_version",
+            POST_CALIBRATION_WINNER_BINNED_ABSOLUTE_GAP_VERSION,
+        )
+        object.__setattr__(self, "target_id", WINNER_CORRECTNESS_TARGET_ID)
+        object.__setattr__(self, "target_version", WINNER_CORRECTNESS_TARGET_VERSION)
+        object.__setattr__(self, "input_score_id", PREDICTED_WINNER_CORRECTNESS_ID)
+        object.__setattr__(self, "input_score_version", PREDICTED_WINNER_CORRECTNESS_VERSION)
+        object.__setattr__(self, "reliability_fingerprint", reliability.fingerprint)
+        object.__setattr__(
+            self,
+            "reliability_fingerprint_version",
+            POST_CALIBRATION_RELIABILITY_RESULT_FINGERPRINT_VERSION,
+        )
+        object.__setattr__(self, "reliability_id", reliability.reliability_id)
+        object.__setattr__(self, "reliability_version", reliability.reliability_version)
+        object.__setattr__(self, "binning_id", reliability.binning_id)
+        object.__setattr__(self, "binning_version", reliability.binning_version)
+        object.__setattr__(self, "bin_count", reliability.bin_count)
+        _bind_application_provenance(self, reliability)
+        object.__setattr__(self, "count", reliability.count)
+        object.__setattr__(self, "value", value)
+
+    def canonical_payload(self) -> dict[str, JSONValue]:
+        """Return the exact canonical JSON-compatible payload."""
+        return {
+            "v": POST_CALIBRATION_BINNED_ABSOLUTE_GAP_RESULT_FINGERPRINT_VERSION,
+            "aggregate": {
+                "aggregate_id": self.aggregate_id,
+                "aggregate_version": self.aggregate_version,
+            },
+            "target": {"target_id": self.target_id, "target_version": self.target_version},
+            "input_score": {
+                "input_score_id": self.input_score_id,
+                "input_score_version": self.input_score_version,
+            },
+            "reliability_fingerprint": self.reliability_fingerprint,
+            "reliability_fingerprint_version": self.reliability_fingerprint_version,
+            "reliability": {
+                "reliability_id": self.reliability_id,
+                "reliability_version": self.reliability_version,
+            },
+            "binning": {
+                "binning_id": self.binning_id,
+                "binning_version": self.binning_version,
+                "bin_count": self.bin_count,
+            },
+            "application_fingerprint": self.application_fingerprint,
+            "application_fingerprint_version": self.application_fingerprint_version,
+            "evaluation_dataset_fingerprint": self.evaluation_dataset_fingerprint,
+            "evaluation_dataset_fingerprint_version": self.evaluation_dataset_fingerprint_version,
+            "source_cohort_fingerprint": self.source_cohort_fingerprint,
+            "source_cohort_fingerprint_version": self.source_cohort_fingerprint_version,
+            "profile": {
+                "profile_fingerprint": self.profile_fingerprint,
+                "profile_fingerprint_version": self.profile_fingerprint_version,
+            },
+            "source_count": self.source_count,
+            "count": self.count,
+            "exclusions": {
+                "taxonomy_miss_count": self.taxonomy_miss_count,
+                "unresolved_count": self.unresolved_count,
+                "unadjudicated_resolved_count": self.unadjudicated_resolved_count,
+            },
+            "value": self.value,
+        }
+
+    @property
+    def fingerprint(self) -> str:
+        """Content-addressed identity of the post-calibration gap artifact."""
+        return fingerprint(self.canonical_payload())
+
+
+def evaluate_post_calibration_winner_binned_absolute_gap(
+    reliability: PostCalibrationWinnerReliabilityResult,
+) -> PostCalibrationWinnerBinnedAbsoluteGapResult:
+    """Derive the post-calibration equal-width binned absolute gap.
+
+    It consumes only the post-calibration reliability artifact, preserving the
+    one-truth-source design: the profile is not re-applied, rows are not
+    re-binned, and observations are never read directly.
+    """
+    return PostCalibrationWinnerBinnedAbsoluteGapResult(
+        reliability,
+        _construction_token=_POST_CALIBRATION_BINNED_ABSOLUTE_GAP_RESULT_CONSTRUCTION_TOKEN,
     )
