@@ -5,11 +5,13 @@ future calibration harness will fit against: ground-truth provenance, a
 ground-truth record with resolution semantics, a calibration binding, a
 calibration observation with deterministically derived status and correctness,
 an observation fingerprint, a calibration dataset with structural pooling
-constraints, and a dataset fingerprint.
+constraints, a dataset fingerprint, and a calibration profile identity that
+composes its binding, ground-truth semantics, target, input-score, method, and
+training-dataset provenance.
 
 Deliberately NOT implemented here (out of scope for this round):
-``CalibrationProfile``, profile registries, nearest-profile matching,
-fitting algorithms, evaluation metrics, and one-vs-rest handling.
+profile fitting algorithms, profile registries, nearest-profile matching,
+runtime profile application, evaluation metrics, and one-vs-rest handling.
 
 Public API note: this foundation is intentionally NOT frozen as public API
 yet. Nothing from this module is exported through ``probvenance.__all__`` or
@@ -45,6 +47,9 @@ CALIBRATION_BINDING_FINGERPRINT_VERSION = 1
 CALIBRATION_DATASET_FINGERPRINT_VERSION = 2
 """Version of the calibration dataset fingerprint payload schema."""
 
+CALIBRATION_PROFILE_FINGERPRINT_VERSION = 1
+"""Version of the calibration profile fingerprint payload schema."""
+
 GROUND_TRUTH_SEMANTICS_FINGERPRINT_VERSION = 1
 """Version of the ground-truth semantics fingerprint payload schema."""
 
@@ -76,6 +81,27 @@ RENDERING_SEMANTICS_VERSION = 1
 WINNER_CORRECTNESS_TARGET_ID = "winner_correctness"
 WINNER_CORRECTNESS_TARGET_VERSION = 1
 
+# ---------------------------------------------------------------------------
+# Calibrator input-score identity
+# ---------------------------------------------------------------------------
+
+#: The input score a calibrator consumes: the probability the *uncalibrated*
+#: semantic distribution assigns to the recorded selected semantic value. It is
+#: NOT ``predicted_correctness``, NOT a confidence, and NOT a calibrated
+#: probability. The runtime never sets ``predicted_correctness`` and never marks
+#: a result ``calibrated=True``.
+#:
+#: The input-score identity is not redundant with the calibration target: the
+#: same target admits different calibration problems, because a calibrator may
+#: consume the selected probability, the whole restricted distribution, or
+#: richer deterministic features. Only the selected probability is implemented.
+#:
+#: It is owned here, beside the target identity, for the same dependency reason:
+#: the CalibrationProfile identity composes it with the binding and
+#: ground-truth semantics identities, all of which live in this module.
+UNCALIBRATED_SELECTED_PROBABILITY_ID = "uncalibrated-selected-probability"
+UNCALIBRATED_SELECTED_PROBABILITY_VERSION = 1
+
 _OBSERVATION_CONSTRUCTION_TOKEN: Final[object] = object()
 """Construction capability held only by ``CalibrationObservation.from_evaluation``.
 
@@ -88,6 +114,20 @@ pickle state. Direct field construction and ``replace`` reconstruction both
 fail the capability check because neither passes through the supported
 construction path that requires matching runtime linkage identities between
 the result and the trace.
+"""
+
+_PROFILE_CONSTRUCTION_TOKEN: Final[object] = object()
+"""Construction capability held only by ``CalibrationProfile._from_fitted_state``.
+
+The token is deliberately NOT a dataclass field: it is a keyword-only
+``__init__`` parameter that defaults to ``None``, so ``dataclasses.replace``
+cannot smuggle it (``replace`` re-supplies only the dataclass field values)
+and it is therefore not readable from an instance, not present in
+``dataclasses.fields()``, and not part of ``repr``, equality, hashing, or
+pickle state. Direct field construction and ``replace`` reconstruction both
+fail the capability check because neither passes through the supported
+construction path that derives the profile identity from a fitted
+:class:`CalibrationDataset`.
 """
 
 _BOOL_OUTCOME_ORDER: tuple[str, ...] = ("false", "true")
@@ -1130,3 +1170,362 @@ class CalibrationDataset:
             "observation_fingerprints": observation_fingerprints,
         }
         return fingerprint(payload)
+
+
+# ---------------------------------------------------------------------------
+# Calibration profile (Phase 4C.1)
+# ---------------------------------------------------------------------------
+
+
+def _require_method_state_mapping(
+    name: str,
+    value: Mapping[str, JSONValue] | None,
+) -> dict[str, JSONValue]:
+    """Validate a method-state mapping and return a plain mutable copy.
+
+    ``None`` is treated as an empty mapping. The value must be a ``Mapping``
+    with ``str`` keys whose values are canonical JSON values (the existing
+    ``_require_json_value`` domain: no ``NaN``, no infinities, no tuples, no
+    sets, no callables, no arbitrary objects). The returned copy is plain and
+    mutable; the caller deep-freezes it before storing.
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise InvalidDecisionError(
+            f"{name} must be a Mapping or None, got {type(value).__name__} ({value!r})"
+        )
+    for key, item in value.items():
+        if not isinstance(key, str):
+            raise InvalidDecisionError(
+                f"{name} keys must be str, got {type(key).__name__} ({key!r})"
+            )
+        _require_json_value(f"{name}[{key!r}]", item)
+    return dict(value)
+
+
+def _freeze_method_state(value: dict[str, JSONValue]) -> Mapping[str, JSONValue]:
+    """Deep-freeze a validated method-state mapping."""
+    return MappingProxyType({key: _freeze_json_value(item) for key, item in value.items()})
+
+
+def _require_coherent_taxonomy_identity(
+    binding: CalibrationBinding,
+    ground_truth_semantics: GroundTruthSemanticsIdentity,
+) -> None:
+    """Fail closed when the binding and ground-truth taxonomies contradict.
+
+    The binding's declared taxonomy and the ground-truth semantics' taxonomy
+    describe the same label space, so two concrete but different taxonomies
+    (or two concrete but different versions of one taxonomy) cannot both be
+    true. Cross-taxonomy calibration would require an explicit taxonomy
+    mapping identity, which does not exist. An unknown taxonomy on either
+    side is allowed: absence is not a contradiction, and no equality is
+    invented for it. Neither identity is ever rewritten or defaulted.
+    """
+    binding_taxonomy_id = binding.taxonomy_id
+    semantics_taxonomy_id = ground_truth_semantics.taxonomy_id
+    if binding_taxonomy_id is None or semantics_taxonomy_id is None:
+        return
+    if binding_taxonomy_id != semantics_taxonomy_id:
+        raise InvalidDecisionError(
+            "the binding taxonomy and the ground-truth taxonomy are different: "
+            f"binding taxonomy_id {binding_taxonomy_id!r} vs ground-truth "
+            f"taxonomy_id {semantics_taxonomy_id!r}. Cross-taxonomy calibration "
+            "requires an explicit taxonomy mapping identity, which does not exist"
+        )
+    binding_taxonomy_version = binding.taxonomy_version
+    semantics_taxonomy_version = ground_truth_semantics.taxonomy_version
+    if binding_taxonomy_version is None or semantics_taxonomy_version is None:
+        return
+    if binding_taxonomy_version != semantics_taxonomy_version:
+        raise InvalidDecisionError(
+            "the binding taxonomy version and the ground-truth taxonomy version "
+            f"are different for taxonomy_id {binding_taxonomy_id!r}: binding "
+            f"taxonomy_version {binding_taxonomy_version!r} vs ground-truth "
+            f"taxonomy_version {semantics_taxonomy_version!r}"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CalibrationProfile:
+    """A reusable fitted calibration artifact and its full identity.
+
+    A profile records WHICH probability population it was fitted for (the
+    :class:`CalibrationBinding`), WHAT the fitted labels mean (the
+    :class:`GroundTruthSemanticsIdentity`), WHICH statistical target and
+    calibrator input score it assumes (the winner-correctness target and the
+    uncalibrated selected probability), WHICH fitting method produced it
+    (``method_id`` / ``method_version`` / ``method_configuration``), the
+    fitted numbers themselves (``fitted_parameters``), and WHICH fitting
+    dataset it was fitted on (the dataset fingerprint and its schema
+    version).
+
+    The profile is a reusable fitted artifact. It is never a
+    ``DecisionResult``, an ``EvaluationResult``, a registry entry, a runtime
+    trace, or a metric result.
+
+    A valid profile proves ONLY that its provenance and identity are
+    structurally coherent. It does NOT prove that the calibrator improves
+    Brier or log loss, that it generalizes beyond its training data, that
+    the training data is representative of the deployment population, or
+    that a training/evaluation split is independent. The training dataset
+    fingerprint says which observations were fitted, NOT that they were a
+    good fitting population.
+
+    No fitting algorithm exists yet and no supported public fitter produces
+    a profile; the first real producer is a later phase. Runtime
+    application does not exist either. Applying a profile does not require
+    a runtime ground-truth record: the profile's ground-truth semantics
+    identity describes what the fitted ``predicted_correctness`` refers to,
+    and the event being predicted normally has no ground truth yet.
+
+    The only supported construction path is the internal
+    :meth:`_from_fitted_state`, which derives the binding, the ground-truth
+    semantics identity, the target identity, the input-score identity, and
+    the training dataset fingerprint from a fitted
+    :class:`CalibrationDataset`. Direct field construction is rejected, and
+    so is ``dataclasses.replace`` reconstruction: both rebuild a profile
+    through the constructor without the construction capability, and neither
+    passes through the supported construction path that derives the
+    identity from a dataset. Lower-level Python escape hatches such as
+    ``object.__new__``, ``copy``, and ``pickle`` are inherent to the
+    language, are not supported construction paths, and are not defended
+    against.
+    """
+
+    binding: CalibrationBinding
+    ground_truth_semantics: GroundTruthSemanticsIdentity
+    target_id: str
+    target_version: int
+    input_score_id: str
+    input_score_version: int
+    method_id: str
+    method_version: int
+    method_configuration: Mapping[str, JSONValue]
+    fitted_parameters: Mapping[str, JSONValue]
+    training_dataset_fingerprint: str
+    training_dataset_fingerprint_version: int
+
+    def __init__(
+        self,
+        binding: CalibrationBinding,
+        ground_truth_semantics: GroundTruthSemanticsIdentity,
+        target_id: str,
+        target_version: int,
+        input_score_id: str,
+        input_score_version: int,
+        method_id: str,
+        method_version: int,
+        method_configuration: Mapping[str, JSONValue],
+        fitted_parameters: Mapping[str, JSONValue],
+        training_dataset_fingerprint: str,
+        training_dataset_fingerprint_version: int,
+        *,
+        _construction_token: object = None,
+    ) -> None:
+        if _construction_token is not _PROFILE_CONSTRUCTION_TOKEN:
+            raise InvalidDecisionError(
+                "CalibrationProfile must be constructed via "
+                "CalibrationProfile._from_fitted_state(...), which derives the "
+                "profile identity from a fitted CalibrationDataset"
+            )
+        object.__setattr__(self, "binding", binding)
+        object.__setattr__(self, "ground_truth_semantics", ground_truth_semantics)
+        object.__setattr__(self, "target_id", target_id)
+        object.__setattr__(self, "target_version", target_version)
+        object.__setattr__(self, "input_score_id", input_score_id)
+        object.__setattr__(self, "input_score_version", input_score_version)
+        object.__setattr__(self, "method_id", method_id)
+        object.__setattr__(self, "method_version", method_version)
+        object.__setattr__(self, "method_configuration", method_configuration)
+        object.__setattr__(self, "fitted_parameters", fitted_parameters)
+        object.__setattr__(self, "training_dataset_fingerprint", training_dataset_fingerprint)
+        object.__setattr__(
+            self, "training_dataset_fingerprint_version", training_dataset_fingerprint_version
+        )
+        # A hand-written __init__ means dataclasses does not call __post_init__
+        # for us, so the field validation is invoked explicitly here.
+        self.__post_init__()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.binding, CalibrationBinding):
+            raise InvalidDecisionError(
+                "binding must be a CalibrationBinding, got "
+                f"{type(self.binding).__name__} ({self.binding!r})"
+            )
+        if not isinstance(self.ground_truth_semantics, GroundTruthSemanticsIdentity):
+            raise InvalidDecisionError(
+                "ground_truth_semantics must be a GroundTruthSemanticsIdentity, got "
+                f"{type(self.ground_truth_semantics).__name__} "
+                f"({self.ground_truth_semantics!r})"
+            )
+        _require_non_empty_str("target_id", self.target_id)
+        if (
+            isinstance(self.target_version, bool)
+            or not isinstance(self.target_version, int)
+            or self.target_version < 1
+        ):
+            raise InvalidDecisionError(
+                "target_version must be an int >= 1, got "
+                f"{type(self.target_version).__name__} ({self.target_version!r})"
+            )
+        _require_non_empty_str("input_score_id", self.input_score_id)
+        if (
+            isinstance(self.input_score_version, bool)
+            or not isinstance(self.input_score_version, int)
+            or self.input_score_version < 1
+        ):
+            raise InvalidDecisionError(
+                "input_score_version must be an int >= 1, got "
+                f"{type(self.input_score_version).__name__} "
+                f"({self.input_score_version!r})"
+            )
+        _require_non_empty_str("method_id", self.method_id)
+        if (
+            isinstance(self.method_version, bool)
+            or not isinstance(self.method_version, int)
+            or self.method_version < 1
+        ):
+            raise InvalidDecisionError(
+                "method_version must be an int >= 1, got "
+                f"{type(self.method_version).__name__} ({self.method_version!r})"
+            )
+        if not isinstance(self.method_configuration, Mapping):
+            raise InvalidDecisionError(
+                "method_configuration must be a Mapping, got "
+                f"{type(self.method_configuration).__name__} "
+                f"({self.method_configuration!r})"
+            )
+        if not isinstance(self.fitted_parameters, Mapping):
+            raise InvalidDecisionError(
+                "fitted_parameters must be a Mapping, got "
+                f"{type(self.fitted_parameters).__name__} ({self.fitted_parameters!r})"
+            )
+        _require_non_empty_str("training_dataset_fingerprint", self.training_dataset_fingerprint)
+        if (
+            isinstance(self.training_dataset_fingerprint_version, bool)
+            or not isinstance(self.training_dataset_fingerprint_version, int)
+            or self.training_dataset_fingerprint_version < 1
+        ):
+            raise InvalidDecisionError(
+                "training_dataset_fingerprint_version must be an int >= 1, got "
+                f"{type(self.training_dataset_fingerprint_version).__name__} "
+                f"({self.training_dataset_fingerprint_version!r})"
+            )
+
+    @classmethod
+    def _from_fitted_state(
+        cls,
+        dataset: CalibrationDataset,
+        *,
+        method_id: str,
+        method_version: int,
+        method_configuration: Mapping[str, JSONValue] | None = None,
+        fitted_parameters: Mapping[str, JSONValue] | None = None,
+    ) -> CalibrationProfile:
+        """Build a profile from a fitted dataset and a method's fitted state.
+
+        Internal producer for a future fitting harness. The binding, the
+        ground-truth semantics identity, the target identity, the input-score
+        identity, and the training dataset fingerprint are all derived from
+        the dataset and the module constants; a caller cannot override any
+        of them.
+        """
+        if not isinstance(dataset, CalibrationDataset):
+            raise InvalidDecisionError(
+                f"dataset must be a CalibrationDataset, got {type(dataset).__name__} ({dataset!r})"
+            )
+        _require_non_empty_str("method_id", method_id)
+        if (
+            isinstance(method_version, bool)
+            or not isinstance(method_version, int)
+            or (method_version < 1)
+        ):
+            raise InvalidDecisionError(
+                "method_version must be an int >= 1, got "
+                f"{type(method_version).__name__} ({method_version!r})"
+            )
+        configuration = _freeze_method_state(
+            _require_method_state_mapping("method_configuration", method_configuration)
+        )
+        parameters = _freeze_method_state(
+            _require_method_state_mapping("fitted_parameters", fitted_parameters)
+        )
+        ground_truth_semantics = dataset.ground_truth_semantics
+        _require_coherent_taxonomy_identity(dataset.binding, ground_truth_semantics)
+        return cls(
+            binding=dataset.binding,
+            ground_truth_semantics=ground_truth_semantics,
+            target_id=WINNER_CORRECTNESS_TARGET_ID,
+            target_version=WINNER_CORRECTNESS_TARGET_VERSION,
+            input_score_id=UNCALIBRATED_SELECTED_PROBABILITY_ID,
+            input_score_version=UNCALIBRATED_SELECTED_PROBABILITY_VERSION,
+            method_id=method_id,
+            method_version=method_version,
+            method_configuration=configuration,
+            fitted_parameters=parameters,
+            training_dataset_fingerprint=dataset.fingerprint,
+            training_dataset_fingerprint_version=CALIBRATION_DATASET_FINGERPRINT_VERSION,
+            _construction_token=_PROFILE_CONSTRUCTION_TOKEN,
+        )
+
+    def require_binding_match(self, binding: CalibrationBinding) -> None:
+        """Require an exact binding match or raise.
+
+        The comparison uses the full canonical binding identity (the
+        canonical JSON of the binding's canonical payload), not a
+        hand-picked subset of dimensions. There is no fallback: formulation
+        family similarity, a shared model, a shared task declaration, or a
+        shared taxonomy never authorize a partial match.
+        """
+        if not isinstance(binding, CalibrationBinding):
+            raise InvalidDecisionError(
+                f"binding must be a CalibrationBinding, got {type(binding).__name__} ({binding!r})"
+            )
+        profile_binding_json = canonical_json(self.binding.canonical_payload())
+        candidate_binding_json = canonical_json(binding.canonical_payload())
+        if profile_binding_json != candidate_binding_json:
+            raise InvalidDecisionError(
+                "the profile binding does not match the supplied binding: profile "
+                f"binding fingerprint {self.binding.fingerprint!r} vs supplied "
+                f"binding fingerprint {binding.fingerprint!r}"
+            )
+
+    def canonical_payload(self) -> dict[str, JSONValue]:
+        """Return the canonical JSON-compatible payload for fingerprinting.
+
+        The binding and the ground-truth semantics identity are committed by
+        fingerprint plus schema version only; their constituent fields are
+        deliberately not duplicated here. ``method_configuration`` and
+        ``fitted_parameters`` are distinct identity components and are
+        emitted as plain thawed dicts.
+        """
+        return {
+            "v": CALIBRATION_PROFILE_FINGERPRINT_VERSION,
+            "binding": {
+                "binding_fingerprint": self.binding.fingerprint,
+                "binding_fingerprint_version": CALIBRATION_BINDING_FINGERPRINT_VERSION,
+            },
+            "ground_truth_semantics": {
+                "ground_truth_semantics_fingerprint": self.ground_truth_semantics.fingerprint,
+                "ground_truth_semantics_fingerprint_version": (
+                    GROUND_TRUTH_SEMANTICS_FINGERPRINT_VERSION
+                ),
+            },
+            "target_id": self.target_id,
+            "target_version": self.target_version,
+            "input_score_id": self.input_score_id,
+            "input_score_version": self.input_score_version,
+            "method_id": self.method_id,
+            "method_version": self.method_version,
+            "method_configuration": _thaw_json_value(self.method_configuration),
+            "fitted_parameters": _thaw_json_value(self.fitted_parameters),
+            "training_dataset_fingerprint": self.training_dataset_fingerprint,
+            "training_dataset_fingerprint_version": self.training_dataset_fingerprint_version,
+        }
+
+    @property
+    def fingerprint(self) -> str:
+        """Versioned fingerprint of the calibration profile identity."""
+        return fingerprint(self.canonical_payload())

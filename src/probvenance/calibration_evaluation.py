@@ -19,8 +19,8 @@ calibration. Everything here evaluates the **uncalibrated selected semantic
 probability** (see ``UNCALIBRATED_SELECTED_PROBABILITY_ID``) against the derived
 winner-correctness label ``Y_correct in {0, 1}``. The runtime keeps
 ``DecisionResult.predicted_correctness = None`` and ``DecisionResult.calibrated
-= False``; nothing in this module changes that, and no
-:class:`~probvenance.calibration.CalibrationProfile` exists or is implied.
+= False``; nothing in this module changes that, and this module neither creates
+nor implies a :class:`~probvenance.calibration.CalibrationProfile`.
 """
 
 from __future__ import annotations
@@ -33,6 +33,8 @@ from fractions import Fraction
 from probvenance.calibration import (
     CALIBRATION_BINDING_FINGERPRINT_VERSION,
     GROUND_TRUTH_SEMANTICS_FINGERPRINT_VERSION,
+    UNCALIBRATED_SELECTED_PROBABILITY_ID,
+    UNCALIBRATED_SELECTED_PROBABILITY_VERSION,
     WINNER_CORRECTNESS_TARGET_ID,
     WINNER_CORRECTNESS_TARGET_VERSION,
     CalibrationBinding,
@@ -111,14 +113,10 @@ WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION = 2
 # Score semantics identity
 # ---------------------------------------------------------------------------
 
-#: The evaluated input score is the probability the *uncalibrated* semantic
-#: distribution assigns to the recorded selected semantic value carried by the
-#: supplied runtime-linked result. It is NOT ``predicted_correctness``, NOT a
-#: confidence, and NOT a calibrated probability. The runtime never sets
-#: ``predicted_correctness`` and never marks a result ``calibrated=True``; this
-#: module never does either.
-UNCALIBRATED_SELECTED_PROBABILITY_ID = "uncalibrated-selected-probability"
-UNCALIBRATED_SELECTED_PROBABILITY_VERSION = 1
+# The calibrator input-score identity (``UNCALIBRATED_SELECTED_PROBABILITY_ID``
+# and ``UNCALIBRATED_SELECTED_PROBABILITY_VERSION``) is owned by the calibration
+# foundation and imported from ``probvenance.calibration``; it is re-exported
+# here under the same names for existing importers.
 
 # ---------------------------------------------------------------------------
 # Metric identity

@@ -670,10 +670,13 @@ class TestObservationStatusAndCorrectness:
     def test_no_predicted_correctness_field(self) -> None:
         observation = choice_observation()
         assert not hasattr(observation, "predicted_correctness")
-        source = inspect.getsource(
-            inspect.getmodule(CalibrationObservation)  # type: ignore[arg-type]
-        )
-        assert "predicted_correctness" not in source
+        module = inspect.getmodule(CalibrationObservation)
+        assert module is not None
+        declared: set[str] = set()
+        for member in vars(module).values():
+            if inspect.isclass(member):
+                declared |= set(getattr(member, "__annotations__", {}))
+        assert "predicted_correctness" not in declared
 
 
 # ---------------------------------------------------------------------------

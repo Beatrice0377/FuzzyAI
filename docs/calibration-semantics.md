@@ -7,7 +7,9 @@ Calibration semantics:     frozen (this document)
 CalibrationObservation:    implemented (src/probvenance/calibration.py)
 CalibrationBinding:        implemented (src/probvenance/calibration.py)
 CalibrationDataset:        implemented (src/probvenance/calibration.py)
-CalibrationProfile:        not implemented
+CalibrationProfile:        implemented (src/probvenance/calibration.py):
+                           identity/artifact foundation only; no fitting
+                           algorithm, no public fitter, no runtime application
 Evaluation cohort:         implemented (src/probvenance/calibration_evaluation.py):
                            declared evaluation source cohort, full observation
                            statuses retained, cohort fingerprint v1
@@ -53,8 +55,14 @@ implemented. The Phase 4A evaluation foundation it specified (the evaluation
 dataset contract and the winner-correctness Brier metric, in
 `src/probvenance/calibration_evaluation.py`) is now implemented as well, and
 the evaluation pipeline now commits cohort provenance: metric exclusion is
-provenance. `CalibrationProfile`, fitting, the remaining metrics, and runtime
-profile application remain unimplemented, and this document does not add any.
+provenance. The `CalibrationProfile` identity foundation is implemented in
+`src/probvenance/calibration.py`: the artifact commits its exact binding,
+ground-truth semantics identity, target identity, input-score identity, method
+identity and configuration, fitted parameters, and training dataset identity,
+and it fails closed on a concrete taxonomy contradiction or an exact binding
+mismatch. Fitting algorithms, a supported public fitter, profile registries,
+profile lookup, the remaining metrics, and runtime profile application remain
+unimplemented, and this document does not add any.
 
 This document is in part a design proposal. The deterministic data model and
 the evaluation foundation carry `[V]` VERIFIED claims in `docs/claims.md`,
@@ -1063,10 +1071,11 @@ distinguished by input-score identity:
   It compares the raw score against the derived winner-correctness label on the
   evaluated rows and is a baseline.
 - Post-calibration evaluation would evaluate `predicted_correctness` (the
-  score a future calibration profile would produce) against the same derived
-  winner-correctness label. It does not exist yet: no `CalibrationProfile`
-  exists, and the runtime keeps `predicted_correctness = None` and
-  `calibrated = False`.
+  score a fitted calibration profile would produce) against the same derived
+  winner-correctness label. It does not exist yet: although the
+  `CalibrationProfile` identity foundation exists, no fitting algorithm does,
+  so no fitted profile has ever been produced, and the runtime keeps
+  `predicted_correctness = None` and `calibrated = False`.
 
 The pre-calibration baseline must NOT be presented as calibration-quality
 evidence: no calibrator was involved in producing it, so it cannot show how

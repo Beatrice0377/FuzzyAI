@@ -2,7 +2,7 @@
 
 # Probvenance
 
-**状态：早期开发阶段（Status: early development）。** 确定性内核（deterministic core）、Bool 垂直切片（vertical slice，真实本地 Hugging Face 后端），以及 direct categorical Choice 推理（仅限 closed-set、single-label、single-token 打分标签路径）均已实现。Phase 4B winner-correctness 评估基础（evaluation cohort / dataset、Brier、exact log loss、companion diagnostics、等宽可靠性分箱、ECE-form binned absolute-gap aggregate）已实现。校准拟合（calibration fitting）、校准档案（calibration profile）、运行时校准应用（runtime calibration application）、弃权（abstention）与其他所有 Choice 策略尚未实现。
+**状态：早期开发阶段（Status: early development）。** 确定性内核（deterministic core）、Bool 垂直切片（vertical slice，真实本地 Hugging Face 后端），以及 direct categorical Choice 推理（仅限 closed-set、single-label、single-token 打分标签路径）均已实现。Phase 4B winner-correctness 评估基础（evaluation cohort / dataset、Brier、exact log loss、companion diagnostics、等宽可靠性分箱、ECE-form binned absolute-gap aggregate）已实现。`CalibrationProfile` 身份基座（identity foundation）同样已实现：档案 artifact 会提交其 binding、ground-truth 语义、target、input-score、method、fitted parameters 与训练数据集来源；遇到具体的 taxonomy 矛盾或 binding 不完全匹配时一律 fail closed。尚不存在拟合算法（fitting algorithm）、不存在受支持的公开 fitter 能产出档案、不存在运行时校准应用（runtime calibration application），且运行时能产出的每个结果其 `predicted_correctness` 仍恒为 `None`。弃权（abstention）与其他所有 Choice 策略尚未实现。
 
 Probvenance 是一个 provider-agnostic（供应商无关）的概率决策运行时（probabilistic decision runtime）。它把语言模型变成可评估（evaluable）、可校准（calibratable）、可追踪（trackable）的语义概率决策组件。
 

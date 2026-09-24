@@ -718,7 +718,54 @@ These claims are deterministic implementation claims about the evaluation
 foundation only. They are NOT claims that any model is calibrated, that any
 calibration improves anything, or that any pre-calibration baseline is
 calibration-quality evidence: no calibrator exists, no fitting has happened,
-and no `CalibrationProfile` exists.
+and no fitted `CalibrationProfile` has ever been produced. The profile
+identity/artifact foundation exists in `src/probvenance/calibration.py`, but
+nothing in the runtime or the evaluation layer creates one.
+
+### Calibration profile identity foundation (Phase 4C.1)
+
+- [V] `CalibrationProfile` identity commits the exact `CalibrationBinding`
+  identity, the exact `GroundTruthSemanticsIdentity`, the winner-correctness
+  target ID and version (`winner_correctness` v1), the selected-probability
+  input-score ID and version (`uncalibrated-selected-probability` v1), the
+  method ID and version, the method configuration, the fitted parameters, and
+  the training `CalibrationDataset` fingerprint and schema version. The binding
+  and the ground-truth semantics are composed by fingerprint plus schema
+  version only; their constituent fields are deliberately not duplicated into
+  the profile payload. Evidence:
+  `tests/test_calibration_profile.py::TestProfileIdentityDurability`,
+  `...::TestCanonicalPayloadShape`.
+
+- [V] An explicit concrete taxonomy contradiction is rejected when an internal
+  fitted profile artifact is constructed: a concrete binding taxonomy ID that
+  differs from a concrete ground-truth taxonomy ID fails closed, and the same
+  concrete taxonomy ID carrying two concrete but different versions fails
+  closed with a distinguishable message. An unknown (`None`) taxonomy on either
+  side is allowed and is never invented as equal. Evidence:
+  `tests/test_calibration_profile.py::TestTaxonomyPrecondition`.
+
+- [V] Profile exact binding matching rejects a supplied mismatched binding and
+  provides no formulation-family, model-only, task-only, taxonomy-only, or
+  nearest fallback. Evidence:
+  `tests/test_calibration_profile.py::TestRequireBindingMatch`.
+
+- [V] The calibrator input-score identity
+  (`UNCALIBRATED_SELECTED_PROBABILITY_ID` / `UNCALIBRATED_SELECTED_PROBABILITY_VERSION`)
+  is owned by the calibration foundation rather than the evaluation layer; the
+  evaluation layer imports and re-exports it under the same names, moving its
+  ownership changed no evaluation payload and no evaluation fingerprint, and
+  `probvenance.calibration` never imports `probvenance.calibration_evaluation`.
+  Evidence:
+  `tests/test_calibration_profile.py::TestPhase4BFingerprintsUnchanged`,
+  `...::TestImportDirection`.
+
+These are structural identity claims. A valid `CalibrationProfile` proves only
+that its provenance and identity are structurally coherent. It does NOT prove
+that the calibrator improves Brier or log loss, that it generalizes beyond its
+training data, that the training data is representative, or that a
+training/evaluation split is independent. No fitting algorithm exists, no
+supported public fitter produces a profile, and no result carries a
+`predicted_correctness`.
 
 ## Experimental records
 

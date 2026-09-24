@@ -95,9 +95,15 @@ Phase 4C.0 target and compatibility identity preparation is also implemented:
 identity that every winner-correctness evaluation artifact commits, and the
 taxonomy-compatibility precondition for a future profile is frozen in
 `docs/calibration-semantics.md` as design only.
-`CalibrationProfile`, fitting, the remaining metrics, profile matching, and
-runtime profile application do not exist, and `predicted_correctness` remains
-`None` for every result the runtime can produce.
+`CalibrationProfile` identity foundation is implemented: the profile artifact
+commits its exact binding, ground-truth semantics identity, winner-correctness
+target identity, selected-probability input-score identity, method
+identity/configuration, fitted parameters, and training dataset identity, and
+it fails closed on a concrete taxonomy contradiction or an exact binding
+mismatch. Fitting algorithms, profile registries, profile lookup, profile
+matching policy beyond exact binding match, the remaining metrics, and runtime
+profile application do not exist, and `predicted_correctness` remains `None`
+for every result the runtime can produce.
 
 - Evaluation harness (started: declared evaluation source cohort, metric-eligible
   dataset projection, Brier, log loss; delivered: winner-correctness companion

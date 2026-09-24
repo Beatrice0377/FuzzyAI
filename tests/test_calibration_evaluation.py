@@ -25,6 +25,7 @@ order) and the fake backend's honest ``vocab_logsumexp`` budget only covers
 three candidates.
 """
 
+import inspect
 import math
 from dataclasses import fields, replace
 from fractions import Fraction
@@ -1062,10 +1063,11 @@ class TestNoConflation:
         assert not hasattr(result, "predicted_correctness")
         assert not hasattr(result, "configuration")
 
-    def test_no_calibration_profile_exists(self):
-        import probvenance.calibration as calibration_module
+    def test_evaluation_does_not_create_a_calibration_profile(self):
+        import probvenance.calibration_evaluation as evaluation_module
 
-        assert not hasattr(calibration_module, "CalibrationProfile")
+        assert not hasattr(evaluation_module, "CalibrationProfile")
+        assert "_from_fitted_state" not in inspect.getsource(evaluation_module)
 
     def test_evaluation_does_not_mutate_observations_or_dataset(self):
         o1 = bool_observation()
