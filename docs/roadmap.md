@@ -130,13 +130,18 @@ canonical JSON serialization and identity-verified loading are implemented
 deterministic document materializes the nested binding and
 ground-truth-semantics payloads, and the loader re-verifies every nested
 identity and the restored profile fingerprint rather than trusting the
-document, with optional out-of-band expected-fingerprint pinning. Profile
-registries, profile lookup, profile matching policy beyond exact binding match,
-a profile store or cross-process loading from a store, automatic runtime
-profile selection, the remaining metrics, and automatic runtime calibration
-(deriving scores without an explicit caller-supplied profile) do not exist, and
-`predicted_correctness` remains `None` for every runtime result that no caller
-has explicitly calibrated.
+document, with optional out-of-band expected-fingerprint pinning. An exact
+content-addressed directory store is implemented (Phase 4C.6,
+`DirectoryCalibrationProfileStore`): a profile is persisted under a path derived
+only from its fingerprint schema version and exact fingerprint, and retrieval
+requires both values, restores the artifact through the identity-verified
+loader with the requested identity supplied as an independent expected pin, and
+performs no matching or fallback. Profile registries, binding-based lookup,
+profile matching policy beyond exact binding match, a signed profile
+distribution, automatic runtime profile selection, the remaining metrics, and
+automatic runtime calibration (deriving scores without an explicit
+caller-supplied profile) do not exist, and `predicted_correctness` remains
+`None` for every runtime result that no caller has explicitly calibrated.
 
 - Evaluation harness (started: declared evaluation source cohort, metric-eligible
   dataset projection, Brier, log loss; delivered: winner-correctness companion

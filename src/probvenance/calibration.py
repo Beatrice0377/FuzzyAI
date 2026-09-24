@@ -21,11 +21,13 @@ binding do not match its training data.
 
 Still NOT implemented here (out of scope): alternative calibration methods
 (temperature scaling, isotonic regression), profile registries, nearest-profile
-matching, a profile store or cross-process loading from a store, automatic
-runtime calibration, and evaluation metrics (which live in
+matching, automatic runtime calibration, and evaluation metrics (which live in
 ``probvenance.calibration_evaluation``). A versioned canonical JSON
 serialization and identity-verified loading ARE implemented here
-(:func:`serialize_calibration_profile`, :func:`load_calibration_profile`).
+(:func:`serialize_calibration_profile`, :func:`load_calibration_profile`), and
+an exact content-addressed directory store lives in
+``probvenance.calibration_store``. The store imports this module; this module
+never imports the store.
 
 Public API note: this foundation is intentionally NOT frozen as public API
 yet. Nothing from this module is exported through ``probvenance.__all__`` or
@@ -1802,6 +1804,20 @@ def _strict_json_float(text: str) -> float:
     return value
 
 
+def _abbreviate(value: Any, max_chars: int = 200) -> str:
+    """Return a bounded repr of an untrusted value for an error message.
+
+    Corrupted stored artifacts can contain arbitrarily large strings, so an
+    error message must never echo them in full. The value is rendered with
+    ``repr`` and truncated with a count of the omitted characters.
+    """
+    text = repr(value)
+    if len(text) <= max_chars:
+        return text
+    omitted = len(text) - max_chars
+    return f"{text[:max_chars]} ...<{omitted} more chars>"
+
+
 def _require_exact_keys(name: str, mapping: Any, expected: frozenset[str]) -> dict[str, Any]:
     """Require an object whose key set is exactly ``expected``.
 
@@ -1816,7 +1832,8 @@ def _require_exact_keys(name: str, mapping: Any, expected: frozenset[str]) -> di
         missing = sorted(expected - actual)
         unexpected = sorted(actual - expected)
         raise InvalidDecisionError(
-            f"{name} has an invalid key set: missing {missing}, unexpected {unexpected}"
+            f"{name} has an invalid key set: missing "
+            f"{_abbreviate(missing)}, unexpected {_abbreviate(unexpected)}"
         )
     return mapping
 
@@ -1947,6 +1964,10 @@ def load_calibration_profile(
         raise InvalidDecisionError(
             f"the serialized calibration profile is not valid JSON: {error}"
         ) from error
+    except ValueError as error:
+        raise InvalidDecisionError(
+            f"the serialized calibration profile is not valid JSON: {error}"
+        ) from error
     except RecursionError as error:
         raise InvalidDecisionError(
             "the serialized calibration profile is nested too deeply to parse as JSON"
@@ -1963,7 +1984,7 @@ def load_calibration_profile(
     if artifact_type != CALIBRATION_PROFILE_SERIALIZATION_TYPE:
         raise InvalidDecisionError(
             "the serialized calibration profile has an unsupported artifact type: "
-            f"expected {CALIBRATION_PROFILE_SERIALIZATION_TYPE!r}, got {artifact_type!r}"
+            f"expected {CALIBRATION_PROFILE_SERIALIZATION_TYPE!r}, got {_abbreviate(artifact_type)}"
         )
     serialization_version = document["serialization_version"]
     if (

@@ -44,3 +44,30 @@ class ScoringLabelError(ProbvenanceError):
 
 class VerbalizerError(ScoringLabelError):
     """A verbalizer cannot be resolved to exactly one distinct scoring token."""
+
+
+class CalibrationProfileStoreError(ProbvenanceError):
+    """A calibration profile store could not complete an operation.
+
+    This covers operational failures (the root path is not a directory, a
+    managed read or write failed) as well as the two more specific store
+    conditions below.
+    """
+
+
+class CalibrationProfileNotFoundError(CalibrationProfileStoreError):
+    """No artifact exists at the requested exact profile identity.
+
+    Absence is distinct from corruption: this is raised only when the exact
+    requested identity has no stored artifact, never when a stored artifact
+    exists but fails validation.
+    """
+
+
+class CalibrationProfileStoreIntegrityError(CalibrationProfileStoreError):
+    """A stored artifact exists at the requested identity but is invalid.
+
+    The caller supplied a valid store key, so the managed stored artifact
+    violated the store invariant: it is unreadable, malformed, not the
+    canonical serialization, or does not match the requested profile identity.
+    """

@@ -81,8 +81,12 @@ Calibration runtime:       explicit runtime-linked application implemented
 Profile serialization:     versioned canonical JSON serialization and
                            identity-verified loading implemented
                            (serialize_calibration_profile,
-                           load_calibration_profile); no filesystem or
-                           database store, no registry, no signing
+                           load_calibration_profile)
+Profile store:             exact content-addressed directory store and
+                           retrieval implemented
+                           (DirectoryCalibrationProfileStore); no registry,
+                           no binding lookup, no automatic selection, no
+                           signed distribution
 predicted_correctness:     None unless an explicit compatible
                            CalibrationProfile is applied through
                            apply_profile_to_runtime_evaluation
@@ -103,9 +107,17 @@ and it fails closed on a concrete taxonomy contradiction or an exact binding
 mismatch. One scalar fitting method
 (`fit_l2_logistic_selected_probability`) is implemented: an L2-regularized
 logistic map of the selected probability onto winner correctness. Profile
-registries, profile lookup, automatic profile selection, alternative
+registries, binding lookup, automatic profile selection, alternative
 calibration methods, and the remaining metrics remain unimplemented, and this
-document does not add any. Profile serialization IS implemented: a versioned
+document does not add any. An exact content-addressed directory store IS
+implemented (Phase 4C.6, `DirectoryCalibrationProfileStore` in
+`src/probvenance/calibration_store.py`): a profile is persisted under a path
+derived only from its fingerprint schema version and exact fingerprint, and
+retrieval requires both values, restores the artifact through the
+identity-verified loader with the requested identity supplied as an independent
+expected pin, and performs no matching or fallback. The store is not a registry
+and offers no enumeration, delete, or update operation. Profile serialization IS
+implemented: a versioned
 canonical JSON envelope materializes the nested binding and
 ground-truth-semantics identities, and the loader re-verifies every identity
 before restoring the artifact. Offline profile application
@@ -127,8 +139,9 @@ backed by tests in `tests/test_calibration.py` and
 Phase 2B.1 total-variation figures in section 1, and the `scoring_label_mass`
 observations in sections 6.2, 13.3, and 20.4) is `[E]` EXPERIMENTAL under its
 named conditions, and the portions still not implemented (alternative methods,
-profile registries and lookup, automatic selection, a profile store, and
-the remaining metrics) remain design statements without verified claims.
+profile registries and binding lookup, automatic selection, a signed profile
+distribution, and the remaining metrics) remain design statements without
+verified claims.
 
 The question it answers:
 
@@ -860,9 +873,10 @@ two datasets under one binding but with different ground-truth semantics must
 never feed one profile identity. Two profiles that differ in any component are
 different artifacts and are never interchangeable. The profile identity and
 artifact, one offline fitting method, offline profile application, explicit
-runtime-linked application, and versioned canonical JSON serialization with
-identity-verified loading are implemented; automatic profile selection,
-registries, lookup, and a profile store remain unimplemented.
+runtime-linked application, versioned canonical JSON serialization with
+identity-verified loading, and an exact content-addressed directory store are
+implemented; automatic profile selection, registries, and binding-based lookup
+remain unimplemented.
 
 ### 12.3 Matching is exact by default
 
@@ -960,9 +974,13 @@ Three provenance states are distinguished:
   restores the profile, and re-verifies both its canonical identity payload
   and its profile fingerprint before returning it. A caller may additionally
   pin an independently obtained expected profile fingerprint/version.
-- A profile store, cross-process loading from a store, a registry, and
-  automatic profile selection are NOT IMPLEMENTED. The library produces and
-  consumes a JSON string; it performs no filesystem or database I/O.
+- An exact content-addressed directory store IS IMPLEMENTED
+  (`DirectoryCalibrationProfileStore`): a profile is written under a path
+  derived only from its fingerprint schema version and exact fingerprint, and
+  retrieval requires both values and restores the artifact through the
+  identity-verified loader with the requested identity as an independent
+  expected pin. A profile registry, binding-based lookup, and automatic profile
+  selection are NOT IMPLEMENTED.
 - Cryptographic signing, MACs, certificates, and key management are NOT
   IMPLEMENTED: embedded fingerprint consistency is not authenticity.
 - Automatic runtime calibration is NOT IMPLEMENTED.
@@ -1080,9 +1098,100 @@ trusted channel may pass `expected_profile_fingerprint` /
 such a rewrite. No signing, MAC, certificate, or key management exists: a
 SHA-256 fingerprint check is not a signature.
 
-No store, registry, lookup, or automatic selection is introduced. The library
-produces and consumes a JSON string and performs no filesystem or database
-I/O; the caller persists the text however it chooses.
+This section introduces no store, registry, lookup, or automatic selection. The
+serializer produces and the loader consumes a JSON string and neither performs
+filesystem I/O; the caller persists the text however it chooses. A separate
+exact content-addressed directory store exists in
+`src/probvenance/calibration_store.py`, and it is the only component that
+performs filesystem I/O.
+
+### 12.8 Exact content-addressed profile store
+
+`DirectoryCalibrationProfileStore` (in `src/probvenance/calibration_store.py`)
+is the first supported persistent profile store. It answers exactly one
+question: given an exact profile fingerprint and fingerprint schema version,
+retrieve that exact profile artifact. It is deliberately NOT a registry: it
+answers no selection-policy question, has no enumeration API, and cannot be
+asked for candidate profiles.
+
+Disk layout (store layout version 1):
+
+```text
+<root>/
+    store-v1/
+        profile-fingerprint-v1/
+            <64-lowercase-hex-profile-fingerprint>.json
+```
+
+The path keys on the store layout version, the profile fingerprint schema
+version, and the profile fingerprint. The document itself carries the profile
+serialization version. The store layout version is independent of the profile
+fingerprint version, the serialization version, the method version, and the
+solver version; none of these are interchangeable. Retrieval is keyed by the
+profile identity (fingerprint plus fingerprint version), never by a wire
+representation, so the serialization version is not part of the lookup key.
+
+Lookup requires both values, and neither is defaulted. A malformed fingerprint
+(missing or extra length, uppercase, whitespace, or a path separator) or a
+malformed version is rejected before any filesystem path is constructed, which
+makes path traversal through the identity key impossible. An unsupported
+fingerprint schema version fails explicitly and is never reinterpreted as an
+absent identity.
+
+Absence and corruption are distinct. A valid exact identity with no stored
+artifact raises `CalibrationProfileNotFoundError`. A stored artifact that
+exists at the requested identity but is unreadable, malformed, not valid UTF-8,
+not the canonical serialization, or describes a different identity raises
+`CalibrationProfileStoreIntegrityError`. Operational failures raise
+`CalibrationProfileStoreError`. None of these are collapsed into not-found.
+
+Stored bytes are exactly `serialize_calibration_profile(profile)` encoded as
+UTF-8, with no pretty printing, newline, BOM, or metadata wrapper. `get()`
+restores the artifact only through `load_calibration_profile`, supplying the
+requested fingerprint and version as the independent expected-identity pin.
+The loader remains the single serialization verification truth source, and the
+store duplicates none of its nested binding or ground-truth verification. The
+requested store key is what makes this stronger than a standalone load: a
+different but internally self-consistent profile placed at the requested path
+is rejected, because it does not match the exact identity the caller asked for.
+Because store v1 owns a canonical persistent representation, `get()` also
+re-serializes the loaded profile and requires the stored text to equal it; a
+semantically valid but noncanonical document is an integrity failure, not a
+silent normalization. This differs from `load_calibration_profile`, which may
+accept valid noncanonical JSON: one API imports a serialized artifact, the other
+verifies an invariant of a managed store.
+
+`put()` is idempotent, not mutable. Storing a profile whose exact target path
+already holds its canonical serialization is a no-op, and no second file is
+created. If the target path exists but is invalid or describes a different
+identity, `put()` fails closed and never silently overwrites it, because
+existing corruption is evidence that the content-addressed invariant was
+violated. A new write is published through a same-directory temporary file plus
+an atomic replace, so a reader does not observe a half-written final document
+during ordinary single-writer use. If publication fails, the temporary file is
+cleaned up where possible and no supported final path contains partial content.
+There is no locking system, no database, and no index or manifest.
+
+The atomicity claim is limited to what the implementation proves: same
+filesystem final publication is atomic under the chosen replace primitive. The
+store does not claim power-loss durability on every filesystem, distributed
+transaction safety, or adversarial multi-process locking. Concurrent puts of
+the same exact profile are expected to converge on identical canonical content,
+but the store provides no general multi-writer transaction or locking protocol.
+
+The trust boundary is equally limited. Exact retrieval verifies that the stored
+artifact matches the requested profile identity through the expected-identity
+pin. It does not prove who created the profile, who placed the file in the
+directory, that the filesystem is trusted, or that SHA-256 is a digital
+signature. There is no signing, MAC, certificate, or key management, and the
+store is not claimed to be safe against a compromised filesystem or a malicious
+root administrator. Fingerprint validation prevents path traversal; the root
+directory is caller controlled and trusted.
+
+Store versions never enter runtime semantic provenance. `DecisionResult` and
+`DecisionTrace` continue to record only the profile fingerprint and fingerprint
+version. Where a profile happened to be stored is representation provenance,
+not its semantic identity.
 
 ## 13. Calibration method identity
 

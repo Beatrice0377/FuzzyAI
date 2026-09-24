@@ -44,6 +44,9 @@ from probvenance.doctrine import (
     ScoringDoctrine,
 )
 from probvenance.errors import (
+    CalibrationProfileNotFoundError,
+    CalibrationProfileStoreError,
+    CalibrationProfileStoreIntegrityError,
     FingerprintError,
     InvalidDecisionError,
     InvalidProbabilityError,
@@ -92,6 +95,9 @@ __all__ = [
     "BoolCompiler",
     "BoolDecision",
     "BoolResult",
+    "CalibrationProfileNotFoundError",
+    "CalibrationProfileStoreError",
+    "CalibrationProfileStoreIntegrityError",
     "CandidateLabelMapping",
     "CategoricalScoringDoctrine",
     "Certainty",

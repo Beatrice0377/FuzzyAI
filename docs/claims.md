@@ -854,11 +854,11 @@ exists, and derived-score application contracts exist: offline
 (`apply_profile_to_runtime_evaluation`). A result carries a
 `predicted_correctness` only when a caller explicitly applies one exact
 compatible profile; the runtime does not calibrate by default, and automatic
-profile selection, a registry or lookup, and a profile store or persistence
-layer do not exist. A profile does have a versioned canonical JSON
-serialization and an identity-verified loader, but the library performs no
-filesystem or database I/O. A fitted profile is evidence about a fitting
-problem, not about calibration quality.
+profile selection, a registry or lookup, and a signed distribution do not
+exist. A profile does have a versioned canonical JSON serialization and an
+identity-verified loader, and an exact content-addressed directory store
+persists and retrieves profiles by exact identity only. A fitted profile is
+evidence about a fitting problem, not about calibration quality.
 
 ## Experimental records
 
@@ -1208,6 +1208,32 @@ them generalises to other models, revisions, prompts, or tasks.
   attached to the recorded selected value and never recomputes the winner or
   re-runs tie-breaking. Evidence:
   `tests/test_runtime_calibration.py::TestOfflineRuntimeEquivalence`.
+
+### Exact calibration profile store (Phase 4C.6)
+
+- [V] `DirectoryCalibrationProfileStore` persists profiles under a deterministic
+  content-addressed path derived only from the profile fingerprint schema
+  version and exact profile fingerprint; retrieval requires both values and
+  performs no binding, method, or taxonomy matching and no fallback. Evidence:
+  `tests/test_calibration_store.py::TestLookupSemantics`,
+  `...::TestRoundTrip`.
+
+- [V] Stored profile documents are exactly the canonical JSON emitted by
+  `serialize_calibration_profile`, and `get()` restores them only through
+  `load_calibration_profile` with the requested profile fingerprint and version
+  supplied as the independent expected-identity pin. Evidence:
+  `tests/test_calibration_store.py::TestRoundTrip`,
+  `...::TestIntegrity`.
+
+- [V] Replacing the file at one profile identity path with a different
+  self-consistent serialized profile is rejected, because the restored artifact
+  does not match the exact identity requested by the caller. Evidence:
+  `tests/test_calibration_store.py::TestIntegrity::test_different_valid_profile_substituted_is_rejected`.
+
+- [V] Store retrieval is semantically transparent: a retrieved profile preserves
+  the same fingerprint and produces the same offline and runtime-linked
+  predicted-correctness values as the profile originally stored. Evidence:
+  `tests/test_calibration_store.py::TestSemanticEquivalence`.
 
 - [V] `predicted_winner_correctness(profile, observation)` refuses to produce a
   predicted-winner-correctness score unless the observation's exact

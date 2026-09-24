@@ -25,10 +25,15 @@ a calibrated result and a trace that mirror the profile identity. A profile also
 has a versioned canonical JSON serialization and an identity-verified loader:
 the loader reconstructs the nested binding and ground-truth-semantics
 identities and re-verifies every fingerprint rather than trusting the document.
-Automatic runtime profile selection, profile registries, lookup, and a profile
-store do not exist, and `predicted_correctness` remains `None` for every
-runtime result that no caller has explicitly calibrated. Abstention and every
-other Choice strategy are not implemented.
+An exact content-addressed directory store is implemented: it persists a profile
+under a path derived only from its fingerprint schema version and exact
+fingerprint, and retrieval requires both values, restores the artifact through
+the identity-verified loader with the requested identity as an independent
+expected pin, and performs no matching or fallback. Automatic runtime profile
+selection, profile registries, binding-based lookup, and a signed distribution
+do not exist, and `predicted_correctness` remains `None` for every runtime
+result that no caller has explicitly calibrated. Abstention and every other
+Choice strategy are not implemented.
 
 Probvenance is a provider-agnostic probabilistic decision runtime. It turns language
 models into evaluable, calibratable, trackable semantic-probability decision
