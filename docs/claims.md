@@ -632,6 +632,53 @@ has been fitted, and no calibration-quality claim is made anywhere.
     `TestWinnerReliabilityCrossArtifactProvenance`,
     `TestWinnerReliabilityIdentity`, `TestWinnerReliabilityNoConflation`,
     `TestWinnerReliabilityVersionGuards`).
+  - `[V]` The equal-width binned absolute-gap result is derived from one
+    exact `WinnerReliabilityResult` and computes the documented
+    sample-weighted absolute difference between each non-empty bin's mean
+    selected probability and empirical winner-correctness rate:
+    `evaluate_winner_binned_absolute_gap(reliability)` (aggregate id
+    `winner-correctness-equal-width-binned-absolute-gap` version 1, result
+    fingerprint version 1) never re-bins observations, never re-extracts
+    probabilities, never re-assigns bin indices, and never re-implements
+    boundary logic; it takes no `bin_count` argument because the source
+    reliability partition is accepted as truth, and it accepts only a real
+    `WinnerReliabilityResult` (`None`, a mapping, a duck-typed look-alike, a
+    `WinnerCorrectnessDiagnosticsResult`, and a `CalibrationEvaluationDataset`
+    all fail closed with `InvalidDecisionError`). Empty bins contribute zero
+    mass: they are skipped, their `null` statistics are never treated as `0`,
+    no fake observed gap is constructed, and an empty bin is not an error.
+    The value is `math.fsum` over `(count_b / count) * abs(mean_b - rate_b)`
+    for non-empty bins in fixed bin-index order, guaranteed finite and within
+    `[0, 1]`; a non-finite statistic, a negative weighted term, or an
+    out-of-range aggregate fails closed with `InvalidDecisionError`. The
+    artifact commits the source reliability fingerprint and payload schema
+    version, the reliability and binning identities with versions and the bin
+    configuration, the evaluation dataset and source cohort fingerprints with
+    their payload versions, `source_count`, the evaluated `count`, the three
+    exclusion counts, the target, the input-score identity, and the value; the
+    only supported construction path is
+    `evaluate_winner_binned_absolute_gap(reliability)` (direct construction
+    and `dataclasses.replace(result)` raise `InvalidDecisionError`;
+    `dataclasses.replace(result, value=...)` is rejected by `dataclasses`
+    itself with a `ValueError`). Identity regressions hold: the same
+    reliability gives a deterministic identical fingerprint; the same numeric
+    value from different reliability artifacts gives different aggregate
+    fingerprints (numeric equality is not provenance identity); `B = 5` versus
+    `B = 10` on the same dataset give different reliability and aggregate
+    fingerprints; and identical bin numerics from cohorts with different
+    exclusions may match numerically while differing in artifact identity with
+    `source_count` and the exclusion counts preserved. Evidence:
+    `tests/test_calibration_evaluation.py` (`TestWinnerBinnedAbsoluteGapFormula`,
+    `TestWinnerBinnedAbsoluteGapIdentity`,
+    `TestWinnerBinnedAbsoluteGapConstruction`,
+    `TestWinnerBinnedAbsoluteGapNoConflation`,
+    `TestWinnerBinnedAbsoluteGapVersionGuards`). This is NOT a claim that the
+    raw selected semantic probability is calibrated, and NOT a claim that the
+    number establishes model calibration quality: the formula equals the
+    conventional equal-width ECE estimator form, but the canonical semantics
+    are the binned absolute-gap diagnostic, the absolute value carries no
+    direction, and the ordinary calibration-error interpretation is not
+    granted.
 
 These claims are deterministic implementation claims about the evaluation
 foundation only. They are NOT claims that any model is calibrated, that any

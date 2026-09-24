@@ -102,8 +102,16 @@ runtime profile application do not exist, and `predicted_correctness` remains
   (`evaluate_uncalibrated_winner_reliability`, binning id `equal-width` v1,
   reliability id `winner-reliability-curve` v1, result fingerprint v1) with
   empty-bin retention, per-bin membership provenance, and row-order
-  independence).
-- Expected calibration error (ECE).
+  independence; delivered: the derived equal-width binned absolute-gap
+  aggregate over that summary (`evaluate_winner_binned_absolute_gap`,
+  aggregate id `winner-correctness-equal-width-binned-absolute-gap` v1, result
+  fingerprint v1), the ECE estimator form frozen as a binned absolute-gap
+  diagnostic).
+- Expected calibration error (ECE): the equal-width ECE estimator form is
+  delivered as the derived binned absolute-gap diagnostic above, but ECE is
+  NOT completely solved: equal-mass binning, the post-calibration
+  correctness-probability interpretation, and statistical uncertainty
+  quantification remain unimplemented.
 - Equal-mass (quantile) reliability binning (needs its own tie,
   duplicate-score, and deterministic-partition contract).
 - Reliability plotting (structured summary only; no chart artifacts).

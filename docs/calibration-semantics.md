@@ -30,8 +30,17 @@ Reliability summary:       implemented (src/probvenance/calibration_evaluation.p
                             pre-calibration equal-width winner-correctness
                             reliability summary (binning id equal-width v1,
                             reliability id winner-reliability-curve v1, result
-                            fingerprint v1); plotting, equal-mass binning, and
-                            ECE remain unimplemented
+                            fingerprint v1); plotting and equal-mass binning
+                            remain unimplemented
+Binned absolute-gap
+aggregate:                 implemented (src/probvenance/calibration_evaluation.py):
+                            derived ECE-form aggregate over one exact
+                            WinnerReliabilityResult (aggregate id
+                            winner-correctness-equal-width-binned-absolute-gap
+                            v1, result fingerprint v1); it is a binned
+                            absolute-gap diagnostic, NOT a calibration-error
+                            claim; the ordinary calibration-error
+                            interpretation remains ungranted
 Fitting algorithms:        not implemented
 Calibration runtime:       not implemented
 predicted_correctness:     None for every result the runtime can currently produce
@@ -1113,7 +1122,9 @@ correctness rate. A single global mean difference cannot describe calibration:
 two populations can share the same mean and the same rate while having
 completely different conditional reliability structure. A structured
 equal-width reliability summary (section 14.5) is now implemented for that
-question; ECE (sections 14.3 to 14.4) remains unimplemented.
+question, and the ECE estimator FORM is now implemented as a derived binned
+absolute-gap diagnostic over that summary (section 14.5.1); the ordinary
+calibration-error interpretation of that number remains ungranted.
 
 Together the three diagnostics help interpret a Brier value on the evaluated
 rows: the rate says how often the winner was correct, the mean selected
@@ -1158,6 +1169,12 @@ ECE, bins = 15, equal-mass
 
 are different metric configurations and must not be compared as if they were one
 number. Any reported ECE carries its configuration.
+
+The equal-width ECE estimator FORM is now implemented, but only as a derived
+binned absolute-gap diagnostic over the reliability summary (section 14.5.1).
+The formula is the estimator form; the granted semantics are narrower than the
+name "ECE" suggests, and the ordinary calibration-error interpretation is not
+granted by this implementation.
 
 ### 14.5 Reliability curve
 
@@ -1204,6 +1221,74 @@ A reliability summary is NOT ECE. It reports per-region descriptions; it
 computes no weighted gap aggregate, stores no per-bin gap or
 calibration-error field, and derives no ECE number in any form. ECE needs its
 own metric identity, version, and configuration contract.
+
+#### 14.5.1 Binned absolute-gap aggregate (ECE-form, derived)
+
+A derived aggregate over one exact `WinnerReliabilityResult` IS implemented
+(`src/probvenance/calibration_evaluation.py`): the artifact
+`WinnerBinnedAbsoluteGapResult`, built only by
+`evaluate_winner_binned_absolute_gap(reliability)`, with aggregate id
+`winner-correctness-equal-width-binned-absolute-gap` version 1 and result
+fingerprint version 1. The pipeline order is strictly linear, never two
+parallel derivations from the dataset:
+
+```text
+CalibrationEvaluationCohort
+  -> CalibrationEvaluationDataset
+    -> WinnerReliabilityResult
+      -> WinnerBinnedAbsoluteGapResult
+```
+
+The aggregate never re-bins observations, never re-extracts probabilities,
+never re-assigns bin indices, and never re-implements boundary logic: the
+source reliability summary is the only binning truth source, and the
+evaluator takes no `bin_count` argument because the source reliability
+partition is accepted as truth. For each non-empty bin `b` of the source
+summary, in fixed bin-index order:
+
+```text
+absolute_gap_b   = abs(mean_selected_probability_b
+                       - empirical_correctness_rate_b)
+weighted_term_b  = (count_b / count) * absolute_gap_b
+value            = math.fsum(weighted_term_b for non-empty bins)
+```
+
+This is mathematically the conventional equal-width ECE estimator form,
+frozen as the sample-weighted absolute discrepancy between raw selected-score
+bin means and empirical winner-correctness rates. Empty bins contribute zero
+mass: they are skipped, their `null` statistics are never treated as `0`, no
+fake observed gap is constructed, and the presence of an empty bin is not an
+error. The value is guaranteed finite and within `[0, 1]`; a non-finite
+statistic, a negative weighted term, or an out-of-range aggregate means the
+upstream reliability invariant is broken and fails closed with
+`InvalidDecisionError`.
+
+The artifact commits the source reliability fingerprint and payload schema
+version, the reliability and binning identities with versions and the bin
+configuration, the evaluation dataset and source cohort fingerprints with
+their payload versions, `source_count`, the evaluated `count`, the three
+exclusion counts, the target, the input-score identity, and the value. It
+stores no per-bin gaps, no largest gap, no worst bin, no direction, and no
+overconfidence or underconfidence counts. Two reliability artifacts that
+happen to produce the same numeric value carry different reliability
+fingerprints and therefore different aggregate fingerprints: numeric equality
+is not provenance identity. Different bin configurations (`B = 5` versus
+`B = 10`) produce different reliability and aggregate fingerprints, because
+ECE-form estimators depend on bin configuration.
+
+The interpretation boundary is the point of the naming. The same formula does
+NOT equal the same semantic claim: the ordinary calibration-error
+interpretation of an ECE number requires interpreting the score as a
+probability forecast of `Y_correct`, and this round does not grant that. The
+input is the raw selected semantic probability, not `predicted_correctness`,
+not a confidence, and not a calibrated probability. The absolute value
+carries NO direction, so no overconfidence or underconfidence inference is
+possible from it. The reliability summary remains the primary bin evidence;
+the aggregate discards substantial information (all per-bin structure) into
+one number, and it inherits every caveat of section 14.3: different bin
+configurations are non-comparable, sample-size sensitivity remains, and
+equal-mass binning remains unimplemented. This is not a calibration-quality
+claim about any model.
 
 The interpretation stays pre-calibration. The x-axis score is the
 UNCALIBRATED selected semantic probability, not `predicted_correctness`, not

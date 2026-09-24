@@ -64,6 +64,9 @@ __all__ = [
     "MEAN_SELECTED_PROBABILITY_VERSION",
     "UNCALIBRATED_SELECTED_PROBABILITY_ID",
     "UNCALIBRATED_SELECTED_PROBABILITY_VERSION",
+    "WINNER_BINNED_ABSOLUTE_GAP_ID",
+    "WINNER_BINNED_ABSOLUTE_GAP_RESULT_FINGERPRINT_VERSION",
+    "WINNER_BINNED_ABSOLUTE_GAP_VERSION",
     "WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION",
     "WINNER_RELIABILITY_CURVE_ID",
     "WINNER_RELIABILITY_CURVE_VERSION",
@@ -74,12 +77,14 @@ __all__ = [
     "EvaluationSplitRole",
     "LogLossEvaluationResult",
     "ReliabilityBinSummary",
+    "WinnerBinnedAbsoluteGapResult",
     "WinnerCorrectnessDiagnosticsResult",
     "WinnerReliabilityResult",
     "evaluate_uncalibrated_winner_brier",
     "evaluate_uncalibrated_winner_diagnostics",
     "evaluate_uncalibrated_winner_log_loss",
     "evaluate_uncalibrated_winner_reliability",
+    "evaluate_winner_binned_absolute_gap",
 ]
 
 # ---------------------------------------------------------------------------
@@ -177,6 +182,26 @@ WINNER_RELIABILITY_CURVE_VERSION = 1
 WINNER_RELIABILITY_RESULT_FINGERPRINT_VERSION = 1
 
 # ---------------------------------------------------------------------------
+# Binned absolute-gap aggregate identity (ECE-form, derived consumer)
+# ---------------------------------------------------------------------------
+
+#: The derived-aggregate semantic identity: a sample-weighted absolute
+#: discrepancy between raw selected-score bin means and empirical
+#: winner-correctness rates, computed over the bins of one exact
+#: :class:`WinnerReliabilityResult`. Its formula equals the conventional
+#: equal-width ECE estimator form, but the canonical semantics are the binned
+#: absolute-gap diagnostic: this is NOT a calibration-error claim, NOT "model
+#: ECE", and NOT evidence that the raw selected semantic probability is
+#: calibrated.
+WINNER_BINNED_ABSOLUTE_GAP_ID = "winner-correctness-equal-width-binned-absolute-gap"
+WINNER_BINNED_ABSOLUTE_GAP_VERSION = 1
+
+#: The canonical-payload schema version of the binned absolute-gap result
+#: artifact. Deliberately distinct from the aggregate semantic version and
+#: from every upstream identity version.
+WINNER_BINNED_ABSOLUTE_GAP_RESULT_FINGERPRINT_VERSION = 1
+
+# ---------------------------------------------------------------------------
 # Construction tokens for the supported-path-only artifacts
 # ---------------------------------------------------------------------------
 
@@ -186,6 +211,7 @@ _BRIER_RESULT_CONSTRUCTION_TOKEN = object()
 _LOG_LOSS_RESULT_CONSTRUCTION_TOKEN = object()
 _DIAGNOSTICS_RESULT_CONSTRUCTION_TOKEN = object()
 _RELIABILITY_RESULT_CONSTRUCTION_TOKEN = object()
+_BINNED_ABSOLUTE_GAP_RESULT_CONSTRUCTION_TOKEN = object()
 
 _BOOL_TRUE_NAME = "true"
 _BOOL_FALSE_NAME = "false"
@@ -1660,4 +1686,257 @@ def evaluate_uncalibrated_winner_reliability(
         dataset,
         bin_count=bin_count,
         _construction_token=_RELIABILITY_RESULT_CONSTRUCTION_TOKEN,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class WinnerBinnedAbsoluteGapResult:
+    """Derived aggregate over one exact :class:`WinnerReliabilityResult`.
+
+    For every NON-EMPTY bin of the source reliability summary the aggregate
+    computes ``abs(bin.mean_selected_probability -
+    bin.empirical_correctness_rate)`` and combines the per-bin gaps with the
+    sample weights ``bin.count / reliability.count`` via ``math.fsum`` in
+    fixed bin-index order. The formula equals the conventional equal-width
+    ECE estimator form, but the canonical semantics are the binned
+    absolute-gap diagnostic: the value is the sample-weighted absolute
+    discrepancy between raw selected-score bin means and empirical
+    winner-correctness rates. It is NOT a calibration-error claim, NOT "model
+    ECE", and NOT evidence that the raw selected semantic probability is
+    calibrated. The absolute value carries no direction, so no
+    overconfidence or underconfidence inference is possible.
+
+    The aggregate never re-bins observations, never re-extracts
+    probabilities, never re-assigns bin indices, and never re-implements the
+    boundary logic: the source reliability summary is the only binning truth
+    source. Empty bins contribute zero mass (they are skipped; ``None`` bin
+    statistics are never treated as ``0`` and no fake observed gap is
+    constructed). No per-bin gaps, largest gap, worst bin, direction, or
+    over/underconfidence counts are stored.
+    """
+
+    aggregate_id: str = field(init=False, repr=False)
+    aggregate_version: int = field(init=False, repr=False)
+    target: str = field(init=False, repr=False)
+    input_score_id: str = field(init=False, repr=False)
+    input_score_version: int = field(init=False, repr=False)
+    reliability_fingerprint: str = field(init=False, repr=False)
+    reliability_fingerprint_version: int = field(init=False, repr=False)
+    reliability_id: str = field(init=False, repr=False)
+    reliability_version: int = field(init=False, repr=False)
+    binning_id: str = field(init=False, repr=False)
+    binning_version: int = field(init=False, repr=False)
+    bin_count: int = field(init=False, repr=False)
+    evaluation_dataset_fingerprint: str = field(init=False, repr=False)
+    evaluation_dataset_fingerprint_version: int = field(init=False, repr=False)
+    source_cohort_fingerprint: str = field(init=False, repr=False)
+    source_cohort_fingerprint_version: int = field(init=False, repr=False)
+    source_count: int = field(init=False, repr=False)
+    count: int = field(init=False, repr=False)
+    taxonomy_miss_count: int = field(init=False, repr=False)
+    unresolved_count: int = field(init=False, repr=False)
+    unadjudicated_resolved_count: int = field(init=False, repr=False)
+    value: float = field(init=False, repr=False)
+
+    def __init__(
+        self,
+        reliability: WinnerReliabilityResult | None = None,
+        *,
+        _construction_token: object = None,
+    ) -> None:
+        if _construction_token is not _BINNED_ABSOLUTE_GAP_RESULT_CONSTRUCTION_TOKEN:
+            raise InvalidDecisionError(
+                "WinnerBinnedAbsoluteGapResult cannot be constructed directly "
+                "or with dataclasses.replace; use "
+                "evaluate_winner_binned_absolute_gap(reliability), the only "
+                "supported construction path"
+            )
+        if not isinstance(reliability, WinnerReliabilityResult):
+            raise InvalidDecisionError(
+                "the supported WinnerBinnedAbsoluteGapResult construction path "
+                "requires a WinnerReliabilityResult, got "
+                f"{type(reliability).__name__}"
+            )
+        total = reliability.count
+        weighted_terms: list[float] = []
+        for bin_summary in reliability.bins:
+            if bin_summary.count == 0:
+                continue
+            mean_score = bin_summary.mean_selected_probability
+            observed_rate = bin_summary.empirical_correctness_rate
+            if mean_score is None or observed_rate is None:
+                raise InvalidDecisionError(
+                    "the source reliability summary reports a non-empty bin "
+                    f"(index {bin_summary.index}) with missing statistics; the "
+                    "upstream reliability invariant is broken and the binned "
+                    "absolute-gap aggregate cannot be computed"
+                )
+            absolute_gap = abs(mean_score - observed_rate)
+            weighted_term = bin_summary.count / total * absolute_gap
+            if not math.isfinite(absolute_gap) or not math.isfinite(weighted_term):
+                raise InvalidDecisionError(
+                    "the source reliability summary produced a non-finite bin "
+                    f"statistic (index {bin_summary.index}); the upstream "
+                    "reliability invariant is broken and the binned "
+                    "absolute-gap aggregate cannot be computed"
+                )
+            if weighted_term < 0.0:
+                raise InvalidDecisionError(
+                    "the source reliability summary produced a negative "
+                    f"weighted term (index {bin_summary.index}); the upstream "
+                    "reliability invariant is broken and the binned "
+                    "absolute-gap aggregate cannot be computed"
+                )
+            weighted_terms.append(weighted_term)
+        value = math.fsum(weighted_terms)
+        if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+            raise InvalidDecisionError(
+                "the binned absolute-gap aggregate is not a finite value in "
+                f"[0, 1] (got {value!r}); the upstream reliability invariant "
+                "is broken and the aggregate cannot be computed"
+            )
+        object.__setattr__(self, "aggregate_id", WINNER_BINNED_ABSOLUTE_GAP_ID)
+        object.__setattr__(self, "aggregate_version", WINNER_BINNED_ABSOLUTE_GAP_VERSION)
+        object.__setattr__(self, "target", reliability.target)
+        object.__setattr__(self, "input_score_id", reliability.input_score_id)
+        object.__setattr__(self, "input_score_version", reliability.input_score_version)
+        object.__setattr__(self, "reliability_fingerprint", reliability.fingerprint)
+        object.__setattr__(
+            self,
+            "reliability_fingerprint_version",
+            WINNER_RELIABILITY_RESULT_FINGERPRINT_VERSION,
+        )
+        object.__setattr__(self, "reliability_id", reliability.reliability_id)
+        object.__setattr__(self, "reliability_version", reliability.reliability_version)
+        object.__setattr__(self, "binning_id", reliability.binning_id)
+        object.__setattr__(self, "binning_version", reliability.binning_version)
+        object.__setattr__(self, "bin_count", reliability.bin_count)
+        object.__setattr__(
+            self,
+            "evaluation_dataset_fingerprint",
+            reliability.evaluation_dataset_fingerprint,
+        )
+        object.__setattr__(
+            self,
+            "evaluation_dataset_fingerprint_version",
+            reliability.evaluation_dataset_fingerprint_version,
+        )
+        object.__setattr__(self, "source_cohort_fingerprint", reliability.source_cohort_fingerprint)
+        object.__setattr__(
+            self,
+            "source_cohort_fingerprint_version",
+            reliability.source_cohort_fingerprint_version,
+        )
+        object.__setattr__(self, "source_count", reliability.source_count)
+        object.__setattr__(self, "count", reliability.count)
+        object.__setattr__(self, "taxonomy_miss_count", reliability.taxonomy_miss_count)
+        object.__setattr__(self, "unresolved_count", reliability.unresolved_count)
+        object.__setattr__(
+            self, "unadjudicated_resolved_count", reliability.unadjudicated_resolved_count
+        )
+        object.__setattr__(self, "value", value)
+
+    def canonical_payload(self) -> dict[str, JSONValue]:
+        """Return the exact payload the fingerprint hashes.
+
+        Commits the aggregate identity, the input-score identity, the source
+        reliability identity with its fingerprint and payload schema version,
+        the binning identity with its semantic version and configuration, the
+        evaluation dataset identity, the source cohort identity, the explicit
+        exclusion accounting, and the aggregate value. Every nested object is
+        generated fresh here; no caller-owned mapping is stored or emitted,
+        and no NaN or infinity is ever serialized.
+        """
+        return {
+            "v": WINNER_BINNED_ABSOLUTE_GAP_RESULT_FINGERPRINT_VERSION,
+            "aggregate_id": self.aggregate_id,
+            "aggregate_version": self.aggregate_version,
+            "target": self.target,
+            "input_score_id": self.input_score_id,
+            "input_score_version": self.input_score_version,
+            "reliability_fingerprint": self.reliability_fingerprint,
+            "reliability_fingerprint_version": self.reliability_fingerprint_version,
+            "reliability": {
+                "reliability_id": self.reliability_id,
+                "reliability_version": self.reliability_version,
+            },
+            "binning": {
+                "binning_id": self.binning_id,
+                "binning_version": self.binning_version,
+                "bin_count": self.bin_count,
+            },
+            "evaluation_dataset_fingerprint": self.evaluation_dataset_fingerprint,
+            "evaluation_dataset_fingerprint_version": (self.evaluation_dataset_fingerprint_version),
+            "source_cohort_fingerprint": self.source_cohort_fingerprint,
+            "source_cohort_fingerprint_version": self.source_cohort_fingerprint_version,
+            "source_count": self.source_count,
+            "count": self.count,
+            "exclusions": {
+                "taxonomy_miss_count": self.taxonomy_miss_count,
+                "unresolved_count": self.unresolved_count,
+                "unadjudicated_resolved_count": self.unadjudicated_resolved_count,
+            },
+            "value": self.value,
+        }
+
+    @property
+    def fingerprint(self) -> str:
+        """Stable identity of the aggregate artifact.
+
+        The hash of :meth:`canonical_payload`, deterministic for the object
+        lifetime. Two reliability artifacts that happen to produce the same
+        numeric value carry different reliability fingerprints and therefore
+        different aggregate fingerprints: numeric equality is not provenance
+        identity.
+        """
+        return fingerprint(self.canonical_payload())
+
+
+def evaluate_winner_binned_absolute_gap(
+    reliability: WinnerReliabilityResult,
+) -> WinnerBinnedAbsoluteGapResult:
+    """Compute the binned absolute-gap aggregate over a reliability summary.
+
+    The single supported input is an exact :class:`WinnerReliabilityResult`
+    built by :func:`evaluate_uncalibrated_winner_reliability`; the source
+    reliability summary already fixes the partition, so this evaluator takes
+    no ``bin_count`` argument and accepts the reliability partition as truth.
+    Anything else (``None``, a mapping, a duck-typed look-alike, a
+    :class:`WinnerCorrectnessDiagnosticsResult`, a
+    :class:`CalibrationEvaluationDataset`) fails closed with
+    :class:`InvalidDecisionError`.
+
+    For each non-empty bin ``b`` (``count > 0``) of the source summary, in
+    fixed bin-index order:
+
+    ```text
+    absolute_gap_b = abs(mean_selected_probability_b
+                         - empirical_correctness_rate_b)
+    weighted_term_b = (count_b / count) * absolute_gap_b
+    value = math.fsum(weighted_term_b for non-empty bins)
+    ```
+
+    This is mathematically the conventional equal-width ECE estimator form,
+    frozen here as the sample-weighted absolute discrepancy between raw
+    selected-score bin means and empirical winner-correctness rates. Empty
+    bins contribute zero mass: they are skipped, their ``None`` statistics
+    are never treated as ``0``, and no fake observed gap is constructed; the
+    presence of an empty bin is not an error. A non-finite statistic, a
+    negative weighted term, or an out-of-range aggregate means the upstream
+    reliability invariant is broken and fails closed with
+    :class:`InvalidDecisionError`.
+
+    The interpretation stays pre-calibration and directional claims stay
+    impossible: the absolute value carries no direction, so no
+    overconfidence or underconfidence inference can be drawn, and the number
+    is not a calibration-quality claim about the model.
+
+    This is a read-only offline derivation: it does not mutate the source
+    reliability summary, the dataset, or any observation, does not set
+    ``calibrated`` or ``predicted_correctness`` anywhere, and does not
+    create a :class:`~probvenance.calibration.CalibrationProfile`.
+    """
+    return WinnerBinnedAbsoluteGapResult(
+        reliability,
+        _construction_token=_BINNED_ABSOLUTE_GAP_RESULT_CONSTRUCTION_TOKEN,
     )

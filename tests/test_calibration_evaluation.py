@@ -80,6 +80,9 @@ from probvenance.calibration_evaluation import (
     MEAN_SELECTED_PROBABILITY_VERSION,
     UNCALIBRATED_SELECTED_PROBABILITY_ID,
     UNCALIBRATED_SELECTED_PROBABILITY_VERSION,
+    WINNER_BINNED_ABSOLUTE_GAP_ID,
+    WINNER_BINNED_ABSOLUTE_GAP_RESULT_FINGERPRINT_VERSION,
+    WINNER_BINNED_ABSOLUTE_GAP_VERSION,
     WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION,
     WINNER_RELIABILITY_CURVE_ID,
     WINNER_RELIABILITY_CURVE_VERSION,
@@ -90,6 +93,7 @@ from probvenance.calibration_evaluation import (
     EvaluationSplitRole,
     LogLossEvaluationResult,
     ReliabilityBinSummary,
+    WinnerBinnedAbsoluteGapResult,
     WinnerCorrectnessDiagnosticsResult,
     WinnerReliabilityResult,
     _binary_log_loss_term,
@@ -97,6 +101,7 @@ from probvenance.calibration_evaluation import (
     evaluate_uncalibrated_winner_diagnostics,
     evaluate_uncalibrated_winner_log_loss,
     evaluate_uncalibrated_winner_reliability,
+    evaluate_winner_binned_absolute_gap,
 )
 from probvenance.fingerprint import fingerprint
 
@@ -2218,8 +2223,11 @@ class TestWinnerReliabilityEmptyBins:
             evaluation_dataset(observations), bin_count=4
         )
         payload = result.canonical_payload()
+        bins = payload["bins"]
+        assert isinstance(bins, list)
         for index in (1, 2):
-            entry = payload["bins"][index]
+            entry = bins[index]
+            assert isinstance(entry, dict)
             assert entry["mean_selected_probability"] is None
             assert entry["empirical_correctness_rate"] is None
             assert entry["observation_fingerprints"] == []
@@ -2258,14 +2266,14 @@ class TestWinnerReliabilityGlobalAlignment:
         assert sum(bin.correct_count for bin in reliability.bins) / reliability.count == (
             pytest.approx(diagnostics.empirical_correctness_rate)
         )
-        weighted_mean = (
-            math.fsum(
-                bin.mean_selected_probability * bin.count
-                for bin in reliability.bins
-                if bin.count > 0
-            )
-            / reliability.count
-        )
+        weighted_total = 0.0
+        for bin_summary in reliability.bins:
+            if bin_summary.count == 0:
+                continue
+            mean = bin_summary.mean_selected_probability
+            assert mean is not None
+            weighted_total += mean * bin_summary.count
+        weighted_mean = weighted_total / reliability.count
         assert weighted_mean == pytest.approx(diagnostics.mean_selected_probability)
 
 
@@ -2556,3 +2564,399 @@ class TestWinnerReliabilityVersionGuards:
         assert MEAN_SELECTED_PROBABILITY_VERSION == 1
         assert EMPIRICAL_CONSTANT_BRIER_REFERENCE_VERSION == 1
         assert UNCALIBRATED_SELECTED_PROBABILITY_VERSION == 1
+
+
+# ---------------------------------------------------------------------------
+# Binned absolute-gap aggregate (ECE-form, derived from the reliability
+# summary)
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerBinnedAbsoluteGapFormula:
+    def test_equal_occupancy_hand_calculation(self):
+        dataset = evaluation_dataset(
+            [
+                _reliability_observation(0.10, False),
+                _reliability_observation(0.40, True),
+                _reliability_observation(0.60, True),
+                _reliability_observation(0.90, False),
+            ]
+        )
+        reliability = evaluate_uncalibrated_winner_reliability(dataset, bin_count=2)
+        bin0, bin1 = reliability.bins
+        assert (bin0.count, bin0.correct_count) == (2, 1)
+        assert bin0.mean_selected_probability == pytest.approx(0.25)
+        assert bin0.empirical_correctness_rate == pytest.approx(0.5)
+        assert (bin1.count, bin1.correct_count) == (2, 1)
+        assert bin1.mean_selected_probability == pytest.approx(0.75)
+        assert bin1.empirical_correctness_rate == pytest.approx(0.5)
+        result = evaluate_winner_binned_absolute_gap(reliability)
+        assert result.value == pytest.approx(0.25)
+
+    def test_unequal_occupancy_is_sample_weighted_not_mean_of_gaps(self):
+        dataset = evaluation_dataset(
+            [
+                _reliability_observation(0.10, False),
+                _reliability_observation(0.60, True),
+                _reliability_observation(0.80, False),
+                _reliability_observation(1.00, True),
+            ]
+        )
+        reliability = evaluate_uncalibrated_winner_reliability(dataset, bin_count=2)
+        bin0, bin1 = reliability.bins
+        assert (bin0.count, bin0.correct_count) == (1, 0)
+        assert bin0.mean_selected_probability == pytest.approx(0.10)
+        assert bin0.empirical_correctness_rate == pytest.approx(0.0)
+        assert (bin1.count, bin1.correct_count) == (3, 2)
+        assert bin1.mean_selected_probability == pytest.approx(0.80)
+        assert bin1.empirical_correctness_rate == pytest.approx(2 / 3)
+        result = evaluate_winner_binned_absolute_gap(reliability)
+        expected = (1 / 4) * 0.10 + (3 / 4) * abs(0.80 - 2 / 3)
+        assert result.value == pytest.approx(expected)
+        assert result.value != pytest.approx((0.10 + abs(0.80 - 2 / 3)) / 2)
+
+    def test_empty_bin_contributes_zero_weight_and_no_fabricated_statistic(self):
+        dataset = evaluation_dataset(
+            [
+                _reliability_observation(0.10, True),
+                _reliability_observation(0.20, False),
+            ]
+        )
+        reliability = evaluate_uncalibrated_winner_reliability(dataset, bin_count=4)
+        empty_bins = [bin_summary for bin_summary in reliability.bins if bin_summary.count == 0]
+        assert len(empty_bins) == 3
+        for bin_summary in empty_bins:
+            assert bin_summary.mean_selected_probability is None
+            assert bin_summary.empirical_correctness_rate is None
+        result = evaluate_winner_binned_absolute_gap(reliability)
+        diagnostics = evaluate_uncalibrated_winner_diagnostics(dataset)
+        assert result.value == pytest.approx(
+            abs(diagnostics.mean_selected_probability - diagnostics.empirical_correctness_rate)
+        )
+        assert 0.0 <= result.value <= 1.0
+
+    def test_one_bin_coherence_with_diagnostics(self):
+        dataset = evaluation_dataset(
+            [
+                _reliability_observation(0.2, True),
+                _reliability_observation(0.5, False),
+                _reliability_observation(0.9, True),
+            ]
+        )
+        reliability = evaluate_uncalibrated_winner_reliability(dataset, bin_count=1)
+        diag = evaluate_uncalibrated_winner_diagnostics(dataset)
+        result = evaluate_winner_binned_absolute_gap(reliability)
+        assert result.value == pytest.approx(
+            abs(diag.mean_selected_probability - diag.empirical_correctness_rate)
+        )
+
+    def test_multi_bin_counterexample_global_gap_zero_binned_positive(self):
+        observations = [
+            _reliability_observation(0.0, False),
+            _reliability_observation(0.1, True),
+            _reliability_observation(0.2, False),
+            _reliability_observation(0.3, True),
+            _reliability_observation(0.4, False),
+            _reliability_observation(0.5, True),
+            _reliability_observation(0.7, True),
+            _reliability_observation(0.8, True),
+            _reliability_observation(1.0, False),
+            _reliability_observation(1.0, False),
+        ]
+        dataset = evaluation_dataset(observations)
+        reliability = evaluate_uncalibrated_winner_reliability(dataset, bin_count=2)
+        bin0, bin1 = reliability.bins
+        assert bin0.count == 5 and bin0.correct_count == 2
+        assert bin0.mean_selected_probability == pytest.approx(0.2)
+        assert bin0.empirical_correctness_rate == pytest.approx(0.4)
+        assert bin1.count == 5 and bin1.correct_count == 3
+        assert bin1.mean_selected_probability == pytest.approx(0.8)
+        assert bin1.empirical_correctness_rate == pytest.approx(0.6)
+        diag = evaluate_uncalibrated_winner_diagnostics(dataset)
+        global_gap = abs(diag.mean_selected_probability - diag.empirical_correctness_rate)
+        assert global_gap == pytest.approx(0.0)
+        result = evaluate_winner_binned_absolute_gap(reliability)
+        assert result.value == pytest.approx(0.5 * 0.2 + 0.5 * 0.2)
+        assert result.value > 0.0
+
+    def test_value_recomputes_from_reliability_bins_not_dataset(self):
+        dataset = evaluation_dataset(
+            [
+                _reliability_observation(0.05, True),
+                _reliability_observation(0.35, False),
+                _reliability_observation(0.55, True),
+                _reliability_observation(0.95, False),
+            ]
+        )
+        reliability = evaluate_uncalibrated_winner_reliability(dataset, bin_count=2)
+        bin0, bin1 = reliability.bins
+        assert bin0.count == 2
+        assert bin0.mean_selected_probability == pytest.approx(0.20)
+        assert bin0.empirical_correctness_rate == pytest.approx(0.50)
+        assert bin1.count == 2
+        assert bin1.mean_selected_probability == pytest.approx(0.75)
+        assert bin1.empirical_correctness_rate == pytest.approx(0.50)
+        result = evaluate_winner_binned_absolute_gap(reliability)
+        assert result.value == pytest.approx(0.5 * 0.30 + 0.5 * 0.25)
+        # Proves the aggregate reads bins, not observations.
+        object.__setattr__(bin0, "mean_selected_probability", 0.70)
+        perturbed = evaluate_winner_binned_absolute_gap(reliability)
+        assert perturbed.value == pytest.approx(0.5 * 0.20 + 0.5 * 0.25)
+
+    def test_value_is_finite_within_unit_range(self):
+        dataset = evaluation_dataset(
+            [
+                _reliability_observation(0.1, True),
+                _reliability_observation(0.9, False),
+            ]
+        )
+        result = evaluate_winner_binned_absolute_gap(
+            evaluate_uncalibrated_winner_reliability(dataset, bin_count=3)
+        )
+        assert math.isfinite(result.value)
+        assert 0.0 <= result.value <= 1.0
+
+    def test_endpoint_populations_stay_finite_within_unit_range(self):
+        all_correct = evaluation_dataset(
+            [_reliability_observation(1.0, True), _reliability_observation(1.0, True)]
+        )
+        all_wrong = evaluation_dataset(
+            [_reliability_observation(0.0, False), _reliability_observation(0.0, False)]
+        )
+        for dataset in (all_correct, all_wrong):
+            for bin_count in (1, 5):
+                result = evaluate_winner_binned_absolute_gap(
+                    evaluate_uncalibrated_winner_reliability(dataset, bin_count=bin_count)
+                )
+                assert math.isfinite(result.value)
+                assert 0.0 <= result.value <= 1.0
+
+
+class TestWinnerBinnedAbsoluteGapIdentity:
+    def test_same_reliability_gives_deterministic_result(self):
+        dataset = evaluation_dataset(
+            [
+                _reliability_observation(0.2, True),
+                _reliability_observation(0.8, False),
+            ]
+        )
+        reliability = evaluate_uncalibrated_winner_reliability(dataset, bin_count=3)
+        first = evaluate_winner_binned_absolute_gap(reliability)
+        second = evaluate_winner_binned_absolute_gap(reliability)
+        assert first.canonical_payload() == second.canonical_payload()
+        assert first.fingerprint == second.fingerprint
+
+    def test_same_value_from_different_reliabilities_gives_different_fingerprints(self):
+        dataset_a = evaluation_dataset(
+            [
+                _reliability_observation(0.1, False),
+                _reliability_observation(0.9, True),
+            ]
+        )
+        dataset_b = evaluation_dataset(
+            [
+                _reliability_observation(0.1, False),
+                _reliability_observation(0.9, True),
+                _reliability_observation(0.1, False),
+                _reliability_observation(0.9, True),
+            ]
+        )
+        reliability_a = evaluate_uncalibrated_winner_reliability(dataset_a, bin_count=2)
+        reliability_b = evaluate_uncalibrated_winner_reliability(dataset_b, bin_count=2)
+        result_a = evaluate_winner_binned_absolute_gap(reliability_a)
+        result_b = evaluate_winner_binned_absolute_gap(reliability_b)
+        assert result_a.value == pytest.approx(result_b.value)
+        assert reliability_a.fingerprint != reliability_b.fingerprint
+        assert result_a.fingerprint != result_b.fingerprint
+
+    def test_bin_count_five_versus_ten_differ_in_configuration_provenance(self):
+        dataset = evaluation_dataset(
+            [
+                _reliability_observation(0.1, True),
+                _reliability_observation(0.4, False),
+                _reliability_observation(0.6, True),
+                _reliability_observation(0.9, False),
+            ]
+        )
+        reliability_5 = evaluate_uncalibrated_winner_reliability(dataset, bin_count=5)
+        reliability_10 = evaluate_uncalibrated_winner_reliability(dataset, bin_count=10)
+        result_5 = evaluate_winner_binned_absolute_gap(reliability_5)
+        result_10 = evaluate_winner_binned_absolute_gap(reliability_10)
+        assert reliability_5.fingerprint != reliability_10.fingerprint
+        assert result_5.binning_id == result_10.binning_id
+        assert result_5.bin_count != result_10.bin_count
+        assert result_5.fingerprint != result_10.fingerprint
+
+    def test_same_eligible_rows_with_extra_taxonomy_misses_differ_in_identity(self):
+        eligible = [
+            _reliability_observation(0.3, True),
+            _reliability_observation(0.7, False),
+        ]
+        cohort_a = evaluation_cohort(eligible)
+        cohort_b = evaluation_cohort(eligible + _diagnostics_taxonomy_miss_rows(3))
+        reliability_a = evaluate_uncalibrated_winner_reliability(
+            CalibrationEvaluationDataset.from_cohort(cohort_a), bin_count=2
+        )
+        reliability_b = evaluate_uncalibrated_winner_reliability(
+            CalibrationEvaluationDataset.from_cohort(cohort_b), bin_count=2
+        )
+        result_a = evaluate_winner_binned_absolute_gap(reliability_a)
+        result_b = evaluate_winner_binned_absolute_gap(reliability_b)
+        assert result_a.value == pytest.approx(result_b.value)
+        assert result_a.source_count != result_b.source_count
+        assert result_a.taxonomy_miss_count == 0
+        assert result_b.taxonomy_miss_count == 3
+        assert result_a.reliability_fingerprint != result_b.reliability_fingerprint
+        assert result_a.fingerprint != result_b.fingerprint
+
+
+class TestWinnerBinnedAbsoluteGapConstruction:
+    def test_direct_construction_is_rejected(self):
+        with pytest.raises(InvalidDecisionError, match="evaluate_winner_binned_absolute_gap"):
+            WinnerBinnedAbsoluteGapResult()
+
+    def test_replace_without_fields_is_rejected(self):
+        reliability = evaluate_uncalibrated_winner_reliability(
+            evaluation_dataset([_reliability_observation(0.5, True)]), bin_count=2
+        )
+        result = evaluate_winner_binned_absolute_gap(reliability)
+        with pytest.raises(InvalidDecisionError, match="evaluate_winner_binned_absolute_gap"):
+            replace(result)
+
+    def test_replace_with_value_is_rejected(self):
+        reliability = evaluate_uncalibrated_winner_reliability(
+            evaluation_dataset([_reliability_observation(0.5, True)]), bin_count=2
+        )
+        result = evaluate_winner_binned_absolute_gap(reliability)
+        with pytest.raises(ValueError, match="init=False"):
+            replace(result, value=0.0)
+
+    @pytest.mark.parametrize(
+        "bad_reliability",
+        [
+            None,
+            {"value": 0.25},
+            "not-a-reliability",
+        ],
+    )
+    def test_evaluator_rejects_non_reliability_inputs(self, bad_reliability):
+        with pytest.raises(InvalidDecisionError, match="WinnerReliabilityResult"):
+            evaluate_winner_binned_absolute_gap(bad_reliability)  # type: ignore[arg-type]
+
+    def test_evaluator_rejects_duck_typed_look_alike(self):
+        class _LookAlike:
+            bins = ()
+            bin_count = 2
+            count = 0
+
+        with pytest.raises(InvalidDecisionError, match="WinnerReliabilityResult"):
+            evaluate_winner_binned_absolute_gap(_LookAlike())  # type: ignore[arg-type]
+
+    def test_evaluator_rejects_diagnostics_result(self):
+        dataset = evaluation_dataset([_reliability_observation(0.5, True)])
+        diagnostics = evaluate_uncalibrated_winner_diagnostics(dataset)
+        with pytest.raises(InvalidDecisionError, match="WinnerReliabilityResult"):
+            evaluate_winner_binned_absolute_gap(diagnostics)  # type: ignore[arg-type]
+
+    def test_evaluator_rejects_dataset(self):
+        dataset = evaluation_dataset([_reliability_observation(0.5, True)])
+        with pytest.raises(InvalidDecisionError, match="WinnerReliabilityResult"):
+            evaluate_winner_binned_absolute_gap(dataset)  # type: ignore[arg-type]
+
+
+class TestWinnerBinnedAbsoluteGapNoConflation:
+    def test_result_has_no_calibration_prediction_confidence_or_direction_fields(self):
+        names = {field.name for field in fields(WinnerBinnedAbsoluteGapResult)}
+        for forbidden in (
+            "calibrated",
+            "predicted_correctness",
+            "confidence",
+            "gap",
+            "absolute_gap",
+            "calibration_error",
+            "overconfidence",
+            "underconfidence",
+            "largest_gap",
+            "worst_bin",
+            "direction",
+        ):
+            assert forbidden not in names
+
+    def test_no_per_bin_gap_added_to_reliability_schema(self):
+        bin_names = {field.name for field in fields(ReliabilityBinSummary)}
+        for forbidden in ("gap", "absolute_gap", "calibration_error"):
+            assert forbidden not in bin_names
+
+    def test_payload_has_no_stray_identity_attributes(self):
+        reliability = evaluate_uncalibrated_winner_reliability(
+            evaluation_dataset([_reliability_observation(0.5, True)]), bin_count=2
+        )
+        result = evaluate_winner_binned_absolute_gap(reliability)
+        payload_keys = set(result.canonical_payload())
+
+        def _collect_keys(value):
+            if isinstance(value, dict):
+                payload_keys.update(value)
+                for nested in value.values():
+                    _collect_keys(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    _collect_keys(nested)
+
+        _collect_keys(result.canonical_payload())
+        for field_info in fields(result):
+            assert field_info.name in payload_keys
+
+    def test_evaluation_does_not_mutate_reliability_or_dataset(self):
+        observation = _reliability_observation(0.4, True)
+        dataset = evaluation_dataset([observation])
+        reliability = evaluate_uncalibrated_winner_reliability(dataset, bin_count=3)
+        before_observation = observation.fingerprint
+        before_dataset = dataset.fingerprint
+        before_reliability = reliability.fingerprint
+        evaluate_winner_binned_absolute_gap(reliability)
+        assert observation.fingerprint == before_observation
+        assert dataset.fingerprint == before_dataset
+        assert reliability.fingerprint == before_reliability
+
+    def test_payload_is_finite_fingerprintable_and_stable(self):
+        dataset = evaluation_dataset(
+            [
+                _reliability_observation(0.1, True),
+                _reliability_observation(0.9, False),
+            ]
+        )
+        result = evaluate_winner_binned_absolute_gap(
+            evaluate_uncalibrated_winner_reliability(dataset, bin_count=4)
+        )
+        payload = result.canonical_payload()
+
+        def _assert_finite(value):
+            if isinstance(value, float):
+                assert math.isfinite(value)
+            elif isinstance(value, dict):
+                for nested in value.values():
+                    _assert_finite(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    _assert_finite(nested)
+
+        _assert_finite(payload)
+        assert result.fingerprint == fingerprint(payload)
+        assert len(result.fingerprint) == 64
+
+
+class TestWinnerBinnedAbsoluteGapVersionGuards:
+    def test_new_aggregate_versions_are_one(self):
+        assert WINNER_BINNED_ABSOLUTE_GAP_ID == (
+            "winner-correctness-equal-width-binned-absolute-gap"
+        )
+        assert WINNER_BINNED_ABSOLUTE_GAP_VERSION == 1
+        assert WINNER_BINNED_ABSOLUTE_GAP_RESULT_FINGERPRINT_VERSION == 1
+
+    def test_upstream_reliability_versions_unchanged(self):
+        assert EQUAL_WIDTH_BINNING_ID == "equal-width"
+        assert EQUAL_WIDTH_BINNING_VERSION == 1
+        assert WINNER_RELIABILITY_CURVE_ID == "winner-reliability-curve"
+        assert WINNER_RELIABILITY_CURVE_VERSION == 1
+        assert WINNER_RELIABILITY_RESULT_FINGERPRINT_VERSION == 1
