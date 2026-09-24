@@ -787,14 +787,17 @@ profile identity/artifact foundation also exists in
   within one float64 ulp.
   Evidence: `tests/test_calibration_fitter.py::TestNumericalConvergenceHardening`.
 
-- [V] The declared `objective_suboptimality_tolerance` is the loosest value that
-  preserves ordinary-strength fidelity. Measured against a 60-digit reference
-  solution of the same objective, `1e-14` restores the pre-hardening fitted
-  parameters to within one ulp across `l2_strength` of `0.01` through `2.0`,
-  while `1e-12` stops the solver one Newton step early and moves
-  `l2_strength = 0.01` about `7e-7`; tightening to `1e-16`, `1e-18`, `1e-20`, or
-  `1e-21` changes no fitted parameter, and `1e-16` sits at the float64
-  resolution of an order-one objective. Evidence:
+- [V] Among the tested candidate tolerances, `1e-14` was the largest that
+  preserved the declared ordinary-strength parameter-fidelity criterion. The
+  compared candidates were `1e-12`, `1e-14`, `1e-16`, `1e-18`, `1e-20`, and
+  `1e-21`. Measured against a 60-digit reference solution of the same objective,
+  `1e-14` restored the pre-hardening fitted parameters to within one ulp across
+  the recorded ordinary-strength regression cases (`l2_strength` `0.01` through
+  `2.0`), while `1e-12` stopped the solver one Newton step early and moved
+  `l2_strength = 0.01` about `7e-7`, and every tighter candidate from `1e-16`
+  through `1e-21` changed no fitted parameter. The claim is scoped to the tested
+  candidates and the recorded ordinary-strength regression cases, not to all
+  possible tolerances or datasets. Evidence:
   `tests/test_calibration_fitter.py::TestNumericalConvergenceHardening::test_ordinary_strength_parameters_reach_the_independent_oracle`,
   `...::test_ordinary_strength_optima_are_certified_and_stable`.
 
@@ -822,13 +825,16 @@ profile identity/artifact foundation also exists in
   `...::TestScopeBoundaries`.
 
 - [V] Positive L2 regularization on both slope and intercept makes the declared
-  v1 objective strictly convex with one finite mathematical minimizer, and the
-  fitter returns that minimizer within the declared objective-gap tolerance for
-  the all-correct, all-wrong, and completely separated fitting datasets at the
-  tested strengths. Mathematical convexity and implementation convergence are
-  separate claims: the objective is strictly convex for every positive L2
-  strength, while a returned profile additionally requires the certificate.
-  Evidence: `tests/test_calibration_fitter.py::TestMathematicalRegressions`,
+  v1 objective strictly convex with one finite mathematical minimizer. A
+  `CalibrationProfile` is produced only if the returned parameters' gradient
+  satisfies the declared strong-convexity objective-gap certificate, which
+  bounds objective suboptimality rather than parameter distance, for the
+  all-correct, all-wrong, and completely separated fitting datasets at the
+  tested strengths; a fit that cannot certify raises instead of returning.
+  Mathematical uniqueness and solver certification are separate claims: the
+  objective is strictly convex for every positive L2 strength, while a produced
+  profile additionally requires the certificate. Evidence:
+  `tests/test_calibration_fitter.py::TestMathematicalRegressions`,
   `...::TestNumericalConvergenceHardening`,
   `...::TestForgedInputsFailClosed`.
 

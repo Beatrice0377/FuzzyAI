@@ -889,6 +889,58 @@ def _oracle_constant_optimum(
     return probability * intercept, intercept
 
 
+def _independent_sigmoid(value: float) -> float:
+    if value >= 0.0:
+        return 1.0 / (1.0 + math.exp(-value))
+    exponent = math.exp(value)
+    return exponent / (1.0 + exponent)
+
+
+def _independent_complement(value: float) -> float:
+    return _independent_sigmoid(-value)
+
+
+def _independent_residual(z: float, correct: bool) -> float:
+    # Label-aware d(loss)/dz. A naive (sigmoid(z) - y) cancels for large z and
+    # would overstate the gradient, so this keeps the stable complement form.
+    if correct:
+        return -_independent_complement(z)
+    return _independent_sigmoid(z)
+
+
+def _independent_gradient(
+    rows: list[tuple[float, float]],
+    slope: float,
+    intercept: float,
+    l2_strength: float,
+) -> tuple[float, float]:
+    count = len(rows)
+    grad_slope = 0.0
+    grad_intercept = 0.0
+    for probability, label in rows:
+        residual = _independent_residual(slope * probability + intercept, label == 1.0)
+        grad_slope += residual * probability
+        grad_intercept += residual
+    return (
+        grad_slope / count + l2_strength * slope,
+        grad_intercept / count + l2_strength * intercept,
+    )
+
+
+def _independent_objective(
+    rows: list[tuple[float, float]],
+    slope: float,
+    intercept: float,
+    l2_strength: float,
+) -> float:
+    count = len(rows)
+    total = 0.0
+    for probability, label in rows:
+        z = slope * probability + intercept
+        total += math.log1p(math.exp(-z)) if label == 1.0 else math.log1p(math.exp(z))
+    return total / count + (l2_strength / 2.0) * (slope * slope + intercept * intercept)
+
+
 class TestNumericalConvergenceHardening:
     """Part 1 to Part 21 and the Part 35 attacks of the 4C.2a repair."""
 
@@ -1052,6 +1104,33 @@ class TestNumericalConvergenceHardening:
             slope, intercept = _solve_l2_logistic(rows, l2_strength)
             assert slope == pytest.approx(oracle_slope, rel=1e-9)
             assert intercept == pytest.approx(oracle_intercept, rel=1e-9)
+
+    def test_certificate_recomputes_independently_for_a_tiny_strength(self):
+        # 4C.2b PART 24/25: every quantity is recomputed independently.
+        l2_strength = 1e-18
+        dataset = fitting_dataset([(0.9, True), (0.9, True)])
+        rows = _ordered_fitting_rows(dataset)
+        probability = rows[0][0]
+        profile = fit_l2_logistic_selected_probability(dataset, l2_strength=l2_strength)
+        slope, intercept = slope_of(profile), intercept_of(profile)
+
+        gradient = _independent_gradient(rows, slope, intercept, l2_strength)
+        norm = math.hypot(*gradient)
+        threshold = (
+            math.sqrt(2.0)
+            * math.sqrt(l2_strength)
+            * math.sqrt(_L2_LOGISTIC_OBJECTIVE_SUBOPTIMALITY_TOLERANCE)
+        )
+        assert norm <= threshold
+
+        bound = norm * norm / (2.0 * l2_strength)
+        assert bound <= _L2_LOGISTIC_OBJECTIVE_SUBOPTIMALITY_TOLERANCE
+
+        oracle_slope, oracle_intercept = _oracle_constant_optimum(probability, True, l2_strength)
+        actual_gap = _independent_objective(
+            rows, slope, intercept, l2_strength
+        ) - _independent_objective(rows, oracle_slope, oracle_intercept, l2_strength)
+        assert 0.0 <= actual_gap <= bound
 
     def test_tiny_strength_looseness_is_bounded_and_certified(self):
         # A tiny strong-convexity modulus makes the objective-gap certificate

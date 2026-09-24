@@ -1634,7 +1634,10 @@ _L2_LOGISTIC_INITIAL_INTERCEPT = 0.0
 #: parameter; and against a 60-digit reference solution 1e-14 restores the
 #: ordinary-strength fitted parameters exactly while 1e-12 stops the solver one
 #: Newton step early and pushes ``l2_strength = 0.01`` about 7e-7 away from the
-#: optimum. 1e-14 is therefore the loosest tolerance that preserves fidelity.
+#: optimum. Among the tested candidates (1e-12, 1e-14, 1e-16, 1e-18, 1e-20,
+#: 1e-21), 1e-14 was the largest that preserved the declared ordinary-strength
+#: parameter-fidelity criterion on the recorded regression cases; the claim does
+#: not extend to untested tolerances or datasets.
 _L2_LOGISTIC_OBJECTIVE_SUBOPTIMALITY_TOLERANCE = 1e-14
 _L2_LOGISTIC_MAX_ITERATIONS = 100
 _L2_LOGISTIC_BACKTRACKING_FACTOR = 0.5
