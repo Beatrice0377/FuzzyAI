@@ -907,7 +907,7 @@ This preserves the current public contract, which already returns `None`.
 
 ### 12.5 Profile application provenance
 
-Frozen requirement, before any profile exists:
+Frozen requirement:
 
 ```text
 No supported path may produce calibrated = True or a non-None
@@ -918,16 +918,30 @@ version provenance.
 A calibrated result must be auditable back to the exact profile artifact that
 produced it, otherwise a downstream consumer cannot tell which fitted numbers,
 binding, ground-truth semantics, target, method, and training population the
-value came from. The storage location is now realized: the calibrated
+value came from. The storage location is realized: the calibrated
 `DecisionResult` carries `calibration_profile_fingerprint` and
 `calibration_profile_fingerprint_version`, and the `DecisionTrace` mirrors the
 same two fields, so the exact profile artifact is linked from both. The profile
 fingerprint is an identity link only; it does not assert that the profile is
 valid for every population, that it improves calibration, or that its training
-data was independent. `predicted_correctness` is `None` for every result the
-runtime produces by default, and is populated only when a caller explicitly
-applies one exact compatible profile through
-`apply_profile_to_runtime_evaluation`.
+data was independent.
+
+Three provenance states are distinguished:
+
+- Offline application provenance is IMPLEMENTED.
+  `apply_profile_to_evaluation_dataset` produces a
+  `ProfileAppliedEvaluationDataset` that records the profile identity, the
+  source evaluation provenance, and the derived per-row labels and scores.
+- Explicit runtime-linked application provenance is IMPLEMENTED.
+  `apply_profile_to_runtime_evaluation` returns a calibrated `DecisionResult`
+  with `calibrated = True`, a populated `predicted_correctness`, and the exact
+  profile fingerprint/version, together with a `DecisionTrace` that mirrors the
+  same two fields. `predicted_correctness` is `None` for every result the
+  runtime produces by default, and is populated only when a caller explicitly
+  applies one exact compatible profile.
+- Automatic profile selection, a profile registry or lookup, a profile
+  store/materialization, cross-process loading, and automatic runtime
+  calibration are NOT IMPLEMENTED.
 
 ### 12.6 Taxonomy compatibility precondition for fitting and application
 

@@ -849,9 +849,14 @@ that its provenance and identity are structurally coherent. It does NOT prove
 that the calibrator improves Brier or log loss, that it generalizes beyond its
 training data, that the training data is representative, or that a
 training/evaluation split is independent. One supported scalar fitting method
-exists, but no derived-score application contract exists, so no result carries a
-`predicted_correctness`: a fitted profile is evidence about a fitting problem,
-not about calibration quality.
+exists, and derived-score application contracts exist: offline
+(`apply_profile_to_evaluation_dataset`) and explicit runtime-linked
+(`apply_profile_to_runtime_evaluation`). A result carries a
+`predicted_correctness` only when a caller explicitly applies one exact
+compatible profile; the runtime does not calibrate by default, and automatic
+profile selection, a registry or lookup, and profile persistence do not exist.
+A fitted profile is evidence about a fitting problem, not about calibration
+quality.
 
 ## Experimental records
 
@@ -1201,6 +1206,13 @@ them generalises to other models, revisions, prompts, or tasks.
   attached to the recorded selected value and never recomputes the winner or
   re-runs tie-breaking. Evidence:
   `tests/test_runtime_calibration.py::TestOfflineRuntimeEquivalence`.
+
+- [V] `predicted_winner_correctness(profile, observation)` refuses to produce a
+  predicted-winner-correctness score unless the observation's exact
+  `CalibrationBinding` matches the profile's exact binding; the private
+  numerical mapping primitive remains population-agnostic and is invoked only
+  after the supported semantic application path has established compatibility.
+  Evidence: `tests/test_calibration_fitter.py::TestScorerBindingGate`.
 
 - [V] A `DecisionResult` state machine forbids half-calibrated states: a
   calibrated result without profile identity, a profile identity without

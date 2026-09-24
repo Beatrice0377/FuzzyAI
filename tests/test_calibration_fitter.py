@@ -23,6 +23,7 @@ from test_calibration import (
     _honest_choice_metadata,
     adjudicated_provenance,
     bool_observation,
+    choice_observation,
     make_choice_decision,
     make_choice_runtime,
     resolved_truth,
@@ -37,6 +38,7 @@ from probvenance.calibration import (
     CalibrationBinding,
     CalibrationDataset,
     CalibrationProfile,
+    _apply_profile_to_selected_probability,
     _binary_logistic_terms,
     _l2_logistic_certificate_threshold,
     _l2_logistic_gradient,
@@ -46,6 +48,7 @@ from probvenance.calibration import (
     _selected_probability,
     _solve_l2_logistic,
     fit_l2_logistic_selected_probability,
+    predicted_winner_correctness,
 )
 from probvenance.errors import InvalidDecisionError
 
@@ -1286,3 +1289,93 @@ class TestNumericalConvergenceHardening:
         assert "numerical contract" in message
         with pytest.raises(InvalidDecisionError):
             fit([(0.9, True)], l2_strength=rejected)
+
+
+class TestScorerBindingGate:
+    """The semantic scorer refuses to score outside the profile's exact binding."""
+
+    def _profile_and_observations(
+        self,
+    ) -> tuple[CalibrationProfile, Any, Any]:
+        observation_a = choice_observation()
+        observation_b = choice_observation(backend=FakeCategoricalBackend(model="other-model"))
+        dataset = CalibrationDataset.create([observation_a])
+        profile = fit_l2_logistic_selected_probability(dataset, l2_strength=1.0)
+        return profile, observation_a, observation_b
+
+    def test_same_binding_produces_a_score(self) -> None:
+        profile, observation_a, _ = self._profile_and_observations()
+        score = predicted_winner_correctness(profile, observation_a)
+        assert math.isfinite(score)
+        assert 0.0 <= score <= 1.0
+
+    def test_cross_binding_produces_no_score(self) -> None:
+        profile, observation_a, observation_b = self._profile_and_observations()
+        assert (
+            observation_a.binding.canonical_payload() != observation_b.binding.canonical_payload()
+        )
+        with pytest.raises(InvalidDecisionError):
+            predicted_winner_correctness(profile, observation_b)
+
+    def test_scorer_and_binding_contract_agree(self) -> None:
+        profile, _, observation_b = self._profile_and_observations()
+        with pytest.raises(InvalidDecisionError):
+            profile.require_binding_match(observation_b.binding)
+        with pytest.raises(InvalidDecisionError):
+            predicted_winner_correctness(profile, observation_b)
+
+    def test_model_revision_mismatch_is_rejected(self) -> None:
+        profile, _, _ = self._profile_and_observations()
+        observation = choice_observation(backend=FakeCategoricalBackend(model_revision="rev-2"))
+        with pytest.raises(InvalidDecisionError):
+            predicted_winner_correctness(profile, observation)
+
+    def test_compatibility_gate_does_not_change_valid_scores(self) -> None:
+        profile, observation_a, _ = self._profile_and_observations()
+        expected = _apply_profile_to_selected_probability(
+            profile, _selected_probability(observation_a)
+        )
+        assert predicted_winner_correctness(profile, observation_a) == expected
+
+    def test_scorer_does_not_require_ground_truth_semantics_equality(self) -> None:
+        """The scorer gates on the binding only, not on ground-truth semantics.
+
+        The score's meaning comes from the profile's fitted target semantics and
+        no ground-truth label is needed to apply the mapping, so a ground-truth
+        semantics mismatch alone must not stop the scorer. Ground-truth-semantics
+        equality is an offline labeled-evaluation requirement.
+        """
+        profile, observation_a, _ = self._profile_and_observations()
+        observation = choice_observation(
+            resolved_truth("shipping", labeling_rule="a different labeling rule")
+        )
+        assert observation.binding.canonical_payload() == observation_a.binding.canonical_payload()
+        semantics_a = CalibrationDataset.create([observation_a]).ground_truth_semantics
+        semantics_b = CalibrationDataset.create([observation]).ground_truth_semantics
+        assert semantics_a.canonical_payload() != semantics_b.canonical_payload()
+        score = predicted_winner_correctness(profile, observation)
+        assert math.isfinite(score)
+        assert 0.0 <= score <= 1.0
+
+    def test_offline_application_rejects_the_same_ground_truth_mismatch(self) -> None:
+        """The offline labeled path enforces what the scorer deliberately does not."""
+        from probvenance.calibration_evaluation import (
+            CalibrationEvaluationCohort,
+            CalibrationEvaluationDataset,
+            EvaluationSplitRole,
+            apply_profile_to_evaluation_dataset,
+        )
+
+        profile, _, _ = self._profile_and_observations()
+        cohort = CalibrationEvaluationCohort(
+            (
+                choice_observation(
+                    resolved_truth("shipping", labeling_rule="a different labeling rule")
+                ),
+            ),
+            EvaluationSplitRole.VALIDATION,
+            "eval-semantics-mismatch",
+        )
+        dataset = CalibrationEvaluationDataset.from_cohort(cohort)
+        with pytest.raises(InvalidDecisionError, match="ground-truth semantics"):
+            apply_profile_to_evaluation_dataset(dataset, profile)

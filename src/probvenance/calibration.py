@@ -2236,6 +2236,19 @@ def predicted_winner_correctness(
     :func:`_apply_profile_to_selected_probability`, the shared numerical kernel
     that runtime-linked application also consumes.
 
+    The observation's population must be the one the profile was fitted for:
+    this function requires an exact
+    :meth:`CalibrationProfile.require_binding_match` against
+    ``observation.binding`` before any score is produced, and raises
+    :class:`~probvenance.errors.InvalidDecisionError` otherwise. A semantically
+    named ``predicted-winner-correctness`` score must never be emitted for a
+    population outside the profile's declared exact binding. This gate checks
+    the binding only; it deliberately does NOT require ground-truth-semantics
+    equality, because the score's interpretation is defined by the profile's
+    fitted target semantics and no ground-truth label is needed to apply the
+    mapping. Ground-truth-semantics equality is an offline labeled-evaluation
+    requirement, enforced by :func:`apply_profile_to_evaluation_dataset`.
+
     ``p = 0`` and ``p = 1`` are ordinary finite inputs; the mapping output is
     never clipped. It is not guaranteed to be strictly interior: for a fitted
     ``slope * p + intercept`` large enough in magnitude the binary64 result of
@@ -2251,6 +2264,7 @@ def predicted_winner_correctness(
             "observation must be a CalibrationObservation, got "
             f"{type(observation).__name__} ({observation!r})"
         )
+    profile.require_binding_match(observation.binding)
     return _apply_profile_to_selected_probability(profile, _selected_probability(observation))
 
 
