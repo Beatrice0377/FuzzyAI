@@ -97,8 +97,16 @@ runtime profile application do not exist, and `predicted_correctness` remains
 - Evaluation harness (started: declared evaluation source cohort, metric-eligible
   dataset projection, Brier, log loss; delivered: winner-correctness companion
   diagnostics artifact with the empirical correctness rate, the mean selected
-  probability, and the empirical constant Brier reference).
+  probability, and the empirical constant Brier reference; delivered: the
+  pre-calibration equal-width winner-correctness reliability summary
+  (`evaluate_uncalibrated_winner_reliability`, binning id `equal-width` v1,
+  reliability id `winner-reliability-curve` v1, result fingerprint v1) with
+  empty-bin retention, per-bin membership provenance, and row-order
+  independence).
 - Expected calibration error (ECE).
+- Equal-mass (quantile) reliability binning (needs its own tie,
+  duplicate-score, and deterministic-partition contract).
+- Reliability plotting (structured summary only; no chart artifacts).
 - Temperature scaling.
 - Calibration profile.
 

@@ -28,6 +28,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from enum import StrEnum
+from fractions import Fraction
 
 from probvenance.calibration import (
     CALIBRATION_BINDING_FINGERPRINT_VERSION,
@@ -51,6 +52,8 @@ __all__ = [
     "EMPIRICAL_CONSTANT_BRIER_REFERENCE_VERSION",
     "EMPIRICAL_CORRECTNESS_RATE_ID",
     "EMPIRICAL_CORRECTNESS_RATE_VERSION",
+    "EQUAL_WIDTH_BINNING_ID",
+    "EQUAL_WIDTH_BINNING_VERSION",
     "LOG_LOSS_BOUNDARY_POLICY",
     "LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION",
     "LOG_LOSS_LOG_BASE",
@@ -62,15 +65,21 @@ __all__ = [
     "UNCALIBRATED_SELECTED_PROBABILITY_ID",
     "UNCALIBRATED_SELECTED_PROBABILITY_VERSION",
     "WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION",
+    "WINNER_RELIABILITY_CURVE_ID",
+    "WINNER_RELIABILITY_CURVE_VERSION",
+    "WINNER_RELIABILITY_RESULT_FINGERPRINT_VERSION",
     "BrierEvaluationResult",
     "CalibrationEvaluationCohort",
     "CalibrationEvaluationDataset",
     "EvaluationSplitRole",
     "LogLossEvaluationResult",
+    "ReliabilityBinSummary",
     "WinnerCorrectnessDiagnosticsResult",
+    "WinnerReliabilityResult",
     "evaluate_uncalibrated_winner_brier",
     "evaluate_uncalibrated_winner_diagnostics",
     "evaluate_uncalibrated_winner_log_loss",
+    "evaluate_uncalibrated_winner_reliability",
 ]
 
 # ---------------------------------------------------------------------------
@@ -145,6 +154,29 @@ EMPIRICAL_CONSTANT_BRIER_REFERENCE_ID = "empirical-correctness-rate-constant-bri
 EMPIRICAL_CONSTANT_BRIER_REFERENCE_VERSION = 1
 
 # ---------------------------------------------------------------------------
+# Equal-width reliability summary identity
+# ---------------------------------------------------------------------------
+
+#: The only binning policy implemented by the reliability summary: equal-width
+#: intervals over ``[0, 1]`` with the frozen boundary contract documented on
+#: :class:`ReliabilityBinSummary`. Equal-mass (quantile) binning remains
+#: unimplemented future work: it needs its own tie, duplicate-score, and
+#: deterministic-partition contract before it can carry an identity.
+EQUAL_WIDTH_BINNING_ID = "equal-width"
+EQUAL_WIDTH_BINNING_VERSION = 1
+
+#: The reliability summary semantic identity: a pre-calibration
+#: winner-correctness reliability summary over raw-score regions. It is NOT
+#: ECE, NOT a calibration curve, and NOT evidence of calibration.
+WINNER_RELIABILITY_CURVE_ID = "winner-reliability-curve"
+WINNER_RELIABILITY_CURVE_VERSION = 1
+
+#: The canonical-payload schema version of the reliability result artifact.
+#: It is deliberately distinct from the reliability semantic version and from
+#: the binning-policy semantic version.
+WINNER_RELIABILITY_RESULT_FINGERPRINT_VERSION = 1
+
+# ---------------------------------------------------------------------------
 # Construction tokens for the supported-path-only artifacts
 # ---------------------------------------------------------------------------
 
@@ -153,6 +185,7 @@ _DATASET_CONSTRUCTION_TOKEN = object()
 _BRIER_RESULT_CONSTRUCTION_TOKEN = object()
 _LOG_LOSS_RESULT_CONSTRUCTION_TOKEN = object()
 _DIAGNOSTICS_RESULT_CONSTRUCTION_TOKEN = object()
+_RELIABILITY_RESULT_CONSTRUCTION_TOKEN = object()
 
 _BOOL_TRUE_NAME = "true"
 _BOOL_FALSE_NAME = "false"
@@ -1247,4 +1280,384 @@ def evaluate_uncalibrated_winner_diagnostics(
     return WinnerCorrectnessDiagnosticsResult(
         dataset,
         _construction_token=_DIAGNOSTICS_RESULT_CONSTRUCTION_TOKEN,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Equal-width winner-correctness reliability summary
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ReliabilityBinSummary:
+    """One equal-width raw-score region of a reliability summary.
+
+    The interval contract is frozen. For ``B = bin_count`` and
+    ``i = 0 .. B - 1`` the region owned by bin ``i`` is::
+
+        bin 0:      [0/B, 1/B)
+        bin i:      [i/B, (i+1)/B)
+        last bin:   [(B-1)/B, 1]
+
+    The lower bound is inclusive and the upper bound is exclusive, EXCEPT the
+    final upper bound ``1`` is inclusive, so ``p = 0`` falls in the first bin
+    and ``p = 1`` falls in the last bin. An exact interior boundary
+    ``p = i/B`` belongs to bin ``i``, NOT to bin ``i - 1``. The boundaries
+    themselves are NOT stored per bin: they are fully determined by
+    ``bin_count`` and ``index``, so identity carries the binning id and
+    version, ``bin_count``, and ``index``.
+
+    Empty bins are retained, never omitted: ``count = 0``,
+    ``correct_count = 0``, both statistics are ``None``, and the membership
+    tuple is empty. ``None`` means "no observation fell in this interval"; it
+    is never ``NaN`` and never ``0.0``, because an empty interval is not the
+    same thing as an interval whose observed rate is zero.
+
+    ``observation_fingerprints`` is sorted and multiplicity preserving: a
+    duplicated dataset row appears twice, never deduplicated to a set.
+    """
+
+    index: int
+    count: int
+    correct_count: int
+    mean_selected_probability: float | None
+    empirical_correctness_rate: float | None
+    observation_fingerprints: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if isinstance(self.index, bool) or not isinstance(self.index, int) or self.index < 0:
+            raise InvalidDecisionError(
+                f"ReliabilityBinSummary index must be a non-negative real int, got {self.index!r}"
+            )
+        if isinstance(self.count, bool) or not isinstance(self.count, int) or self.count < 0:
+            raise InvalidDecisionError(
+                f"ReliabilityBinSummary count must be a non-negative real int, got {self.count!r}"
+            )
+        if (
+            isinstance(self.correct_count, bool)
+            or not isinstance(self.correct_count, int)
+            or self.correct_count < 0
+            or self.correct_count > self.count
+        ):
+            raise InvalidDecisionError(
+                "ReliabilityBinSummary correct_count must be a real int with "
+                f"0 <= correct_count <= count, got {self.correct_count!r} "
+                f"for count {self.count}"
+            )
+        if len(self.observation_fingerprints) != self.count:
+            raise InvalidDecisionError(
+                "ReliabilityBinSummary observation_fingerprints must carry "
+                f"exactly one entry per counted observation: got "
+                f"{len(self.observation_fingerprints)} fingerprints for "
+                f"count {self.count}"
+            )
+        if self.count == 0:
+            if (
+                self.mean_selected_probability is not None
+                or self.empirical_correctness_rate is not None
+            ):
+                raise InvalidDecisionError(
+                    "an empty ReliabilityBinSummary must leave both statistics "
+                    "undefined (None); an empty interval is never an observed "
+                    "zero"
+                )
+            return
+        for name, value in (
+            ("mean_selected_probability", self.mean_selected_probability),
+            ("empirical_correctness_rate", self.empirical_correctness_rate),
+        ):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise InvalidDecisionError(
+                    f"a non-empty ReliabilityBinSummary requires a finite {name}, got {value!r}"
+                )
+            number = float(value)
+            if not math.isfinite(number) or number < 0.0 or number > 1.0:
+                raise InvalidDecisionError(
+                    f"a non-empty ReliabilityBinSummary requires a finite "
+                    f"{name} in [0, 1], got {number!r}"
+                )
+
+
+@dataclass(frozen=True, slots=True)
+class WinnerReliabilityResult:
+    """Immutable, provenance-rich pre-calibration reliability summary.
+
+    This artifact answers "what is the observed winner-correctness rate inside
+    each raw selected-probability region?" over the SAME metric-eligible
+    projection the Brier, log-loss, and diagnostics artifacts describe. The
+    x-axis score is the UNCALIBRATED selected semantic probability extracted by
+    the SAME ``_selected_probability`` helper the metrics use. It is still NOT
+    ``predicted_correctness``, NOT ``P(Y_correct = 1)``, NOT a confidence, and
+    NOT a calibrated probability: the summary describes raw-score regions
+    versus empirical winner correctness without claiming that the raw score
+    carries correctness-probability semantics.
+
+    The binning policy is equal-width only
+    (``EQUAL_WIDTH_BINNING_ID``/``EQUAL_WIDTH_BINNING_VERSION``) with the
+    frozen interval contract documented on :class:`ReliabilityBinSummary`.
+    Equal-mass (quantile) binning, adaptive binning, minimum-count merging,
+    smoothing, and kernel curves are NOT implemented; equal-mass remains
+    future work because it needs its own tie, duplicate-score, and
+    deterministic-partition contract. No ECE, gap, or calibration-error
+    aggregate is derived here: a bin showing mean raw score ``0.8`` with an
+    observed rate of ``0.6`` is a description of that region, not a licensed
+    "20-point overconfidence" measurement, and no ECE ingredient is stored.
+
+    Every ``bin_count`` bins are retained, including empty ones, so
+    ``len(bins) == bin_count`` always holds and a reader can distinguish an
+    empty interval from an interval that never existed.
+
+    The supported construction contract is the module-level evaluator
+    :func:`evaluate_uncalibrated_winner_reliability`. Direct construction and
+    ``dataclasses.replace`` reconstruction are rejected so a caller cannot
+    combine one dataset with fabricated bins. ``dataclasses.replace(result)``
+    reaches ``__init__`` with no construction token and is rejected with
+    :class:`InvalidDecisionError`; ``dataclasses.replace(result, bins=...)``
+    is rejected earlier by ``dataclasses`` itself (a ``ValueError``, because
+    every field is declared with ``init=False``) and never reaches
+    ``__init__``. This is an API discipline within the supported construction
+    contract, not a security boundary; low-level Python escape hatches such as
+    ``object.__new__`` are not supported construction paths and are not
+    defended against.
+
+    ``count`` is the number of observations actually scored (the evaluated
+    count), NOT the source cohort size. Excluded cohort rows never enter any
+    bin. The provenance fields record the declared source cohort identity and
+    the explicit exclusion accounting. No caller-owned mapping is stored.
+    """
+
+    reliability_id: str = field(init=False, repr=False)
+    reliability_version: int = field(init=False, repr=False)
+    target: str = field(init=False, repr=False)
+    input_score_id: str = field(init=False, repr=False)
+    input_score_version: int = field(init=False, repr=False)
+    binning_id: str = field(init=False, repr=False)
+    binning_version: int = field(init=False, repr=False)
+    bin_count: int = field(init=False, repr=False)
+    evaluation_dataset_fingerprint: str = field(init=False, repr=False)
+    evaluation_dataset_fingerprint_version: int = field(init=False, repr=False)
+    source_cohort_fingerprint: str = field(init=False, repr=False)
+    source_cohort_fingerprint_version: int = field(init=False, repr=False)
+    source_count: int = field(init=False, repr=False)
+    taxonomy_miss_count: int = field(init=False, repr=False)
+    unresolved_count: int = field(init=False, repr=False)
+    unadjudicated_resolved_count: int = field(init=False, repr=False)
+    count: int = field(init=False, repr=False)
+    bins: tuple[ReliabilityBinSummary, ...] = field(init=False, repr=False)
+
+    def __init__(
+        self,
+        dataset: CalibrationEvaluationDataset | None = None,
+        *,
+        bin_count: int | None = None,
+        _construction_token: object = None,
+    ) -> None:
+        if _construction_token is not _RELIABILITY_RESULT_CONSTRUCTION_TOKEN:
+            raise InvalidDecisionError(
+                "WinnerReliabilityResult cannot be constructed directly or "
+                "with dataclasses.replace; use "
+                "evaluate_uncalibrated_winner_reliability(dataset, "
+                "bin_count=...), the only supported construction path"
+            )
+        if not isinstance(dataset, CalibrationEvaluationDataset):
+            raise InvalidDecisionError(
+                "the supported WinnerReliabilityResult construction path "
+                "requires a CalibrationEvaluationDataset, got "
+                f"{type(dataset).__name__}"
+            )
+        if isinstance(bin_count, bool) or not isinstance(bin_count, int):
+            raise InvalidDecisionError(
+                f"bin_count must be a real int (a bool is not acceptable), got {bin_count!r}"
+            )
+        if bin_count < 1:
+            raise InvalidDecisionError(f"bin_count must be at least 1, got {bin_count!r}")
+        members: list[list[tuple[float, str, bool]]] = [[] for _ in range(bin_count)]
+        for observation in dataset.observations:
+            probability = _selected_probability(observation)
+            # The boundary contract compares the STORED probability value
+            # against the mathematical rational boundaries i/B. The exact
+            # rational value of the stored float decides ownership, so binary
+            # floating multiplication never silently defines a boundary: a
+            # rational boundary with no exact float representation (for
+            # example 1/3) is handled by comparing against the exact
+            # rational, and the stored float falls deterministically on one
+            # side of it.
+            rational_index = Fraction.from_float(probability) * bin_count
+            index = int(rational_index)
+            if index >= bin_count:
+                index = bin_count - 1
+            members[index].append((probability, observation.fingerprint, bool(observation.correct)))
+        bins: list[ReliabilityBinSummary] = []
+        for index, bucket in enumerate(members):
+            bucket.sort(key=lambda item: (item[0], item[1]))
+            bucket_count = len(bucket)
+            if bucket_count == 0:
+                bins.append(
+                    ReliabilityBinSummary(
+                        index=index,
+                        count=0,
+                        correct_count=0,
+                        mean_selected_probability=None,
+                        empirical_correctness_rate=None,
+                        observation_fingerprints=(),
+                    )
+                )
+                continue
+            bucket_mean = math.fsum(item[0] for item in bucket) / bucket_count
+            bucket_correct = sum(1 for item in bucket if item[2])
+            bucket_rate = bucket_correct / bucket_count
+            bins.append(
+                ReliabilityBinSummary(
+                    index=index,
+                    count=bucket_count,
+                    correct_count=bucket_correct,
+                    mean_selected_probability=bucket_mean,
+                    empirical_correctness_rate=bucket_rate,
+                    observation_fingerprints=tuple(sorted(item[1] for item in bucket)),
+                )
+            )
+        object.__setattr__(self, "reliability_id", WINNER_RELIABILITY_CURVE_ID)
+        object.__setattr__(self, "reliability_version", WINNER_RELIABILITY_CURVE_VERSION)
+        object.__setattr__(self, "target", BRIER_TARGET)
+        object.__setattr__(self, "input_score_id", UNCALIBRATED_SELECTED_PROBABILITY_ID)
+        object.__setattr__(self, "input_score_version", UNCALIBRATED_SELECTED_PROBABILITY_VERSION)
+        object.__setattr__(self, "binning_id", EQUAL_WIDTH_BINNING_ID)
+        object.__setattr__(self, "binning_version", EQUAL_WIDTH_BINNING_VERSION)
+        object.__setattr__(self, "bin_count", bin_count)
+        object.__setattr__(self, "evaluation_dataset_fingerprint", dataset.fingerprint)
+        object.__setattr__(
+            self,
+            "evaluation_dataset_fingerprint_version",
+            CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION,
+        )
+        object.__setattr__(self, "source_cohort_fingerprint", dataset.source_cohort_fingerprint)
+        object.__setattr__(
+            self,
+            "source_cohort_fingerprint_version",
+            CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION,
+        )
+        object.__setattr__(self, "source_count", dataset.source_count)
+        object.__setattr__(self, "taxonomy_miss_count", dataset.taxonomy_miss_count)
+        object.__setattr__(self, "unresolved_count", dataset.unresolved_count)
+        object.__setattr__(
+            self, "unadjudicated_resolved_count", dataset.unadjudicated_resolved_count
+        )
+        object.__setattr__(self, "count", len(dataset.observations))
+        object.__setattr__(self, "bins", tuple(bins))
+
+    def canonical_payload(self) -> dict[str, JSONValue]:
+        """Return the exact payload the fingerprint hashes.
+
+        Commits the reliability identity, the input-score identity, the
+        binning identity with its own semantic version and configuration, the
+        evaluation dataset identity with its payload schema version, the
+        source cohort identity, the explicit exclusion accounting, and every
+        bin with its membership provenance. Empty bins serialize their two
+        statistics as ``null``; no NaN and no infinity is ever emitted, and
+        every nested object is generated fresh here (no caller-owned mapping
+        is stored or emitted).
+        """
+        return {
+            "v": WINNER_RELIABILITY_RESULT_FINGERPRINT_VERSION,
+            "reliability_id": self.reliability_id,
+            "reliability_version": self.reliability_version,
+            "target": self.target,
+            "input_score_id": self.input_score_id,
+            "input_score_version": self.input_score_version,
+            "binning": {
+                "id": self.binning_id,
+                "version": self.binning_version,
+                "bin_count": self.bin_count,
+            },
+            "evaluation_dataset_fingerprint": self.evaluation_dataset_fingerprint,
+            "evaluation_dataset_fingerprint_version": (self.evaluation_dataset_fingerprint_version),
+            "source_cohort_fingerprint": self.source_cohort_fingerprint,
+            "source_cohort_fingerprint_version": self.source_cohort_fingerprint_version,
+            "source_count": self.source_count,
+            "count": self.count,
+            "exclusions": {
+                "taxonomy_miss": self.taxonomy_miss_count,
+                "unresolved": self.unresolved_count,
+                "unadjudicated_resolved": self.unadjudicated_resolved_count,
+            },
+            "bins": [
+                {
+                    "index": bin.index,
+                    "count": bin.count,
+                    "correct_count": bin.correct_count,
+                    "mean_selected_probability": bin.mean_selected_probability,
+                    "empirical_correctness_rate": bin.empirical_correctness_rate,
+                    "observation_fingerprints": list(bin.observation_fingerprints),
+                }
+                for bin in self.bins
+            ],
+        }
+
+    @property
+    def fingerprint(self) -> str:
+        """Stable identity of the reliability artifact.
+
+        The hash of :meth:`canonical_payload`, deterministic for the object
+        lifetime: every payload field is an immutable scalar, string, or
+        freshly generated nested object fixed at construction.
+        """
+        return fingerprint(self.canonical_payload())
+
+
+def evaluate_uncalibrated_winner_reliability(
+    dataset: CalibrationEvaluationDataset,
+    *,
+    bin_count: int,
+) -> WinnerReliabilityResult:
+    """Evaluate the pre-calibration equal-width reliability summary.
+
+    Over the metric-eligible projection of the dataset (excluded cohort rows
+    never enter any bin), partition the uncalibrated selected semantic
+    probabilities into ``bin_count`` equal-width regions with the frozen
+    interval contract documented on :class:`ReliabilityBinSummary`:
+
+    - ``bin 0`` owns ``[0/B, 1/B)``, bin ``i`` owns ``[i/B, (i+1)/B)``, and
+      the last bin owns ``[(B-1)/B, 1]`` with an inclusive upper bound, so
+      ``p = 0`` falls in the first bin, ``p = 1`` falls in the last bin, and
+      an exact interior boundary ``p = i/B`` belongs to bin ``i``.
+    - Boundary ownership is decided by comparing the STORED probability value
+      against the mathematical rational boundaries ``i/B`` (via
+      :meth:`fractions.Fraction.from_float`), never by binary floating
+      multiplication; a rational boundary with no exact float representation
+      is handled by that exact rational comparison.
+    - Each bin reports ``count``, ``correct_count``, the mean selected
+      probability (``math.fsum`` over the deterministically sorted member
+      probabilities, so dataset row order cannot change a bin mean), the
+      empirical correctness rate, and the sorted, multiplicity-preserving
+      member observation fingerprints. Empty bins are retained with ``None``
+      statistics, never NaN and never a fake ``0.0``.
+
+    ``bin_count`` must be a real ``int`` (a ``bool`` is NOT acceptable) with
+    ``bin_count >= 1``; ``True``, ``False``, ``0``, negatives, floats,
+    strings, and ``None`` are rejected with :class:`InvalidDecisionError`.
+    There is no hidden maximum.
+
+    The summary answers "what is the observed winner-correctness rate inside
+    each raw selected-probability region?" It is a pre-calibration
+    description of raw-score regions, NOT ECE, NOT a calibration curve, and
+    NOT evidence of calibration: a bin showing mean raw score ``0.8`` with an
+    observed rate of ``0.6`` does not license calling that a "20-point
+    overconfidence". No per-bin gap or calibration-error aggregate is
+    derived, and no ECE is computed in any form.
+
+    This is a read-only offline measurement: it does not mutate the dataset
+    or any observation, does not set ``calibrated`` or
+    ``predicted_correctness`` anywhere, does not create a
+    :class:`~probvenance.calibration.CalibrationProfile`, and does not touch
+    the runtime.
+    """
+    if not isinstance(dataset, CalibrationEvaluationDataset):
+        raise InvalidDecisionError(
+            "evaluate_uncalibrated_winner_reliability requires a "
+            f"CalibrationEvaluationDataset, got {type(dataset).__name__}"
+        )
+    return WinnerReliabilityResult(
+        dataset,
+        bin_count=bin_count,
+        _construction_token=_RELIABILITY_RESULT_CONSTRUCTION_TOKEN,
     )

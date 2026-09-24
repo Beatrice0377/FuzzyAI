@@ -22,10 +22,16 @@ Evaluation metrics:        pre-calibration winner-correctness Brier and exact
                            fingerprint v2 commits source cohort identity and
                            exclusion accounting
 Companion diagnostics:     implemented (src/probvenance/calibration_evaluation.py):
-                           winner-correctness companion diagnostics artifact
-                           (empirical correctness rate, mean selected
-                           probability, empirical constant Brier reference)
-                           with result fingerprint v1
+                            winner-correctness companion diagnostics artifact
+                            (empirical correctness rate, mean selected
+                            probability, empirical constant Brier reference)
+                            with result fingerprint v1
+Reliability summary:       implemented (src/probvenance/calibration_evaluation.py):
+                            pre-calibration equal-width winner-correctness
+                            reliability summary (binning id equal-width v1,
+                            reliability id winner-reliability-curve v1, result
+                            fingerprint v1); plotting, equal-mass binning, and
+                            ECE remain unimplemented
 Fitting algorithms:        not implemented
 Calibration runtime:       not implemented
 predicted_correctness:     None for every result the runtime can currently produce
@@ -1105,9 +1111,9 @@ No calibration-gap, overconfidence, or underconfidence metric is derived from
 the difference between the mean selected probability and the empirical
 correctness rate. A single global mean difference cannot describe calibration:
 two populations can share the same mean and the same rate while having
-completely different conditional reliability structure. Reliability analysis
-and ECE (sections 14.3 to 14.5) are the designated tools for that question and
-remain unimplemented.
+completely different conditional reliability structure. A structured
+equal-width reliability summary (section 14.5) is now implemented for that
+question; ECE (sections 14.3 to 14.4) remains unimplemented.
 
 Together the three diagnostics help interpret a Brier value on the evaluated
 rows: the rate says how often the winner was correct, the mean selected
@@ -1155,14 +1161,57 @@ number. Any reported ECE carries its configuration.
 
 ### 14.5 Reliability curve
 
-Human-auditable output:
+A structured, pre-calibration equal-width reliability summary IS implemented
+(`src/probvenance/calibration_evaluation.py`): the artifact
+`WinnerReliabilityResult`, built only by
+`evaluate_uncalibrated_winner_reliability(dataset, bin_count=...)`, reports
+for each raw selected-probability region the observation count, the
+winner-correctness count, the mean uncalibrated selected probability, the
+empirical correctness rate, and the sorted member observation fingerprints.
+Plotting remains unimplemented: the artifact is structured data, not a chart,
+and no matplotlib, plotly, PNG, or SVG output exists.
+
+The binning policy is equal-width only (`equal-width`, semantic version 1).
+For `B = bin_count` and `i = 0 .. B-1` the frozen interval contract is:
 
 ```text
-predicted probability bin  versus  observed correctness rate
+bin 0:      [0/B, 1/B)
+bin i:      [i/B, (i+1)/B)
+last bin:   [(B-1)/B, 1]
 ```
 
-It shows whether the model is overconfident or underconfident and where. No
-plotting is implemented.
+The lower bound is inclusive and the upper bound is exclusive, EXCEPT the
+final upper bound `1` is inclusive. So `p = 0` falls in the first bin, `p = 1`
+falls in the last bin, and an exact interior boundary `p = i/B` belongs to bin
+`i`, not to bin `i-1`. Boundary ownership is decided by comparing the stored
+probability value against the mathematical rational boundaries `i/B` (exact
+`fractions.Fraction.from_float` comparison), never by binary floating
+multiplication; a rational boundary with no exact float representation (for
+example `1/3`) is handled by that exact rational comparison, and the stored
+float falls deterministically on one side of it.
+
+Empty bins are retained, never omitted: `len(bins) == bin_count` always
+holds, and an empty bin carries `count = 0`, `correct_count = 0`, both
+statistics as `null`, and no members. `null` means "no observation fell in
+this interval"; it is never NaN and never a fake `0.0`, because an empty
+interval is not the same thing as an interval whose observed rate is zero.
+
+Equal-mass (quantile) binning remains unimplemented future work: it needs its
+own tie, duplicate-score, and deterministic-partition contract before it can
+carry an identity. No `scheme` parameter that only half-works is exposed.
+
+A reliability summary is NOT ECE. It reports per-region descriptions; it
+computes no weighted gap aggregate, stores no per-bin gap or
+calibration-error field, and derives no ECE number in any form. ECE needs its
+own metric identity, version, and configuration contract.
+
+The interpretation stays pre-calibration. The x-axis score is the
+UNCALIBRATED selected semantic probability, not `predicted_correctness`, not
+`P(Y_correct = 1)`, not a confidence, and not a calibrated probability. A bin
+showing mean raw score `0.8` with an observed rate of `0.6` is a description
+of that raw-score region; it does not license naming that a "20-point
+overconfidence", because the raw score does not carry
+correctness-probability semantics.
 
 ### 14.6 Multiclass metrics
 

@@ -27,6 +27,7 @@ three candidates.
 
 import math
 from dataclasses import fields, replace
+from fractions import Fraction
 
 import pytest
 from test_calibration import (
@@ -67,6 +68,8 @@ from probvenance.calibration_evaluation import (
     EMPIRICAL_CONSTANT_BRIER_REFERENCE_VERSION,
     EMPIRICAL_CORRECTNESS_RATE_ID,
     EMPIRICAL_CORRECTNESS_RATE_VERSION,
+    EQUAL_WIDTH_BINNING_ID,
+    EQUAL_WIDTH_BINNING_VERSION,
     LOG_LOSS_BOUNDARY_POLICY,
     LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION,
     LOG_LOSS_LOG_BASE,
@@ -78,16 +81,22 @@ from probvenance.calibration_evaluation import (
     UNCALIBRATED_SELECTED_PROBABILITY_ID,
     UNCALIBRATED_SELECTED_PROBABILITY_VERSION,
     WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION,
+    WINNER_RELIABILITY_CURVE_ID,
+    WINNER_RELIABILITY_CURVE_VERSION,
+    WINNER_RELIABILITY_RESULT_FINGERPRINT_VERSION,
     BrierEvaluationResult,
     CalibrationEvaluationCohort,
     CalibrationEvaluationDataset,
     EvaluationSplitRole,
     LogLossEvaluationResult,
+    ReliabilityBinSummary,
     WinnerCorrectnessDiagnosticsResult,
+    WinnerReliabilityResult,
     _binary_log_loss_term,
     evaluate_uncalibrated_winner_brier,
     evaluate_uncalibrated_winner_diagnostics,
     evaluate_uncalibrated_winner_log_loss,
+    evaluate_uncalibrated_winner_reliability,
 )
 from probvenance.fingerprint import fingerprint
 
@@ -2050,4 +2059,500 @@ class TestWinnerDiagnosticsVersionGuards:
         assert LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION == 2
         assert BRIER_METRIC_VERSION == 1
         assert LOG_LOSS_METRIC_VERSION == 1
+        assert UNCALIBRATED_SELECTED_PROBABILITY_VERSION == 1
+
+
+# ---------------------------------------------------------------------------
+# Reliability summary: shared fixtures
+# ---------------------------------------------------------------------------
+
+
+def _reliability_observation(probability, correct):
+    """One recorded-selection observation with selected 'billing' at p.
+
+    The recorded selection is 'billing' even when it is not the argmax; the
+    record is honored exactly, so the reliability bin sees exactly ``p``.
+    """
+    tail = (1.0 - probability) / 2
+    return recorded_selection_observation(
+        three_way_probabilities(billing=probability, shipping=tail, returns=tail),
+        "billing",
+        resolved_truth("billing") if correct else resolved_truth("shipping"),
+    )
+
+
+def _reliability_bin_index(probability, bin_count):
+    result = evaluate_uncalibrated_winner_reliability(
+        evaluation_dataset([_reliability_observation(probability, True)]),
+        bin_count=bin_count,
+    )
+    counts = [bin.count for bin in result.bins]
+    assert sum(counts) == 1
+    return counts.index(1)
+
+
+# ---------------------------------------------------------------------------
+# Reliability summary: core hand calculation
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerReliabilityCore:
+    def test_hand_calculated_two_bin_summary(self):
+        # p/y: 0.10/0, 0.40/1, 0.60/1, 0.90/0 with bin_count = 2.
+        # bin0 [0.0, 0.5): p 0.10 (y=0), 0.40 (y=1) -> count 2, correct 1,
+        # mean 0.25, rate 0.5. bin1 [0.5, 1.0]: p 0.60 (y=1), 0.90 (y=0)
+        # -> count 2, correct 1, mean 0.75, rate 0.5.
+        observations = [
+            _reliability_observation(0.10, False),
+            _reliability_observation(0.40, True),
+            _reliability_observation(0.60, True),
+            _reliability_observation(0.90, False),
+        ]
+        result = evaluate_uncalibrated_winner_reliability(
+            evaluation_dataset(observations), bin_count=2
+        )
+        assert len(result.bins) == 2
+        bin0, bin1 = result.bins
+        assert (bin0.index, bin0.count, bin0.correct_count) == (0, 2, 1)
+        assert bin0.mean_selected_probability == pytest.approx(0.25)
+        assert bin0.empirical_correctness_rate == pytest.approx(0.5)
+        assert (bin1.index, bin1.count, bin1.correct_count) == (1, 2, 1)
+        assert bin1.mean_selected_probability == pytest.approx(0.75)
+        assert bin1.empirical_correctness_rate == pytest.approx(0.5)
+        assert sum(bin.count for bin in result.bins) == 4
+        assert sum(bin.correct_count for bin in result.bins) == 2
+
+    def test_bin_count_is_committed_in_the_identity(self):
+        dataset = evaluation_dataset([_reliability_observation(0.6, True)])
+        result = evaluate_uncalibrated_winner_reliability(dataset, bin_count=3)
+        assert result.bin_count == 3
+        assert result.binning_id == "equal-width"
+        assert result.binning_version == 1
+        assert result.reliability_id == "winner-reliability-curve"
+        assert result.reliability_version == 1
+
+
+# ---------------------------------------------------------------------------
+# Reliability summary: boundary ownership
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerReliabilityBoundaries:
+    @pytest.mark.parametrize(
+        ("probability", "expected_bin"),
+        [
+            (0.0, 0),
+            (0.1, 0),
+            (math.nextafter(0.5, 0.0), 0),
+            (0.5, 1),
+            (math.nextafter(0.5, 1.0), 1),
+            (0.9, 1),
+            (1.0, 1),
+        ],
+    )
+    def test_two_bin_endpoint_and_boundary_ownership(self, probability, expected_bin):
+        assert _reliability_bin_index(probability, 2) == expected_bin
+
+    @pytest.mark.parametrize(
+        ("probability", "expected_bin"),
+        [
+            (0.0, 0),
+            (math.nextafter(0.25, 0.0), 0),
+            (0.25, 1),
+            (math.nextafter(0.25, 1.0), 1),
+            (0.5, 2),
+            (0.75, 3),
+            (1.0, 3),
+        ],
+    )
+    def test_four_bin_interior_boundaries(self, probability, expected_bin):
+        # 0.25, 0.5, and 0.75 are exactly float-representable interior
+        # boundaries for bin_count = 4; each exact boundary belongs to the
+        # upper bin, nextafter-below belongs to the lower bin.
+        assert _reliability_bin_index(probability, 4) == expected_bin
+
+    def test_non_representable_rational_boundary_is_decided_by_the_exact_rational(self):
+        # 1/3 and 2/3 have no exact float representation. The contract compares
+        # the STORED float's exact rational value against the rational boundary,
+        # so both outcomes are pinned here independently of any floor(p / B)
+        # formula: each stored double falls strictly below its own boundary.
+        one_third = 1 / 3
+        two_thirds = 2 / 3
+        assert Fraction.from_float(one_third) < Fraction(1, 3)
+        assert Fraction.from_float(two_thirds) < Fraction(2, 3)
+        assert _reliability_bin_index(one_third, 3) == 0
+        assert _reliability_bin_index(two_thirds, 3) == 1
+        assert _reliability_bin_index(math.nextafter(one_third, 1.0), 3) == 1
+
+
+# ---------------------------------------------------------------------------
+# Reliability summary: empty bins
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerReliabilityEmptyBins:
+    def test_empty_bins_are_retained_with_none_statistics(self):
+        observations = [
+            _reliability_observation(0.1, True),
+            _reliability_observation(0.95, False),
+        ]
+        result = evaluate_uncalibrated_winner_reliability(
+            evaluation_dataset(observations), bin_count=4
+        )
+        assert len(result.bins) == 4
+        for index in (1, 2):
+            empty = result.bins[index]
+            assert (empty.index, empty.count, empty.correct_count) == (index, 0, 0)
+            assert empty.mean_selected_probability is None
+            assert empty.empirical_correctness_rate is None
+            assert empty.observation_fingerprints == ()
+        assert result.bins[0].count == 1
+        assert result.bins[3].count == 1
+
+    def test_empty_bins_serialize_as_null_not_nan_not_zero(self):
+        observations = [
+            _reliability_observation(0.1, True),
+            _reliability_observation(0.95, False),
+        ]
+        result = evaluate_uncalibrated_winner_reliability(
+            evaluation_dataset(observations), bin_count=4
+        )
+        payload = result.canonical_payload()
+        for index in (1, 2):
+            entry = payload["bins"][index]
+            assert entry["mean_selected_probability"] is None
+            assert entry["empirical_correctness_rate"] is None
+            assert entry["observation_fingerprints"] == []
+
+    def test_empty_bin_is_not_confused_with_an_observed_zero_rate(self):
+        # bin0 with one wrong observation has rate 0.0 and a real mean; an
+        # empty bin has None. The two must never collapse.
+        wrong_only = evaluate_uncalibrated_winner_reliability(
+            evaluation_dataset([_reliability_observation(0.1, False)]), bin_count=2
+        )
+        assert wrong_only.bins[0].empirical_correctness_rate == 0.0
+        assert wrong_only.bins[0].mean_selected_probability == pytest.approx(0.1)
+        assert wrong_only.bins[1].empirical_correctness_rate is None
+        assert wrong_only.bins[1].mean_selected_probability is None
+
+
+# ---------------------------------------------------------------------------
+# Reliability summary: global diagnostics alignment
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerReliabilityGlobalAlignment:
+    def test_bin_totals_match_the_diagnostics_artifact(self):
+        observations = [
+            _reliability_observation(0.05, True),
+            _reliability_observation(0.30, False),
+            _reliability_observation(0.55, True),
+            _reliability_observation(0.80, False),
+            _reliability_observation(0.95, True),
+        ]
+        dataset = evaluation_dataset(observations)
+        diagnostics = evaluate_uncalibrated_winner_diagnostics(dataset)
+        reliability = evaluate_uncalibrated_winner_reliability(dataset, bin_count=3)
+        assert sum(bin.count for bin in reliability.bins) == diagnostics.count == 5
+        assert sum(bin.correct_count for bin in reliability.bins) == diagnostics.correct_count
+        assert sum(bin.correct_count for bin in reliability.bins) / reliability.count == (
+            pytest.approx(diagnostics.empirical_correctness_rate)
+        )
+        weighted_mean = (
+            math.fsum(
+                bin.mean_selected_probability * bin.count
+                for bin in reliability.bins
+                if bin.count > 0
+            )
+            / reliability.count
+        )
+        assert weighted_mean == pytest.approx(diagnostics.mean_selected_probability)
+
+
+# ---------------------------------------------------------------------------
+# Reliability summary: cross-artifact provenance alignment
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerReliabilityCrossArtifactProvenance:
+    def test_four_evaluators_share_provenance_but_not_artifact_identity(self):
+        dataset = evaluation_dataset(
+            [
+                _reliability_observation(0.2, True),
+                _reliability_observation(0.7, False),
+                _diagnostics_taxonomy_miss_rows(1)[0],
+            ]
+        )
+        brier = evaluate_uncalibrated_winner_brier(dataset)
+        log_loss = evaluate_uncalibrated_winner_log_loss(dataset)
+        diagnostics = evaluate_uncalibrated_winner_diagnostics(dataset)
+        reliability = evaluate_uncalibrated_winner_reliability(dataset, bin_count=4)
+
+        assert reliability.evaluation_dataset_fingerprint == (brier.evaluation_dataset_fingerprint)
+        assert reliability.evaluation_dataset_fingerprint == (
+            log_loss.evaluation_dataset_fingerprint
+        )
+        assert reliability.evaluation_dataset_fingerprint == (
+            diagnostics.evaluation_dataset_fingerprint
+        )
+        assert reliability.evaluation_dataset_fingerprint_version == (
+            brier.evaluation_dataset_fingerprint_version
+        )
+        assert reliability.source_cohort_fingerprint == brier.source_cohort_fingerprint
+        assert reliability.source_cohort_fingerprint == diagnostics.source_cohort_fingerprint
+        assert reliability.source_cohort_fingerprint_version == (
+            brier.source_cohort_fingerprint_version
+        )
+        assert reliability.source_count == brier.source_count == log_loss.source_count
+        assert reliability.count == brier.count == log_loss.count == diagnostics.count
+        assert reliability.taxonomy_miss_count == brier.taxonomy_miss_count
+        assert reliability.unresolved_count == log_loss.unresolved_count
+        assert reliability.unadjudicated_resolved_count == (
+            diagnostics.unadjudicated_resolved_count
+        )
+        assert reliability.target == brier.target == log_loss.target == diagnostics.target
+        assert reliability.input_score_id == brier.input_score_id
+        assert reliability.input_score_version == diagnostics.input_score_version
+        assert (
+            len(
+                {
+                    brier.fingerprint,
+                    log_loss.fingerprint,
+                    diagnostics.fingerprint,
+                    reliability.fingerprint,
+                }
+            )
+            == 4
+        )
+
+
+# ---------------------------------------------------------------------------
+# Reliability summary: identity, provenance, multiplicity, permutation
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerReliabilityIdentity:
+    def test_different_bin_count_is_a_different_artifact(self):
+        dataset = evaluation_dataset(
+            [
+                _reliability_observation(0.1, True),
+                _reliability_observation(0.6, False),
+                _reliability_observation(0.9, True),
+            ]
+        )
+        five = evaluate_uncalibrated_winner_reliability(dataset, bin_count=5)
+        ten = evaluate_uncalibrated_winner_reliability(dataset, bin_count=10)
+        assert five.canonical_payload() != ten.canonical_payload()
+        assert five.fingerprint != ten.fingerprint
+
+    def test_row_permutation_gives_identical_bins_and_fingerprint(self):
+        observations = [
+            _reliability_observation(0.15, True),
+            _reliability_observation(0.85, False),
+            _reliability_observation(0.45, True),
+            _reliability_observation(0.55, False),
+        ]
+        forward = evaluate_uncalibrated_winner_reliability(
+            evaluation_dataset(observations), bin_count=4
+        )
+        reversed_result = evaluate_uncalibrated_winner_reliability(
+            evaluation_dataset(list(reversed(observations))), bin_count=4
+        )
+        assert forward.bins == reversed_result.bins
+        assert forward.fingerprint == reversed_result.fingerprint
+
+    def test_multiplicity_is_preserved_never_deduplicated(self):
+        observation = _reliability_observation(0.6, True)
+        single = evaluate_uncalibrated_winner_reliability(
+            evaluation_dataset([observation]), bin_count=2
+        )
+        doubled = evaluate_uncalibrated_winner_reliability(
+            evaluation_dataset([observation, observation]), bin_count=2
+        )
+        assert single.bins[1].count == 1
+        assert doubled.bins[1].count == 2
+        assert doubled.bins[1].correct_count == 2
+        assert doubled.bins[1].observation_fingerprints == (
+            observation.fingerprint,
+            observation.fingerprint,
+        )
+        assert doubled.bins[1].mean_selected_probability == (
+            single.bins[1].mean_selected_probability
+        )
+        assert doubled.bins[1].empirical_correctness_rate == (
+            single.bins[1].empirical_correctness_rate
+        )
+        assert doubled.fingerprint != single.fingerprint
+
+    def test_same_numerics_with_extra_taxonomy_misses_do_not_collapse(self):
+        eligible = [
+            _reliability_observation(0.3, True),
+            _reliability_observation(0.7, False),
+        ]
+        cohort_a = evaluation_cohort(eligible)
+        cohort_b = evaluation_cohort(eligible + _diagnostics_taxonomy_miss_rows(3))
+        reliability_a = evaluate_uncalibrated_winner_reliability(
+            CalibrationEvaluationDataset.from_cohort(cohort_a), bin_count=2
+        )
+        reliability_b = evaluate_uncalibrated_winner_reliability(
+            CalibrationEvaluationDataset.from_cohort(cohort_b), bin_count=2
+        )
+        for bin_a, bin_b in zip(reliability_a.bins, reliability_b.bins, strict=True):
+            assert (bin_a.count, bin_a.correct_count) == (bin_b.count, bin_b.correct_count)
+            assert bin_a.mean_selected_probability == bin_b.mean_selected_probability
+            assert bin_a.empirical_correctness_rate == bin_b.empirical_correctness_rate
+        assert reliability_a.source_cohort_fingerprint != reliability_b.source_cohort_fingerprint
+        assert reliability_a.evaluation_dataset_fingerprint != (
+            reliability_b.evaluation_dataset_fingerprint
+        )
+        assert reliability_a.fingerprint != reliability_b.fingerprint
+
+    def test_same_dataset_gives_same_fingerprint(self):
+        dataset = evaluation_dataset(
+            [_reliability_observation(0.2, True), _reliability_observation(0.8, False)]
+        )
+        first = evaluate_uncalibrated_winner_reliability(dataset, bin_count=3)
+        second = evaluate_uncalibrated_winner_reliability(dataset, bin_count=3)
+        assert first.canonical_payload() == second.canonical_payload()
+        assert first.fingerprint == second.fingerprint
+
+
+# ---------------------------------------------------------------------------
+# Reliability summary: construction guard and bin_count validation
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerReliabilityConstruction:
+    def test_direct_construction_is_rejected(self):
+        with pytest.raises(InvalidDecisionError, match="evaluate_uncalibrated_winner_reliability"):
+            WinnerReliabilityResult()
+
+    def test_replace_without_fields_is_rejected(self):
+        result = evaluate_uncalibrated_winner_reliability(
+            evaluation_dataset([_reliability_observation(0.5, True)]), bin_count=2
+        )
+        with pytest.raises(InvalidDecisionError, match="evaluate_uncalibrated_winner_reliability"):
+            replace(result)
+
+    def test_replace_with_bins_is_rejected_by_dataclasses(self):
+        # bins is declared init=False, so dataclasses.replace raises its own
+        # ValueError before the token-guarded __init__ ever runs.
+        result = evaluate_uncalibrated_winner_reliability(
+            evaluation_dataset([_reliability_observation(0.5, True)]), bin_count=2
+        )
+        with pytest.raises(ValueError, match="init=False"):
+            replace(result, bins=())
+
+    def test_evaluator_rejects_non_dataset(self):
+        with pytest.raises(InvalidDecisionError, match="CalibrationEvaluationDataset"):
+            evaluate_uncalibrated_winner_reliability("not-a-dataset", bin_count=2)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("bad_bin_count", [True, False, 0, -1, 2.0, "2", None])
+    def test_bin_count_validation_rejects_non_real_ints(self, bad_bin_count):
+        dataset = evaluation_dataset([_reliability_observation(0.5, True)])
+        with pytest.raises(InvalidDecisionError, match="bin_count"):
+            evaluate_uncalibrated_winner_reliability(dataset, bin_count=bad_bin_count)
+
+    def test_no_hidden_maximum_bin_count(self):
+        dataset = evaluation_dataset([_reliability_observation(0.5, True)])
+        result = evaluate_uncalibrated_winner_reliability(dataset, bin_count=1000)
+        assert len(result.bins) == 1000
+        assert sum(bin.count for bin in result.bins) == 1
+
+
+# ---------------------------------------------------------------------------
+# Reliability summary: no semantic conflation
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerReliabilityNoConflation:
+    def test_result_has_no_calibration_prediction_confidence_or_gap_fields(self):
+        names = {f.name for f in fields(WinnerReliabilityResult)}
+        for forbidden in (
+            "calibrated",
+            "predicted_correctness",
+            "confidence",
+            "gap",
+            "absolute_gap",
+            "calibration_error",
+            "overconfidence",
+            "underconfidence",
+        ):
+            assert forbidden not in names
+        bin_names = {f.name for f in fields(ReliabilityBinSummary)}
+        for forbidden in ("gap", "absolute_gap", "calibration_error", "confidence"):
+            assert forbidden not in bin_names
+
+    def test_no_ece_symbol_exists_in_the_module(self):
+        import probvenance.calibration_evaluation as module
+
+        for symbol in ("ece", "expected_calibration_error", "weighted_gap"):
+            assert not hasattr(module, symbol)
+        source_names = {name for name in dir(module)}
+        assert not any("ece" in name.lower() for name in source_names)
+
+    def test_no_equal_mass_implementation_exists(self):
+        import probvenance.calibration_evaluation as module
+
+        assert not any("equal_mass" in name for name in dir(module))
+        assert not any("quantile" in name.lower() for name in dir(module))
+
+    def test_evaluation_does_not_mutate_observations_or_dataset(self):
+        observation = _reliability_observation(0.4, True)
+        dataset = evaluation_dataset([observation])
+        before_observation = observation.fingerprint
+        before_dataset = dataset.fingerprint
+        evaluate_uncalibrated_winner_reliability(dataset, bin_count=3)
+        assert observation.fingerprint == before_observation
+        assert dataset.fingerprint == before_dataset
+
+    def test_payload_is_finite_fingerprintable_and_stable(self):
+        dataset = evaluation_dataset(
+            [
+                _reliability_observation(0.1, True),
+                _reliability_observation(0.9, False),
+            ]
+        )
+        result = evaluate_uncalibrated_winner_reliability(dataset, bin_count=4)
+        payload = result.canonical_payload()
+
+        def _assert_finite(value):
+            if isinstance(value, float):
+                assert math.isfinite(value)
+            elif isinstance(value, dict):
+                for nested in value.values():
+                    _assert_finite(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    _assert_finite(nested)
+
+        _assert_finite(payload)
+        assert result.fingerprint == fingerprint(payload)
+        assert len(result.fingerprint) == 64
+
+
+# ---------------------------------------------------------------------------
+# Reliability summary: version guards
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerReliabilityVersionGuards:
+    def test_new_reliability_versions_are_one(self):
+        assert EQUAL_WIDTH_BINNING_ID == "equal-width"
+        assert EQUAL_WIDTH_BINNING_VERSION == 1
+        assert WINNER_RELIABILITY_CURVE_ID == "winner-reliability-curve"
+        assert WINNER_RELIABILITY_CURVE_VERSION == 1
+        assert WINNER_RELIABILITY_RESULT_FINGERPRINT_VERSION == 1
+
+    def test_pre_existing_versions_unchanged(self):
+        assert CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION == 1
+        assert CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION == 2
+        assert BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION == 2
+        assert LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION == 2
+        assert WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION == 1
+        assert BRIER_METRIC_VERSION == 1
+        assert LOG_LOSS_METRIC_VERSION == 1
+        assert EMPIRICAL_CORRECTNESS_RATE_VERSION == 1
+        assert MEAN_SELECTED_PROBABILITY_VERSION == 1
+        assert EMPIRICAL_CONSTANT_BRIER_REFERENCE_VERSION == 1
         assert UNCALIBRATED_SELECTED_PROBABILITY_VERSION == 1

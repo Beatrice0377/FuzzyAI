@@ -573,9 +573,65 @@ has been fitted, and no calibration-quality claim is made anywhere.
    by `dataclasses` itself with a `ValueError`). Identical numeric diagnostics
    from cohorts with different exclusions never collapse to the same
    diagnostics fingerprint. Evidence: `tests/test_calibration_evaluation.py`
-   (`TestWinnerDiagnosticsConstruction`,
-   `TestWinnerDiagnosticsCrossArtifactAlignment`, `TestWinnerDiagnosticsIdentity`,
-   `TestWinnerDiagnosticsVersionGuards`).
+    (`TestWinnerDiagnosticsConstruction`,
+    `TestWinnerDiagnosticsCrossArtifactAlignment`, `TestWinnerDiagnosticsIdentity`,
+    `TestWinnerDiagnosticsVersionGuards`).
+  - `[V]` The equal-width reliability binning deterministically partitions the
+    exact metric-eligible population into `bin_count` regions with the frozen
+    interval contract (`bin 0` owns `[0/B, 1/B)`, bin `i` owns
+    `[i/B, (i+1)/B)`, the last bin owns `[(B-1)/B, 1]` with an inclusive upper
+    bound), so `p = 0` falls in the first bin, `p = 1` falls in the last bin,
+    and an exact interior boundary `p = i/B` belongs to bin `i`, never to bin
+    `i-1`. Boundary ownership is decided by comparing the stored probability
+    value against the mathematical rational boundaries `i/B` via exact
+    `fractions.Fraction.from_float` comparison, never by binary floating
+    multiplication; `math.nextafter` probes just below and just above each
+    tested boundary land in the lower and upper bin respectively, and a
+    rational boundary with no exact float representation (such as `1/3`) is
+    decided by that exact rational comparison. `bin_count` must be a real
+    `int` with `bin_count >= 1` (`True`, `False`, `0`, negatives, floats,
+    strings, and `None` are rejected with `InvalidDecisionError`), and there
+    is no hidden maximum. Evidence: `tests/test_calibration_evaluation.py`
+    (`TestWinnerReliabilityCore`, `TestWinnerReliabilityBoundaries`,
+    `TestWinnerReliabilityConstruction`).
+  - `[V]` Reliability artifacts retain empty bins and commit dataset, cohort,
+    exclusion, input-score, binning, and per-bin membership provenance:
+    `len(bins) == bin_count` always holds, an empty bin carries `count = 0`,
+    `correct_count = 0`, both statistics as `null` (never NaN, never a fake
+    `0.0`, so an empty interval is distinguishable from an observed rate of
+    zero), and no members; each non-empty bin carries the mean selected
+    probability (`math.fsum` over deterministically sorted member
+    probabilities, so dataset row order cannot change a bin mean), the
+    empirical correctness rate, and the sorted, multiplicity-preserving
+    member observation fingerprints (a duplicated row appears twice, never
+    deduplicated). `WinnerReliabilityResult` (fingerprint version 1,
+    reliability id `winner-reliability-curve` version 1, binning id
+    `equal-width` version 1) commits the evaluation dataset fingerprint and
+    payload version, the source cohort fingerprint and payload version,
+    `source_count`, the evaluated `count`, the three exclusion counts, the
+    target (`winner_correctness`), the input-score identity and version
+    (`uncalibrated-selected-probability`, version 1), and the binning
+    configuration (`bin_count`); the only supported construction path is
+    `evaluate_uncalibrated_winner_reliability(dataset, bin_count=...)`
+    (direct construction and `dataclasses.replace(result)` raise
+    `InvalidDecisionError`; `dataclasses.replace(result, bins=...)` is
+    rejected by `dataclasses` itself with a `ValueError`). On one dataset the
+    four evaluators (Brier, log loss, diagnostics, reliability) agree on all
+    shared provenance while their artifact fingerprints all differ; different
+    `bin_count` values on the same dataset produce different canonical
+    payloads and fingerprints; identical bin numerics from cohorts with
+    different exclusions never collapse to the same reliability fingerprint;
+    and the per-bin totals align with the diagnostics artifact (`sum(bin.count)
+    == count`, `sum(bin.correct_count) == correct_count`, the count-weighted
+    bin mean matches the diagnostics mean selected probability, and the
+    correctness totals match the empirical correctness rate). No per-bin gap,
+    calibration-error, or ECE quantity exists in the artifact, and the
+    summary is a pre-calibration description of raw-score regions, not
+    calibration evidence. Evidence: `tests/test_calibration_evaluation.py`
+    (`TestWinnerReliabilityEmptyBins`, `TestWinnerReliabilityGlobalAlignment`,
+    `TestWinnerReliabilityCrossArtifactProvenance`,
+    `TestWinnerReliabilityIdentity`, `TestWinnerReliabilityNoConflation`,
+    `TestWinnerReliabilityVersionGuards`).
 
 These claims are deterministic implementation claims about the evaluation
 foundation only. They are NOT claims that any model is calibrated, that any
