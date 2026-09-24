@@ -47,6 +47,7 @@ from probvenance.calibration import (
     predicted_winner_correctness,
 )
 from probvenance.calibration_evaluation import (
+    _PROFILE_APPLIED_EVALUATION_ROW_CONSTRUCTION_TOKEN,
     BRIER_METRIC_ID,
     BRIER_METRIC_VERSION,
     CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION,
@@ -79,6 +80,7 @@ from probvenance.calibration_evaluation import (
     CalibrationEvaluationDataset,
     EvaluationSplitRole,
     ProfileAppliedEvaluationDataset,
+    ProfileAppliedEvaluationRow,
     apply_profile_to_evaluation_dataset,
     evaluate_post_calibration_winner_binned_absolute_gap,
     evaluate_post_calibration_winner_brier,
@@ -429,15 +431,10 @@ class TestPostCalibrationBrier:
         dataset = evaluation_dataset([(0.6, True), (0.9, False), (0.8, True)])
         profile = training_profile([(0.7, True), (0.7, False)])
         applied = apply_profile_to_evaluation_dataset(dataset, profile)
-        result = evaluate_post_calibration_winner_brier(dataset, applied)
-        labels_by_fingerprint = {
-            observation.fingerprint: 1.0 if observation.correct else 0.0
-            for observation in dataset.observations
-        }
+        result = evaluate_post_calibration_winner_brier(applied)
         expected = (
             math.fsum(
-                (row.predicted_correctness - labels_by_fingerprint[row.observation_fingerprint])
-                ** 2
+                (row.predicted_correctness - (1.0 if row.correct else 0.0)) ** 2
                 for row in applied.rows
             )
             / applied.count
@@ -453,7 +450,7 @@ class TestPostCalibrationBrier:
         dataset = evaluation_dataset([(0.6, True), (0.9, False)])
         profile = training_profile([(0.7, True)])
         applied = apply_profile_to_evaluation_dataset(dataset, profile)
-        result = evaluate_post_calibration_winner_brier(dataset, applied)
+        result = evaluate_post_calibration_winner_brier(applied)
         assert result.application_fingerprint == applied.fingerprint
         assert result.profile_fingerprint == profile.fingerprint
         assert result.evaluation_dataset_fingerprint == dataset.fingerprint
@@ -463,7 +460,7 @@ class TestPostCalibrationBrier:
     def test_result_schema_is_new_version(self) -> None:
         dataset = evaluation_dataset([(0.6, True)])
         applied = apply_profile_to_evaluation_dataset(dataset, training_profile([(0.7, True)]))
-        payload = evaluate_post_calibration_winner_brier(dataset, applied).canonical_payload()
+        payload = evaluate_post_calibration_winner_brier(applied).canonical_payload()
         assert payload["v"] == POST_CALIBRATION_BRIER_RESULT_FINGERPRINT_VERSION
 
 
@@ -472,13 +469,10 @@ class TestPostCalibrationLogLoss:
         dataset = evaluation_dataset([(0.6, True), (0.9, False)])
         profile = training_profile([(0.7, True), (0.7, False)])
         applied = apply_profile_to_evaluation_dataset(dataset, profile)
-        result = evaluate_post_calibration_winner_log_loss(dataset, applied)
-        labels_by_fingerprint = {
-            observation.fingerprint: observation.correct for observation in dataset.observations
-        }
+        result = evaluate_post_calibration_winner_log_loss(applied)
         terms = [
             math.log(row.predicted_correctness)
-            if labels_by_fingerprint[row.observation_fingerprint]
+            if row.correct
             else math.log(1.0 - row.predicted_correctness)
             for row in applied.rows
         ]
@@ -494,7 +488,7 @@ class TestPostCalibrationLogLoss:
         confident = internal_profile(training, slope=1000.0, intercept=0.0)
         applied = apply_profile_to_evaluation_dataset(dataset, confident)
         assert all(row.predicted_correctness == 1.0 for row in applied.rows)
-        result = evaluate_post_calibration_winner_log_loss(dataset, applied)
+        result = evaluate_post_calibration_winner_log_loss(applied)
         assert result.value == math.inf
 
     def test_infinity_is_canonicalized_not_raw_json(self) -> None:
@@ -502,7 +496,7 @@ class TestPostCalibrationLogLoss:
         training = training_dataset_for([(0.9, True)])
         confident = internal_profile(training, slope=1000.0, intercept=0.0)
         applied = apply_profile_to_evaluation_dataset(dataset, confident)
-        result = evaluate_post_calibration_winner_log_loss(dataset, applied)
+        result = evaluate_post_calibration_winner_log_loss(applied)
         payload = result.canonical_payload()
         assert payload["value"]["kind"] == "positive_infinity"
         assert payload["value"]["number"] is None
@@ -512,7 +506,7 @@ class TestPostCalibrationLogLoss:
     def test_finite_result_schema_is_new_version(self) -> None:
         dataset = evaluation_dataset([(0.6, True), (0.9, False)])
         applied = apply_profile_to_evaluation_dataset(dataset, training_profile([(0.7, True)]))
-        payload = evaluate_post_calibration_winner_log_loss(dataset, applied).canonical_payload()
+        payload = evaluate_post_calibration_winner_log_loss(applied).canonical_payload()
         assert payload["v"] == POST_CALIBRATION_LOG_LOSS_RESULT_FINGERPRINT_VERSION
 
 
@@ -520,7 +514,7 @@ class TestPostCalibrationDiagnostics:
     def test_mean_predicted_correctness_has_its_own_identity(self) -> None:
         dataset = evaluation_dataset([(0.6, True), (0.9, False)])
         applied = apply_profile_to_evaluation_dataset(dataset, training_profile([(0.7, True)]))
-        result = evaluate_post_calibration_winner_diagnostics(dataset, applied)
+        result = evaluate_post_calibration_winner_diagnostics(applied)
         expected = math.fsum(row.predicted_correctness for row in applied.rows) / applied.count
         assert result.mean_predicted_correctness == expected
         payload = result.canonical_payload()
@@ -533,7 +527,7 @@ class TestPostCalibrationDiagnostics:
     def test_empirical_correctness_rate_is_the_same_target_statistic(self) -> None:
         dataset = evaluation_dataset([(0.6, True), (0.9, False), (0.8, True)])
         applied = apply_profile_to_evaluation_dataset(dataset, training_profile([(0.7, True)]))
-        post = evaluate_post_calibration_winner_diagnostics(dataset, applied)
+        post = evaluate_post_calibration_winner_diagnostics(applied)
         pre = evaluate_uncalibrated_winner_diagnostics(dataset)
         assert post.empirical_correctness_rate == pre.empirical_correctness_rate
         assert EMPIRICAL_CORRECTNESS_RATE_ID == "empirical-winner-correctness-rate"
@@ -542,7 +536,7 @@ class TestPostCalibrationDiagnostics:
     def test_constant_brier_reference_semantics_unchanged(self) -> None:
         dataset = evaluation_dataset([(0.6, True), (0.9, False), (0.8, True)])
         applied = apply_profile_to_evaluation_dataset(dataset, training_profile([(0.7, True)]))
-        post = evaluate_post_calibration_winner_diagnostics(dataset, applied)
+        post = evaluate_post_calibration_winner_diagnostics(applied)
         pre = evaluate_uncalibrated_winner_diagnostics(dataset)
         assert post.empirical_constant_brier_reference == pre.empirical_constant_brier_reference
         assert EMPIRICAL_CONSTANT_BRIER_REFERENCE_ID
@@ -551,7 +545,7 @@ class TestPostCalibrationDiagnostics:
     def test_diagnostics_schema_is_new_version(self) -> None:
         dataset = evaluation_dataset([(0.6, True)])
         applied = apply_profile_to_evaluation_dataset(dataset, training_profile([(0.7, True)]))
-        payload = evaluate_post_calibration_winner_diagnostics(dataset, applied).canonical_payload()
+        payload = evaluate_post_calibration_winner_diagnostics(applied).canonical_payload()
         assert payload["v"] == POST_CALIBRATION_DIAGNOSTICS_RESULT_FINGERPRINT_VERSION
 
 
@@ -559,7 +553,7 @@ class TestPostCalibrationReliability:
     def test_bin_summary_uses_the_post_field_name(self) -> None:
         dataset = evaluation_dataset([(0.6, True), (0.9, False), (0.8, True)])
         applied = apply_profile_to_evaluation_dataset(dataset, training_profile([(0.7, True)]))
-        result = evaluate_post_calibration_winner_reliability(dataset, applied, bin_count=4)
+        result = evaluate_post_calibration_winner_reliability(applied, bin_count=4)
         summary = result.bins[0]
         assert hasattr(summary, "mean_predicted_correctness")
         assert not hasattr(summary, "mean_selected_probability")
@@ -570,7 +564,7 @@ class TestPostCalibrationReliability:
     def test_binning_policy_is_reused(self) -> None:
         dataset = evaluation_dataset([(0.6, True), (0.9, False)])
         applied = apply_profile_to_evaluation_dataset(dataset, training_profile([(0.7, True)]))
-        post = evaluate_post_calibration_winner_reliability(dataset, applied, bin_count=5)
+        post = evaluate_post_calibration_winner_reliability(applied, bin_count=5)
         pre = evaluate_uncalibrated_winner_reliability(dataset, bin_count=5)
         assert post.binning_id == pre.binning_id == EQUAL_WIDTH_BINNING_ID
         assert post.binning_version == pre.binning_version == EQUAL_WIDTH_BINNING_VERSION
@@ -579,7 +573,7 @@ class TestPostCalibrationReliability:
     def test_empty_bins_are_retained(self) -> None:
         dataset = evaluation_dataset([(0.6, True), (0.9, False)])
         applied = apply_profile_to_evaluation_dataset(dataset, training_profile([(0.7, True)]))
-        result = evaluate_post_calibration_winner_reliability(dataset, applied, bin_count=10)
+        result = evaluate_post_calibration_winner_reliability(applied, bin_count=10)
         assert len(result.bins) == 10
         empty = [b for b in result.bins if b.count == 0]
         assert empty
@@ -591,7 +585,7 @@ class TestPostCalibrationReliability:
     def test_membership_is_sorted_multiplicity_preserving(self) -> None:
         dataset = evaluation_dataset([(0.6, True), (0.6, True), (0.9, False)])
         applied = apply_profile_to_evaluation_dataset(dataset, training_profile([(0.7, True)]))
-        result = evaluate_post_calibration_winner_reliability(dataset, applied, bin_count=5)
+        result = evaluate_post_calibration_winner_reliability(applied, bin_count=5)
         assert sum(summary.count for summary in result.bins) == 3
         for summary in result.bins:
             assert list(summary.observation_fingerprints) == sorted(
@@ -603,7 +597,7 @@ class TestPostCalibrationReliability:
         dataset = evaluation_dataset([(0.6, True)])
         applied = apply_profile_to_evaluation_dataset(dataset, training_profile([(0.7, True)]))
         payload = evaluate_post_calibration_winner_reliability(
-            dataset, applied, bin_count=4
+            applied, bin_count=4
         ).canonical_payload()
         assert payload["v"] == POST_CALIBRATION_RELIABILITY_RESULT_FINGERPRINT_VERSION
         assert WINNER_RELIABILITY_RESULT_FINGERPRINT_VERSION == 2
@@ -613,7 +607,7 @@ class TestPostCalibrationBinnedGap:
     def test_gap_derives_only_from_reliability(self) -> None:
         dataset = evaluation_dataset([(0.6, True), (0.9, False), (0.8, True)])
         applied = apply_profile_to_evaluation_dataset(dataset, training_profile([(0.7, True)]))
-        reliability = evaluate_post_calibration_winner_reliability(dataset, applied, bin_count=4)
+        reliability = evaluate_post_calibration_winner_reliability(applied, bin_count=4)
         result = evaluate_post_calibration_winner_binned_absolute_gap(reliability)
         expected = math.fsum(
             summary.count
@@ -633,7 +627,7 @@ class TestPostCalibrationBinnedGap:
         # mean of bin gaps.
         steep = internal_profile(training, slope=10.0, intercept=-5.0)
         applied = apply_profile_to_evaluation_dataset(dataset, steep)
-        reliability = evaluate_post_calibration_winner_reliability(dataset, applied, bin_count=10)
+        reliability = evaluate_post_calibration_winner_reliability(applied, bin_count=10)
         non_empty = [b for b in reliability.bins if b.count > 0]
         assert len({b.count for b in non_empty}) > 1
         result = evaluate_post_calibration_winner_binned_absolute_gap(reliability)
@@ -652,7 +646,7 @@ class TestPostCalibrationBinnedGap:
     def test_gap_artifact_identity(self) -> None:
         dataset = evaluation_dataset([(0.6, True), (0.9, False)])
         applied = apply_profile_to_evaluation_dataset(dataset, training_profile([(0.7, True)]))
-        reliability = evaluate_post_calibration_winner_reliability(dataset, applied, bin_count=4)
+        reliability = evaluate_post_calibration_winner_reliability(applied, bin_count=4)
         result = evaluate_post_calibration_winner_binned_absolute_gap(reliability)
         assert result.aggregate_id == POST_CALIBRATION_WINNER_BINNED_ABSOLUTE_GAP_ID
         assert result.aggregate_version == POST_CALIBRATION_WINNER_BINNED_ABSOLUTE_GAP_VERSION
@@ -673,21 +667,19 @@ class TestPrePostCoherence:
         profile = training_profile([(0.7, True), (0.7, False)])
         applied = apply_profile_to_evaluation_dataset(dataset, profile)
         pre_reliability = evaluate_uncalibrated_winner_reliability(dataset, bin_count=4)
-        post_reliability = evaluate_post_calibration_winner_reliability(
-            dataset, applied, bin_count=4
-        )
+        post_reliability = evaluate_post_calibration_winner_reliability(applied, bin_count=4)
         pairs = [
             (
                 evaluate_uncalibrated_winner_brier(dataset),
-                evaluate_post_calibration_winner_brier(dataset, applied),
+                evaluate_post_calibration_winner_brier(applied),
             ),
             (
                 evaluate_uncalibrated_winner_log_loss(dataset),
-                evaluate_post_calibration_winner_log_loss(dataset, applied),
+                evaluate_post_calibration_winner_log_loss(applied),
             ),
             (
                 evaluate_uncalibrated_winner_diagnostics(dataset),
-                evaluate_post_calibration_winner_diagnostics(dataset, applied),
+                evaluate_post_calibration_winner_diagnostics(applied),
             ),
             (pre_reliability, post_reliability),
             (
@@ -717,22 +709,20 @@ class TestPrePostCoherence:
 
         pairs = [
             (
-                evaluate_post_calibration_winner_brier(plain, plain_applied),
-                evaluate_post_calibration_winner_brier(extended, extended_applied),
+                evaluate_post_calibration_winner_brier(plain_applied),
+                evaluate_post_calibration_winner_brier(extended_applied),
             ),
             (
-                evaluate_post_calibration_winner_log_loss(plain, plain_applied),
-                evaluate_post_calibration_winner_log_loss(extended, extended_applied),
+                evaluate_post_calibration_winner_log_loss(plain_applied),
+                evaluate_post_calibration_winner_log_loss(extended_applied),
             ),
             (
-                evaluate_post_calibration_winner_diagnostics(plain, plain_applied),
-                evaluate_post_calibration_winner_diagnostics(extended, extended_applied),
+                evaluate_post_calibration_winner_diagnostics(plain_applied),
+                evaluate_post_calibration_winner_diagnostics(extended_applied),
             ),
             (
-                evaluate_post_calibration_winner_reliability(plain, plain_applied, bin_count=4),
-                evaluate_post_calibration_winner_reliability(
-                    extended, extended_applied, bin_count=4
-                ),
+                evaluate_post_calibration_winner_reliability(plain_applied, bin_count=4),
+                evaluate_post_calibration_winner_reliability(extended_applied, bin_count=4),
             ),
         ]
         for plain_artifact, extended_artifact in pairs:
@@ -748,8 +738,8 @@ class TestPrePostCoherence:
         first_applied = apply_profile_to_evaluation_dataset(dataset, first)
         second_applied = apply_profile_to_evaluation_dataset(dataset, second)
         assert first_applied.fingerprint != second_applied.fingerprint
-        first_brier = evaluate_post_calibration_winner_brier(dataset, first_applied)
-        second_brier = evaluate_post_calibration_winner_brier(dataset, second_applied)
+        first_brier = evaluate_post_calibration_winner_brier(first_applied)
+        second_brier = evaluate_post_calibration_winner_brier(second_applied)
         assert first_brier.value == second_brier.value
         assert first_brier.fingerprint != second_brier.fingerprint
 
@@ -769,9 +759,9 @@ class TestSyntheticEffects:
             dataset, training_profile(rows, l2_strength=0.01)
         )
         pre_brier = evaluate_uncalibrated_winner_brier(dataset)
-        post_brier = evaluate_post_calibration_winner_brier(dataset, applied)
+        post_brier = evaluate_post_calibration_winner_brier(applied)
         pre_log = evaluate_uncalibrated_winner_log_loss(dataset)
-        post_log = evaluate_post_calibration_winner_log_loss(dataset, applied)
+        post_log = evaluate_post_calibration_winner_log_loss(applied)
         assert post_brier.value < pre_brier.value
         assert post_log.value < pre_log.value
 
@@ -783,7 +773,7 @@ class TestSyntheticEffects:
         dataset = evaluation_dataset([(0.6, False)] * 10)
         applied = apply_profile_to_evaluation_dataset(dataset, profile)
         pre = evaluate_uncalibrated_winner_brier(dataset)
-        post = evaluate_post_calibration_winner_brier(dataset, applied)
+        post = evaluate_post_calibration_winner_brier(applied)
         assert post.value > pre.value
 
     def test_no_automatic_improvement_verdict_exists(self) -> None:
@@ -805,8 +795,8 @@ class TestPostMetricLabelBinding:
         return dataset, apply_profile_to_evaluation_dataset(dataset, profile)
 
     def test_metric_values_are_row_order_independent(self) -> None:
-        dataset, applied = self._applied()
-        baseline = evaluate_post_calibration_winner_brier(dataset, applied).value
+        _dataset, applied = self._applied()
+        baseline = evaluate_post_calibration_winner_brier(applied).value
         for permuted in (
             list(reversed(self.ROWS)),
             self.ROWS[5:] + self.ROWS[:5],
@@ -816,7 +806,7 @@ class TestPostMetricLabelBinding:
             other_applied = apply_profile_to_evaluation_dataset(
                 other, training_profile([(0.6, True)] * 3 + [(0.9, False)] * 3)
             )
-            assert evaluate_post_calibration_winner_brier(other, other_applied).value == baseline
+            assert evaluate_post_calibration_winner_brier(other_applied).value == baseline
 
     def test_every_post_metric_is_row_order_independent(self) -> None:
         dataset, applied = self._applied()
@@ -825,28 +815,92 @@ class TestPostMetricLabelBinding:
             permuted, training_profile([(0.6, True)] * 3 + [(0.9, False)] * 3)
         )
         for builder in (
-            lambda s, a: evaluate_post_calibration_winner_brier(s, a),
-            lambda s, a: evaluate_post_calibration_winner_log_loss(s, a),
-            lambda s, a: evaluate_post_calibration_winner_diagnostics(s, a),
-            lambda s, a: evaluate_post_calibration_winner_reliability(s, a, bin_count=4),
+            lambda s, a: evaluate_post_calibration_winner_brier(a),
+            lambda s, a: evaluate_post_calibration_winner_log_loss(a),
+            lambda s, a: evaluate_post_calibration_winner_diagnostics(a),
+            lambda s, a: evaluate_post_calibration_winner_reliability(a, bin_count=4),
         ):
             assert (
                 builder(dataset, applied).canonical_payload()
                 == builder(permuted, permuted_applied).canonical_payload()
             )
 
-    def test_unrelated_source_with_matching_count_fails_closed(self) -> None:
+    def test_wrong_source_cannot_be_supplied_by_api_shape(self) -> None:
+        # The original MF1/MF1b defect was that a metric paired applied rows with
+        # a separately supplied source by position. The one-input API removes the
+        # call shape entirely, so a wrong source can no longer be passed at all.
+        for function in (
+            evaluate_post_calibration_winner_brier,
+            evaluate_post_calibration_winner_log_loss,
+            evaluate_post_calibration_winner_diagnostics,
+        ):
+            assert list(inspect.signature(function).parameters) == ["applied"]
+        assert list(inspect.signature(evaluate_post_calibration_winner_reliability).parameters) == [
+            "applied",
+            "bin_count",
+        ]
+        assert list(
+            inspect.signature(evaluate_post_calibration_winner_binned_absolute_gap).parameters
+        ) == ["reliability"]
+
+    def test_applied_rows_commit_derived_labels_never_caller_labels(self) -> None:
+        dataset, applied = self._applied()
+        labels_by_fingerprint = {
+            observation.fingerprint: observation.correct for observation in dataset.observations
+        }
+        for row in applied.rows:
+            assert row.correct is labels_by_fingerprint[row.observation_fingerprint]
+            assert isinstance(row.correct, bool)
+
+
+class TestApplicationRowLabelIntegrity:
+    def _applied(self) -> tuple[CalibrationEvaluationDataset, Any]:
+        profile = training_profile([(0.6, True), (0.9, False)])
+        dataset = evaluation_dataset([(0.6, True), (0.9, False)])
+        return dataset, apply_profile_to_evaluation_dataset(dataset, profile)
+
+    def test_a_row_requires_a_real_bool_label(self) -> None:
+        for forged in (1, 0, None, "true", 1.0):
+            with pytest.raises(InvalidDecisionError):
+                ProfileAppliedEvaluationRow(
+                    "a" * 64,
+                    forged,
+                    0.5,
+                    _construction_token=_PROFILE_APPLIED_EVALUATION_ROW_CONSTRUCTION_TOKEN,
+                )
+
+    def test_a_row_rejects_direct_construction_and_replace(self) -> None:
+        with pytest.raises(InvalidDecisionError):
+            ProfileAppliedEvaluationRow("a" * 64, True, 0.5)
         _, applied = self._applied()
-        unrelated = evaluation_dataset([(0.6, False)] * 6 + [(0.9, False)] * 6)
-        assert unrelated.fingerprint != applied.evaluation_dataset_fingerprint
         with pytest.raises(InvalidDecisionError):
-            evaluate_post_calibration_winner_brier(unrelated, applied)
+            replace(applied.rows[0], correct=not applied.rows[0].correct)
+
+    def test_application_artifact_rejects_direct_construction(self) -> None:
+        _, applied = self._applied()
         with pytest.raises(InvalidDecisionError):
-            evaluate_post_calibration_winner_log_loss(unrelated, applied)
+            ProfileAppliedEvaluationDataset((applied.rows[0],), EvaluationSplitRole.VALIDATION, "e")
         with pytest.raises(InvalidDecisionError):
-            evaluate_post_calibration_winner_diagnostics(unrelated, applied)
+            replace(applied, split_id="other")
+
+    def test_forged_dataset_without_a_bool_label_fails_closed(self) -> None:
+        profile = training_profile([(0.6, True)] * 3 + [(0.9, False)] * 3)
+        dataset = evaluation_dataset([(0.6, True), (0.9, False)])
+        forged_observations = list(dataset.observations)
+        object.__setattr__(forged_observations[0], "correct", None)
+        forged = object.__new__(CalibrationEvaluationDataset)
+        object.__setattr__(forged, "observations", tuple(forged_observations))
+        object.__setattr__(forged, "split_role", dataset.split_role)
+        object.__setattr__(forged, "split_id", dataset.split_id)
+        object.__setattr__(forged, "source_cohort_fingerprint", dataset.source_cohort_fingerprint)
+        object.__setattr__(forged, "source_count", dataset.source_count)
+        object.__setattr__(forged, "taxonomy_miss_count", dataset.taxonomy_miss_count)
+        object.__setattr__(forged, "unresolved_count", dataset.unresolved_count)
+        object.__setattr__(
+            forged, "unadjudicated_resolved_count", dataset.unadjudicated_resolved_count
+        )
         with pytest.raises(InvalidDecisionError):
-            evaluate_post_calibration_winner_reliability(unrelated, applied, bin_count=4)
+            apply_profile_to_evaluation_dataset(forged, profile)
 
 
 # ---------------------------------------------------------------------------
@@ -899,8 +953,13 @@ class TestFrozenIdentities:
         assert WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION == 2
         assert CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION == 1
 
-    def test_new_schemas_are_version_one(self) -> None:
-        assert PROFILE_APPLIED_EVALUATION_DATASET_FINGERPRINT_VERSION == 1
+    def test_application_schema_bumped_and_post_result_schemas_stayed(self) -> None:
+        # Adding the derived `correct` label to each canonical application row is
+        # a real application payload schema change, so its version moved 1 -> 2.
+        # The post result payloads did NOT change shape: they merely carry the new
+        # upstream application fingerprint/version value, so their own versions
+        # stay 1.
+        assert PROFILE_APPLIED_EVALUATION_DATASET_FINGERPRINT_VERSION == 2
         assert POST_CALIBRATION_BRIER_RESULT_FINGERPRINT_VERSION == 1
         assert POST_CALIBRATION_LOG_LOSS_RESULT_FINGERPRINT_VERSION == 1
         assert POST_CALIBRATION_DIAGNOSTICS_RESULT_FINGERPRINT_VERSION == 1

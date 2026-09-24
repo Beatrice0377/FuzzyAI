@@ -394,8 +394,8 @@ calibratable together; see INV-23 and INV-24.
   `TestDatasetPoolingSemantics::test_label_source_pooling_and_fingerprint_distinction_combined`).
 
 These claims are about the deterministic data model only. They say nothing
-about the quality of any calibration produced from such data; no calibration
-has been fitted, and no calibration-quality claim is made anywhere.
+about the quality of any calibration fitted from such data, and no
+calibration-quality claim is made anywhere.
 
 ### Pre-calibration evaluation foundation (Phase 4A evaluation)
 
@@ -1136,12 +1136,27 @@ them generalises to other models, revisions, prompts, or tasks.
   `tests/test_profile_application.py::TestPostCalibrationReliability`,
   `...::TestPostCalibrationBinnedGap`, `...::TestFrozenIdentities`.
 
-- [V] Post-calibration labels are bound to observation identity, never to
-  caller position: the applied artifact's rows and the labels drawn from the
-  source evaluation dataset are aligned by observation fingerprint, so the same
-  observation multiset in any caller order yields the same post-calibration
-  metric payload and fingerprint, and a source dataset that does not cover the
-  applied artifact fails closed instead of silently mislabelling rows. Evidence:
+- [V] `ProfileAppliedEvaluationDataset` records both the derived
+  winner-correctness target label and the profile-produced
+  predicted-correctness score for every metric-eligible row, and the supported
+  application constructor derives the label from the source observation, so a
+  caller can never independently claim `correct=True` for an observation whose
+  evaluation target says `False`. Evidence:
+  `tests/test_profile_application.py::TestPostMetricLabelBinding`.
+
+- [V] All post-calibration metric evaluators consume that one artifact rather
+  than re-binding labels from a separately supplied source dataset. Post Brier,
+  post exact log loss, post diagnostics, and post reliability each take exactly
+  one dataset input, and the post binned gap takes only the reliability artifact,
+  so the previous `(source, applied)` call shape no longer exists and a wrong
+  source cannot be supplied through the normal API. Evidence:
+  `tests/test_profile_application.py::TestPostMetricLabelBinding`.
+
+- [V] The post-calibration label-binding defect is structurally closed, not
+  merely detected: because every post evaluator reads `correct` from the
+  application artifact's own rows, the same observation multiset in any caller
+  row order yields the same post-calibration metric payload and fingerprint for
+  all four row-consuming metrics. Evidence:
   `tests/test_profile_application.py::TestPostMetricLabelBinding`.
 
 - [V] A fitted profile produces a `predicted-winner-correctness` score offline

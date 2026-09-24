@@ -7,14 +7,18 @@ Probability identity semantics:            design contract frozen
 Runtime ProbabilityFormulationFingerprint: implemented
 Runtime FormulationFamilyFingerprint:      implemented
 Comparability policy:                      not implemented
-Calibration:                               not implemented
+Calibration:                               partially implemented (one offline
+                                           L2-regularized logistic method, plus
+                                           offline profile application and a
+                                           post-calibration evaluation
+                                           foundation; no runtime application)
 ```
 
 Both runtime identities are derived from an `InferencePlan` alone and are exposed
 as read-only plan properties and on `DecisionTrace`; see
 `src/probvenance/probability_identity.py`. They are derived values and are
-deliberately not part of any fingerprint payload. No comparability policy, no
-pooling policy, and no calibration exist: the identities say which formulation
+deliberately not part of any fingerprint payload. No comparability policy and no
+pooling policy exist: the identities say which formulation
 produced a probability, never whether two probabilities may be treated alike.
 Where this document shows compiler and assembler identifiers and versions they
 match the runtime. The doctrine identity matches too: a plan carries

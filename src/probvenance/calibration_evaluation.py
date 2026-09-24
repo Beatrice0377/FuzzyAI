@@ -1,4 +1,4 @@
-"""Pre-calibration winner-correctness evaluation.
+"""Winner-correctness evaluation (pre-calibration and post-calibration).
 
 This module is the evaluation layer of the calibration work. It is deliberately
 separate from the fitting layer in :mod:`probvenance.calibration`:
@@ -13,14 +13,22 @@ separate from the fitting layer in :mod:`probvenance.calibration`:
 - :class:`CalibrationEvaluationDataset` is the *metric-eligible projection* of
   one declared source cohort. It is derived from the cohort; it is not an
   independently constructable container.
+- :class:`ProfileAppliedEvaluationDataset` (Phase 4C.3) is the *single truth
+  source* for the post-calibration metrics: one evaluation dataset scored by one
+  exact fitted profile, carrying both the derived winner-correctness target
+  label and the profile-produced predicted-correctness score per row. Every
+  post-calibration metric evaluator consumes that one artifact.
 
 Evaluation measures empirical behaviour. Evaluation does not create
-calibration. Everything here evaluates the **uncalibrated selected semantic
-probability** (see ``UNCALIBRATED_SELECTED_PROBABILITY_ID``) against the derived
-winner-correctness label ``Y_correct in {0, 1}``. The runtime keeps
-``DecisionResult.predicted_correctness = None`` and ``DecisionResult.calibrated
-= False``; nothing in this module changes that, and this module neither creates
-nor implies a :class:`~probvenance.calibration.CalibrationProfile`.
+calibration. The pre-calibration evaluators score the **uncalibrated selected
+semantic probability** (see ``UNCALIBRATED_SELECTED_PROBABILITY_ID``) against the
+derived winner-correctness label ``Y_correct in {0, 1}``. The post-calibration
+evaluators score the **profile-produced predicted winner correctness**
+(``PREDICTED_WINNER_CORRECTNESS_ID``) against the same target label. The runtime
+keeps ``DecisionResult.predicted_correctness = None`` and
+``DecisionResult.calibrated = False``; nothing in this module changes that, and
+this module neither creates nor implies a
+:class:`~probvenance.calibration.CalibrationProfile`.
 """
 
 from __future__ import annotations
@@ -249,7 +257,7 @@ WINNER_BINNED_ABSOLUTE_GAP_RESULT_FINGERPRINT_VERSION = 2
 
 #: The canonical-payload schema version of the offline profile-application
 #: artifact. New in Phase 4C.3; no earlier schema existed.
-PROFILE_APPLIED_EVALUATION_DATASET_FINGERPRINT_VERSION = 1
+PROFILE_APPLIED_EVALUATION_DATASET_FINGERPRINT_VERSION = 2
 
 #: Mean predicted correctness: the mean of the profile-produced predicted
 #: winner-correctness score over the evaluated projection. It is deliberately
@@ -291,6 +299,7 @@ _LOG_LOSS_RESULT_CONSTRUCTION_TOKEN = object()
 _DIAGNOSTICS_RESULT_CONSTRUCTION_TOKEN = object()
 _RELIABILITY_RESULT_CONSTRUCTION_TOKEN = object()
 _BINNED_ABSOLUTE_GAP_RESULT_CONSTRUCTION_TOKEN = object()
+_PROFILE_APPLIED_EVALUATION_ROW_CONSTRUCTION_TOKEN = object()
 _PROFILE_APPLIED_EVALUATION_DATASET_CONSTRUCTION_TOKEN = object()
 _POST_CALIBRATION_BRIER_RESULT_CONSTRUCTION_TOKEN = object()
 _POST_CALIBRATION_LOG_LOSS_RESULT_CONSTRUCTION_TOKEN = object()
@@ -2018,33 +2027,71 @@ def evaluate_winner_binned_absolute_gap(
 class ProfileAppliedEvaluationRow:
     """One observation scored by one exact fitted calibration profile.
 
-    The row commits only what is local to the application: the source
-    observation identity and the profile-produced predicted-correctness score.
-    Binding, ground-truth semantics, the selected value, the probability
-    vector, and the profile identity are deliberately NOT duplicated per row:
-    they belong to the application artifact's provenance or to the upstream
-    observation identity.
+    The row commits what a post-calibration metric needs and nothing more: the
+    source observation identity, the derived winner-correctness target label,
+    and the profile-produced predicted-correctness score. Binding, ground-truth
+    semantics, the selected value, the probability vector, and the profile
+    identity are deliberately NOT duplicated per row: they belong to the
+    application artifact's provenance or to the upstream observation identity.
+
+    ``correct`` is the deterministic winner-correctness target label that the
+    source :class:`CalibrationEvaluationDataset` already established for this
+    observation. It is NOT a duplicated ground-truth record, NOT a duplicated
+    ground-truth provenance, and NOT a caller-supplied label: supported
+    construction derives it from the source observation, so a caller can never
+    independently claim ``correct=True`` for an observation whose evaluation
+    target says ``False``. Storing it here is what makes the application artifact
+    a complete offline metric input and removes the previous two-artifact label
+    join.
 
     ``predicted_correctness`` is a finite float in ``[0, 1]``. Exact ``0.0`` and
     ``1.0`` are representable outputs and are stored as they were produced; they
     are never clipped away.
+
+    Supported construction is internal to
+    :func:`apply_profile_to_evaluation_dataset`; direct construction and
+    ``dataclasses.replace`` reconstruction are rejected like every other artifact
+    in this module.
     """
 
     observation_fingerprint: str
+    correct: bool
     predicted_correctness: float
 
-    def __post_init__(self) -> None:
-        _require_non_empty_str("observation_fingerprint", self.observation_fingerprint)
-        value = self.predicted_correctness
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+    def __init__(
+        self,
+        observation_fingerprint: str | None = None,
+        correct: bool | None = None,
+        predicted_correctness: float | None = None,
+        *,
+        _construction_token: object = None,
+    ) -> None:
+        if _construction_token is not _PROFILE_APPLIED_EVALUATION_ROW_CONSTRUCTION_TOKEN:
             raise InvalidDecisionError(
-                f"predicted_correctness must be a real number, got {value!r}"
+                "ProfileAppliedEvaluationRow cannot be constructed directly or with "
+                "dataclasses.replace; it is produced by "
+                "apply_profile_to_evaluation_dataset(dataset, profile), the only "
+                "supported construction path"
             )
-        number = float(value)
+        _require_non_empty_str("observation_fingerprint", observation_fingerprint)
+        if not isinstance(correct, bool):
+            raise InvalidDecisionError(
+                f"correct must be a real bool (a bool is required, not an int or None), "
+                f"got {type(correct).__name__} ({correct!r})"
+            )
+        if isinstance(predicted_correctness, bool) or not isinstance(
+            predicted_correctness, (int, float)
+        ):
+            raise InvalidDecisionError(
+                f"predicted_correctness must be a real number, got {predicted_correctness!r}"
+            )
+        number = float(predicted_correctness)
         if not math.isfinite(number) or number < 0.0 or number > 1.0:
             raise InvalidDecisionError(
                 f"predicted_correctness must be a finite float in [0, 1], got {number!r}"
             )
+        object.__setattr__(self, "observation_fingerprint", observation_fingerprint)
+        object.__setattr__(self, "correct", correct)
         object.__setattr__(self, "predicted_correctness", number)
 
 
@@ -2053,14 +2100,26 @@ class ProfileAppliedEvaluationDataset:
     """One declared evaluation dataset scored by one exact fitted profile.
 
     This is the SINGLE truth source for every post-calibration evaluator: the
-    profile is applied ONCE semantically, here, and the post metrics consume the
-    recorded derived scores instead of each re-applying the profile.
+    profile is applied ONCE semantically, here, and each post metric consumes
+    the recorded derived target label and predicted-correctness score instead of
+    re-applying the profile or re-binding labels from a separately supplied
+    source dataset. Every post-calibration metric evaluator therefore takes this
+    artifact as its ONLY dataset input, which makes the previous two-artifact
+    label join structurally impossible.
 
     Rows are ordered by observation fingerprint, so the artifact is
     row-order independent: the same evaluation observation multiset in a
     different caller row order produces the same canonical payload and the same
     fingerprint. Multiplicity is preserved; a duplicated row stays duplicated
-    and is never collapsed into a set.
+    and is never collapsed into a set. Duplicate identical observations share
+    one fingerprint and one derived correctness label, so multiplicity stays
+    meaningful.
+
+    The artifact is self-sufficient for the implemented post-calibration metric
+    calculations. It is NOT a complete archival reproduction of the evaluation
+    data: it does not carry the full ``GroundTruthRecord``, the full
+    ``CalibrationObservation``, the raw probability vector, or the replay
+    inputs.
 
     The provenance commits the source evaluation dataset and cohort identities,
     the source cohort's exclusion accounting, the profile identity, and both
@@ -2177,6 +2236,7 @@ class ProfileAppliedEvaluationDataset:
             "rows": [
                 {
                     "observation_fingerprint": row.observation_fingerprint,
+                    "correct": row.correct,
                     "predicted_correctness": row.predicted_correctness,
                 }
                 for row in self.rows
@@ -2239,11 +2299,21 @@ def apply_profile_to_evaluation_dataset(
         )
     built: list[ProfileAppliedEvaluationRow] = []
     for observation in dataset.observations:
+        correct = observation.correct
+        if not isinstance(correct, bool):
+            raise InvalidDecisionError(
+                "the source evaluation dataset contains a metric-eligible "
+                "observation with no derived winner-correctness label "
+                f"(correct={correct!r}); the application artifact cannot record a "
+                "target label it did not derive"
+            )
         score = predicted_winner_correctness(profile, observation)
         built.append(
             ProfileAppliedEvaluationRow(
-                observation_fingerprint=observation.fingerprint,
-                predicted_correctness=score,
+                observation.fingerprint,
+                correct,
+                score,
+                _construction_token=_PROFILE_APPLIED_EVALUATION_ROW_CONSTRUCTION_TOKEN,
             )
         )
     built.sort(key=lambda row: row.observation_fingerprint)
@@ -2289,33 +2359,15 @@ def apply_profile_to_evaluation_dataset(
 # ---------------------------------------------------------------------------
 
 
-def _applied_correctness_labels(
-    source: CalibrationEvaluationDataset,
-    applied: ProfileAppliedEvaluationDataset,
-) -> list[float]:
-    """Binary correctness labels aligned to ``applied.rows`` by observation fingerprint.
+def _applied_correctness_labels(applied: ProfileAppliedEvaluationDataset) -> list[float]:
+    """Binary correctness labels of an application artifact's own rows.
 
-    The labels are bound to identity, never to caller position. The applied
-    artifact orders its rows by observation fingerprint, so this function
-    orders the source labels by the same key with the same stable sort; equal
-    fingerprints therefore keep the same relative order in both sequences and
-    multiplicity is preserved. A source dataset that does not cover the
-    applied artifact fails closed instead of silently mislabelling rows.
+    The labels are read directly from the artifact's committed ``correct`` field,
+    in the artifact's fingerprint order. There is no source dataset input and no
+    positional join, so the class of defect where labels were re-bound from a
+    separately supplied source by row position cannot recur.
     """
-    if len(source.observations) != applied.count:
-        raise InvalidDecisionError(
-            "the applied evaluation artifact does not cover the source evaluation dataset: "
-            f"{applied.count} applied rows for {len(source.observations)} eligible observations"
-        )
-    source_fingerprints = sorted(observation.fingerprint for observation in source.observations)
-    row_fingerprints = [row.observation_fingerprint for row in applied.rows]
-    if source_fingerprints != row_fingerprints:
-        raise InvalidDecisionError(
-            "the applied evaluation artifact does not cover the source evaluation dataset: "
-            "its rows are not the source dataset's eligible observations"
-        )
-    ordered = sorted(source.observations, key=lambda observation: observation.fingerprint)
-    return [1.0 if observation.correct else 0.0 for observation in ordered]
+    return [1.0 if row.correct else 0.0 for row in applied.rows]
 
 
 @dataclass(frozen=True, slots=True)
@@ -2356,7 +2408,6 @@ class PostCalibrationBrierEvaluationResult:
 
     def __init__(
         self,
-        source: CalibrationEvaluationDataset | None = None,
         applied: ProfileAppliedEvaluationDataset | None = None,
         *,
         _construction_token: object = None,
@@ -2374,13 +2425,7 @@ class PostCalibrationBrierEvaluationResult:
                 "requires a ProfileAppliedEvaluationDataset, got "
                 f"{type(applied).__name__}"
             )
-        if not isinstance(source, CalibrationEvaluationDataset):
-            raise InvalidDecisionError(
-                "the supported PostCalibrationBrierEvaluationResult construction path "
-                "requires the source CalibrationEvaluationDataset, got "
-                f"{type(source).__name__}"
-            )
-        labels = _applied_correctness_labels(source, applied)
+        labels = _applied_correctness_labels(applied)
         count = applied.count
         squared_errors = [
             (row.predicted_correctness - label) ** 2
@@ -2475,17 +2520,16 @@ def _bind_application_provenance(
 
 
 def evaluate_post_calibration_winner_brier(
-    source: CalibrationEvaluationDataset,
     applied: ProfileAppliedEvaluationDataset,
 ) -> PostCalibrationBrierEvaluationResult:
     """Score the profile-produced predicted correctness with the Brier metric.
 
     The formula is the same ``mean((q_i - y_i)^2)`` kernel the pre-calibration
     Brier metric uses; only the score under evaluation differs. The profile is
-    never re-applied: the application artifact is the sole truth source.
+    never re-applied and no source dataset is needed: the application artifact
+    is the sole truth source, and it carries both ``q_i`` and ``y_i`` per row.
     """
     return PostCalibrationBrierEvaluationResult(
-        source,
         applied,
         _construction_token=_POST_CALIBRATION_BRIER_RESULT_CONSTRUCTION_TOKEN,
     )
@@ -2526,7 +2570,6 @@ class PostCalibrationLogLossEvaluationResult:
 
     def __init__(
         self,
-        source: CalibrationEvaluationDataset | None = None,
         applied: ProfileAppliedEvaluationDataset | None = None,
         *,
         _construction_token: object = None,
@@ -2535,7 +2578,7 @@ class PostCalibrationLogLossEvaluationResult:
             raise InvalidDecisionError(
                 "PostCalibrationLogLossEvaluationResult cannot be constructed directly or "
                 "with dataclasses.replace; use "
-                "evaluate_post_calibration_winner_log_loss(source, applied), the only "
+                "evaluate_post_calibration_winner_log_loss(applied), the only "
                 "supported construction path"
             )
         if not isinstance(applied, ProfileAppliedEvaluationDataset):
@@ -2544,13 +2587,7 @@ class PostCalibrationLogLossEvaluationResult:
                 "requires a ProfileAppliedEvaluationDataset, got "
                 f"{type(applied).__name__}"
             )
-        if not isinstance(source, CalibrationEvaluationDataset):
-            raise InvalidDecisionError(
-                "the supported PostCalibrationLogLossEvaluationResult construction path "
-                "requires the source CalibrationEvaluationDataset, got "
-                f"{type(source).__name__}"
-            )
-        labels = _applied_correctness_labels(source, applied)
+        labels = _applied_correctness_labels(applied)
         count = applied.count
         terms = [
             _binary_log_loss_term(row.predicted_correctness, bool(label))
@@ -2610,12 +2647,14 @@ class PostCalibrationLogLossEvaluationResult:
 
 
 def evaluate_post_calibration_winner_log_loss(
-    source: CalibrationEvaluationDataset,
     applied: ProfileAppliedEvaluationDataset,
 ) -> PostCalibrationLogLossEvaluationResult:
-    """Score the profile-produced predicted correctness with exact log loss."""
+    """Score the profile-produced predicted correctness with exact log loss.
+
+    No source dataset is needed: the application artifact carries both the
+    predicted-correctness score and the derived target label for every row.
+    """
     return PostCalibrationLogLossEvaluationResult(
-        source,
         applied,
         _construction_token=_POST_CALIBRATION_LOG_LOSS_RESULT_CONSTRUCTION_TOKEN,
     )
@@ -2658,7 +2697,6 @@ class PostCalibrationWinnerDiagnosticsResult:
 
     def __init__(
         self,
-        source: CalibrationEvaluationDataset | None = None,
         applied: ProfileAppliedEvaluationDataset | None = None,
         *,
         _construction_token: object = None,
@@ -2667,7 +2705,7 @@ class PostCalibrationWinnerDiagnosticsResult:
             raise InvalidDecisionError(
                 "PostCalibrationWinnerDiagnosticsResult cannot be constructed directly or "
                 "with dataclasses.replace; use "
-                "evaluate_post_calibration_winner_diagnostics(source, applied), the only "
+                "evaluate_post_calibration_winner_diagnostics(applied), the only "
                 "supported construction path"
             )
         if not isinstance(applied, ProfileAppliedEvaluationDataset):
@@ -2676,13 +2714,7 @@ class PostCalibrationWinnerDiagnosticsResult:
                 "requires a ProfileAppliedEvaluationDataset, got "
                 f"{type(applied).__name__}"
             )
-        if not isinstance(source, CalibrationEvaluationDataset):
-            raise InvalidDecisionError(
-                "the supported PostCalibrationWinnerDiagnosticsResult construction path "
-                "requires the source CalibrationEvaluationDataset, got "
-                f"{type(source).__name__}"
-            )
-        labels = _applied_correctness_labels(source, applied)
+        labels = _applied_correctness_labels(applied)
         count = applied.count
         correct_count = math.fsum(labels)
         if not correct_count.is_integer():
@@ -2754,12 +2786,15 @@ class PostCalibrationWinnerDiagnosticsResult:
 
 
 def evaluate_post_calibration_winner_diagnostics(
-    source: CalibrationEvaluationDataset,
     applied: ProfileAppliedEvaluationDataset,
 ) -> PostCalibrationWinnerDiagnosticsResult:
-    """Compute companion diagnostics over the profile-produced scores."""
+    """Compute companion diagnostics over the profile-produced scores.
+
+    The empirical correctness rate and the constant-rate Brier reference are
+    computed from the application artifact's own committed ``correct`` labels;
+    no source dataset is consulted.
+    """
     return PostCalibrationWinnerDiagnosticsResult(
-        source,
         applied,
         _construction_token=_POST_CALIBRATION_DIAGNOSTICS_RESULT_CONSTRUCTION_TOKEN,
     )
@@ -2877,7 +2912,6 @@ class PostCalibrationWinnerReliabilityResult:
 
     def __init__(
         self,
-        source: CalibrationEvaluationDataset | None = None,
         applied: ProfileAppliedEvaluationDataset | None = None,
         *,
         bin_count: int | None = None,
@@ -2887,7 +2921,7 @@ class PostCalibrationWinnerReliabilityResult:
             raise InvalidDecisionError(
                 "PostCalibrationWinnerReliabilityResult cannot be constructed directly or "
                 "with dataclasses.replace; use "
-                "evaluate_post_calibration_winner_reliability(source, applied, "
+                "evaluate_post_calibration_winner_reliability(applied, "
                 "bin_count=...), the only supported construction path"
             )
         if not isinstance(applied, ProfileAppliedEvaluationDataset):
@@ -2896,19 +2930,13 @@ class PostCalibrationWinnerReliabilityResult:
                 "requires a ProfileAppliedEvaluationDataset, got "
                 f"{type(applied).__name__}"
             )
-        if not isinstance(source, CalibrationEvaluationDataset):
-            raise InvalidDecisionError(
-                "the supported PostCalibrationWinnerReliabilityResult construction path "
-                "requires the source CalibrationEvaluationDataset, got "
-                f"{type(source).__name__}"
-            )
         if isinstance(bin_count, bool) or not isinstance(bin_count, int):
             raise InvalidDecisionError(
                 f"bin_count must be a real int (a bool is not acceptable), got {bin_count!r}"
             )
         if bin_count < 1:
             raise InvalidDecisionError(f"bin_count must be at least 1, got {bin_count!r}")
-        labels = _applied_correctness_labels(source, applied)
+        labels = _applied_correctness_labels(applied)
         members: list[list[tuple[float, str, bool]]] = [[] for _ in range(bin_count)]
         for row, label in zip(applied.rows, labels, strict=True):
             index = _equal_width_bin_index(row.predicted_correctness, bin_count)
@@ -3012,14 +3040,17 @@ class PostCalibrationWinnerReliabilityResult:
 
 
 def evaluate_post_calibration_winner_reliability(
-    source: CalibrationEvaluationDataset,
     applied: ProfileAppliedEvaluationDataset,
     *,
     bin_count: int,
 ) -> PostCalibrationWinnerReliabilityResult:
-    """Build the post-calibration equal-width reliability summary."""
+    """Build the post-calibration equal-width reliability summary.
+
+    Bins consume only ``row.predicted_correctness``, ``row.correct``, and
+    ``row.observation_fingerprint`` from the application artifact; no source
+    dataset is consulted.
+    """
     return PostCalibrationWinnerReliabilityResult(
-        source,
         applied,
         bin_count=bin_count,
         _construction_token=_POST_CALIBRATION_RELIABILITY_RESULT_CONSTRUCTION_TOKEN,

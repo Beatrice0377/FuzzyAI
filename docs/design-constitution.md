@@ -562,8 +562,10 @@ and the optional-extra `TransformersBackend` (imported from
 `ChoiceScoringDiagnostics`), and Phase 2C.0 added compiler and assembler
 provenance to plans and traces. The error taxonomy gains
 `UnsupportedDecisionError`, `ScoringLabelError`, and `VerbalizerError` as
-further `ProbvenanceError` subclasses. Calibration and abstention remain
-unimplemented.
+further `ProbvenanceError` subclasses. Abstention remains unimplemented;
+calibration is partially implemented (one offline L2-regularized logistic
+method, plus offline profile application and a post-calibration evaluation
+foundation), while runtime calibration application remains unimplemented.
 
 Public API (Phase 1 core):
 
@@ -619,7 +621,8 @@ Phase 2A and 2A.1 public API additions on top of the Phase 1 core: `Probvenance`
 `Evaluation`, `BoolCompiler`, `ScoringDoctrine`, `DecisionTrace`,
 `ScoringDiagnostics`, `diagnose_bool_evidence`, `UnsupportedDecisionError`,
 `VerbalizerError`, and `TransformersBackend` (optional `transformers` extra).
-`Choice` scoring is still unimplemented.
+Choice scoring is implemented (Phase 2B direct categorical Choice, refined in
+Phases 2B.1 and 2C).
 
 Phase 1 non-goals (binding): no HTTP, no OpenAI/Anthropic/vLLM/SGLang, no
 automatic routing, no decision graph, no calibration algorithm, no dashboard,

@@ -1,17 +1,29 @@
-"""Calibration data foundation (Phase 4A, Parts D through M).
+"""Calibration data foundation and one offline fitting method.
 
 This module implements the ground-truth and observation data model that a
-future calibration harness will fit against: ground-truth provenance, a
-ground-truth record with resolution semantics, a calibration binding, a
-calibration observation with deterministically derived status and correctness,
-an observation fingerprint, a calibration dataset with structural pooling
+calibration harness fits against: ground-truth provenance, a ground-truth
+record with resolution semantics, a calibration binding, a calibration
+observation with deterministically derived status and correctness, an
+observation fingerprint, a calibration dataset with structural pooling
 constraints, a dataset fingerprint, and a calibration profile identity that
 composes its binding, ground-truth semantics, target, input-score, method, and
 training-dataset provenance.
 
-Deliberately NOT implemented here (out of scope for this round):
-profile fitting algorithms, profile registries, nearest-profile matching,
-runtime profile application, evaluation metrics, and one-vs-rest handling.
+It also implements ONE offline fitting method: an L2-regularized logistic
+regression of winner correctness on the raw selected semantic probability
+(:func:`fit_l2_logistic_selected_probability`), plus the single
+predicted-correctness scoring function
+(:func:`predicted_winner_correctness`). The taxonomy constraints are enforced
+at the fitting boundary: a fit-eligible dataset rejects taxonomy-miss,
+unresolved, and unadjudicated rows rather than silently filtering them, and the
+profile construction path refuses a profile whose ground-truth semantics or
+binding do not match its training data.
+
+Still NOT implemented here (out of scope): alternative calibration methods
+(temperature scaling, isotonic regression), profile registries, nearest-profile
+matching, profile serialization or cross-process loading, runtime profile
+application, and evaluation metrics (which live in
+``probvenance.calibration_evaluation``).
 
 Public API note: this foundation is intentionally NOT frozen as public API
 yet. Nothing from this module is exported through ``probvenance.__all__`` or
@@ -1668,8 +1680,17 @@ def _stable_sigmoid(z: float) -> float:
     """Numerically stable logistic sigmoid.
 
     The branch keeps the exponential argument non-positive, so the result is
-    finite and strictly inside ``(0, 1)`` for every finite ``z``. That is why
-    no endpoint epsilon or clipping is needed anywhere in this method.
+    always finite for finite ``z``.
+
+    Mathematically the logistic sigmoid lies in ``(0, 1)`` for finite ``z``.
+    The binary64 result may round to exactly ``0.0`` or ``1.0`` for
+    sufficiently large ``|z|``: ``exp(-z)`` underflows to ``0.0`` once ``z``
+    exceeds roughly ``745``, so ``sigmoid(z)`` becomes exactly ``1.0``, and
+    symmetrically it becomes exactly ``0.0`` for sufficiently negative ``z``.
+    Label-aware loss, residual, and curvature calculations therefore must not
+    rely on subtracting the rounded endpoint from ``1``; they are written in
+    the algebraically equivalent form that stays significant at the endpoints
+    (see :func:`_binary_logistic_terms`).
     """
     if z >= 0.0:
         return 1.0 / (1.0 + math.exp(-z))
@@ -1814,7 +1835,20 @@ def _l2_logistic_certificate_threshold(l2_strength: float) -> float:
 
 
 def _require_l2_strength(l2_strength: Any) -> float:
-    """Validate and normalize the L2 strength to a finite float strictly above zero.
+    """Validate and normalize the L2 strength to an accepted finite float.
+
+    The accepted domain is: a finite real number strictly above zero whose
+    declared objective coefficient ``l2_strength / 2.0`` is itself still
+    representable as a positive binary64 float. That second condition is not a
+    statistical recommendation, and it is not an arbitrary practical lower
+    bound: it is a numerical representability precondition for the actual v1
+    objective implementation ``mean_nll + (l2_strength / 2.0) * (slope^2 +
+    intercept^2)``. If ``l2_strength / 2.0`` rounds to ``0.0``, the objective
+    would silently lose its L2 term while the gradient (``l2_strength * slope``)
+    and the Hessian (``data + l2_strength``) would still carry it, so the three
+    would no longer describe one declared fitting problem. Rejecting such a
+    strength fails closed instead of optimizing a different objective than the
+    one the artifact advertises.
 
     A bool is rejected even though it is an ``int`` subclass. No hidden maximum
     is imposed.
@@ -1833,6 +1867,12 @@ def _require_l2_strength(l2_strength: Any) -> float:
     if not math.isfinite(value) or value <= 0.0:
         raise InvalidDecisionError(
             f"l2_strength must be a finite real number > 0, got {l2_strength!r}"
+        )
+    if value / 2.0 == 0.0:
+        raise InvalidDecisionError(
+            "l2_strength is positive and finite, but too small to preserve a "
+            "nonzero (l2_strength / 2) coefficient under the fitter's float "
+            f"numerical contract, got {value!r}"
         )
     return value
 
@@ -2133,9 +2173,11 @@ def predicted_winner_correctness(
     state must contain exactly the mapping coefficients the supported method
     declares, so a malformed internal profile also fails closed.
 
-    ``p = 0`` and ``p = 1`` are ordinary finite inputs and the mapping output is
-    strictly inside ``(0, 1)``: values are never clipped, so no endpoint is
-    silently moved.
+    ``p = 0`` and ``p = 1`` are ordinary finite inputs; the mapping output is
+    never clipped. It is not guaranteed to be strictly interior: for a fitted
+    ``slope * p + intercept`` large enough in magnitude the binary64 result of
+    the logistic map rounds to exactly ``0.0`` or ``1.0`` (see
+    :func:`_stable_sigmoid`), and such an endpoint is returned as produced.
     """
     if not isinstance(profile, CalibrationProfile):
         raise InvalidDecisionError(

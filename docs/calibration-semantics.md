@@ -91,9 +91,11 @@ and it fails closed on a concrete taxonomy contradiction or an exact binding
 mismatch. One scalar fitting method
 (`fit_l2_logistic_selected_probability`) is implemented: an L2-regularized
 logistic map of the selected probability onto winner correctness. Profile
-registries, profile lookup, the remaining metrics, post-calibration
-(derived-score) evaluation, and runtime profile application remain
-unimplemented, and this document does not add any.
+registries, profile lookup, alternative calibration methods, the remaining
+metrics, and runtime profile application remain unimplemented, and this
+document does not add any. Offline profile application and the post-calibration
+(derived-score) evaluation foundation ARE implemented in
+`src/probvenance/calibration_evaluation.py`.
 
 This document is in part a design proposal. The deterministic data model and
 the evaluation foundation carry `[V]` VERIFIED claims in `docs/claims.md`,
@@ -177,7 +179,9 @@ distribution calibration:  recalibrate the whole probability distribution
 correctness calibration:   map to a probability that the selected answer is right
 ```
 
-Neither is implemented. Neither is implied by the other.
+Only correctness calibration is partially implemented (one offline
+L2-regularized logistic method, `fit_l2_logistic_selected_probability`).
+Distribution calibration is not implemented. Neither is implied by the other.
 
 ### 2.3 Predicted correctness
 
@@ -826,8 +830,9 @@ imply the same meaning of correctness: labels established under different
 labeling rules or ambiguity policies measure different statistical targets, so
 two datasets under one binding but with different ground-truth semantics must
 never feed one profile identity. Two profiles that differ in any component are
-different artifacts and are never interchangeable. The profile itself remains
-unimplemented.
+different artifacts and are never interchangeable. The profile identity and
+artifact, one offline fitting method, and offline profile application are
+implemented; runtime profile application remains unimplemented.
 
 ### 12.3 Matching is exact by default
 
@@ -962,15 +967,20 @@ legitimately record a mismatch, so their admission is unchanged.
 
 Explicit cross-taxonomy fitting or application requires an identity-bearing
 mapping contract; that contract is not implemented yet and no speculative
-mapping framework is created here. No fitting or application path consumes
-cross-taxonomy observations, so this rule is enforced only by profile
-construction. A tested compatibility helper is deferred
-until it has a real caller, so that no dead policy code is added.
+mapping framework is created here. Cross-taxonomy observations cannot enter a
+fitting dataset at all: `CalibrationDataset` pooling rejects any member whose
+ground-truth semantics identity differs from the dataset's, so the constraint
+is enforced at both the dataset boundary and profile construction. A tested
+compatibility helper is deferred until it has a real caller, so that no dead
+policy code is added.
 
 ## 13. Calibration method identity
 
-No method is implemented and no library is chosen. Candidate classes to keep in
-view:
+One method is implemented: an L2-regularized logistic regression of winner
+correctness on the selected semantic probability (method id
+`l2-logistic-selected-probability` v1,
+`fit_l2_logistic_selected_probability`). No other method and no external
+library is chosen. Candidate classes to keep in view:
 
 ```text
 Platt / logistic scaling
@@ -1071,7 +1081,7 @@ A calibration method's fitting objective and its numerical endpoint policy are
 semantics-bearing method configuration. They must be explicit and versioned.
 ```
 
-Consequences that bind a future fitter:
+Consequences that bind the fitter:
 
 ```text
 an evaluation metric is never silently reused as a training objective
@@ -1104,19 +1114,21 @@ distinguished by input-score identity:
   `evaluate_uncalibrated_winner_brier` over a `CalibrationEvaluationDataset`.
   It compares the raw score against the derived winner-correctness label on the
   evaluated rows and is a baseline.
-- Post-calibration evaluation would evaluate `predicted_correctness` (the
-  score a fitted calibration profile would produce) against the same derived
-  winner-correctness label. It does not exist yet: the `CalibrationProfile`
-  identity foundation and one scalar fitting method
-  (`fit_l2_logistic_selected_probability`) now exist, so a fitted profile can be
-  produced, but no derived-score application contract exists, so the runtime
-  still keeps `predicted_correctness = None` and `calibrated = False`.
+- Post-calibration evaluation evaluates `predicted_correctness` (the score a
+  fitted calibration profile produces) against the same derived
+  winner-correctness label. It is implemented in
+  `src/probvenance/calibration_evaluation.py` as the
+  `evaluate_post_calibration_winner_*` family over a
+  `ProfileAppliedEvaluationDataset`, which carries both the derived label and
+  the produced score per row. The runtime still keeps
+  `predicted_correctness = None` and `calibrated = False`, because offline
+  application does not touch the runtime result.
 
 The pre-calibration baseline must NOT be presented as calibration-quality
 evidence: no calibrator was involved in producing it, so it cannot show how
 much, or whether, calibration helps. Comparing a pre-calibration run with a
-post-calibration run is exactly how the effect of a future calibrator would be
-measured, and the comparison is only meaningful when both runs use the same
+post-calibration run is exactly how a calibrator's effect is measured, and the
+comparison is only meaningful when both runs use the same
 dataset identity (the `CalibrationEvaluationDataset` fingerprint) and differ
 only in input-score identity.
 
@@ -1842,17 +1854,17 @@ mean for calibration.
 ## 22. Non-goals
 
 The Phase 4A data foundation (ground truth, binding, observation, dataset, and
-their identities and fingerprints) and the Phase 4A evaluation foundation (the
-evaluation dataset contract and the winner-correctness Brier metric) are
+their identities and fingerprints), the Phase 4A evaluation foundation (the
+evaluation dataset contract and the winner-correctness Brier metric), the
+`CalibrationProfile` identity/artifact, one scalar fitting method, offline
+profile application, and the post-calibration evaluation foundation are all
 implemented and are no longer listed here. This document still does not
 implement, and does not decide the eventual API for:
 
 ```text
-CalibrationProfile, CalibrationProfileFingerprint
 temperature scaling, isotonic regression, and binning calibrators
 any calibration fitting library
-post-calibration metric runs (predicted_correctness as the input score)
-log loss, ECE, or reliability-curve runtime code
+runtime calibration application or runtime log loss / ECE / reliability code
 profile matching runtime
 a calibration store
 abstention, review, escalate, or any policy

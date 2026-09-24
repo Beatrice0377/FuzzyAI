@@ -14,9 +14,11 @@ is implemented: `fit_l2_logistic_selected_probability` fits an L2-regularized
 logistic map of the selected probability onto winner correctness. Offline
 profile application and the post-calibration evaluation foundation are
 implemented: one exact profile can be applied to one compatible evaluation
-dataset to produce an immutable predicted-winner-correctness artifact, and
-post-calibration Brier, exact log loss, companion diagnostics, equal-width
-reliability, and the binned absolute-gap aggregate consume that artifact.
+dataset to produce an immutable predicted-winner-correctness artifact that
+records both the derived winner-correctness target label and the produced score
+per row, and post-calibration Brier, exact log loss, companion diagnostics,
+equal-width reliability, and the binned absolute-gap aggregate consume that one
+artifact.
 Runtime calibration application does not exist, so `predicted_correctness`
 remains `None` for every result the runtime can produce. Abstention and every
 other Choice strategy are not implemented.

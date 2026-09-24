@@ -42,6 +42,7 @@ from probvenance.calibration import (
     _l2_logistic_gradient,
     _l2_logistic_objective,
     _ordered_fitting_rows,
+    _require_l2_strength,
     _selected_probability,
     _solve_l2_logistic,
     fit_l2_logistic_selected_probability,
@@ -699,8 +700,16 @@ class TestForgedInputsFailClosed:
 
 class TestImportGraphAndFrozenIdentities:
     def test_calibration_does_not_import_evaluation(self):
-        source = inspect.getsource(sys.modules["probvenance.calibration"])
-        assert "calibration_evaluation" not in source
+        import ast
+
+        tree = ast.parse(inspect.getsource(sys.modules["probvenance.calibration"]))
+        imported: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module is not None:
+                imported.append(node.module)
+        assert not any("calibration_evaluation" in name for name in imported)
 
     def test_import_calibration_first(self):
         completed = subprocess.run(
@@ -1030,6 +1039,10 @@ class TestNumericalConvergenceHardening:
         )
 
     def test_the_certificate_threshold_never_underflows_or_overflows(self):
+        # This pins the PRIVATE certificate helper's arithmetic, not the fitter's
+        # accepted input domain: the helper can represent a bound far below the
+        # smallest strength the fitter accepts, which is why the two are tested
+        # separately.
         assert 2.0 * 1e-320 * _L2_LOGISTIC_OBJECTIVE_SUBOPTIMALITY_TOLERANCE == 0.0
         for l2_strength in (5e-324, 1e-320, 1e-20, 1.0, 1e154, 1e300):
             threshold = _l2_logistic_certificate_threshold(l2_strength)
@@ -1203,8 +1216,43 @@ class TestNumericalConvergenceHardening:
             gradient = _l2_logistic_gradient(rows, slope, intercept, l2_strength)
             assert math.hypot(*gradient) <= _l2_logistic_certificate_threshold(l2_strength)
 
-    def test_subnormal_strengths_are_valid_inputs(self):
-        import probvenance.calibration as calibration_module
+    def test_the_smallest_accepted_strength_keeps_a_nonzero_coefficient(self):
+        rejected = math.nextafter(0.0, math.inf)
+        accepted = math.nextafter(rejected, math.inf)
+        assert rejected / 2.0 == 0.0
+        assert accepted / 2.0 > 0.0
+        assert _require_l2_strength(accepted) == accepted
+        assert _require_l2_strength(1e-300) == 1e-300
 
-        assert calibration_module._require_l2_strength(1e-300) == 1e-300
-        assert calibration_module._require_l2_strength(5e-324) == 5e-324
+    def test_the_regularizer_does_not_vanish_at_the_accepted_boundary(self):
+        accepted = math.nextafter(math.nextafter(0.0, math.inf), math.inf)
+        # A row whose loss is exactly 0.0 makes the penalty the whole objective,
+        # so the L2 contribution is visible even at the boundary. The expected
+        # value is computed independently, never with the production objective.
+        rows = [(1.0, 1.0)]
+        slope, intercept = 1000.0, 0.0
+        assert _l2_logistic_objective(rows, slope, intercept, 0.0) == 0.0
+        penalty = (accepted / 2.0) * (slope * slope + intercept * intercept)
+        assert penalty > 0.0
+        assert _l2_logistic_objective(rows, slope, intercept, accepted) == penalty
+
+    def test_the_rejected_boundary_annihilates_the_coefficient(self):
+        rejected = math.nextafter(0.0, math.inf)
+        rows = [(1.0, 1.0)]
+        slope, intercept = 1000.0, 0.0
+        # The objective cannot see the penalty at all for this strength, while the
+        # gradient still carries a positive L2 term, so the three would describe
+        # different problems. That is exactly why the fitter rejects it.
+        assert _l2_logistic_objective(rows, slope, intercept, rejected) == 0.0
+        grad_slope, _grad_intercept = _l2_logistic_gradient(rows, slope, intercept, rejected)
+        assert grad_slope > 0.0
+
+    def test_a_strength_whose_coefficient_vanishes_fails_closed(self):
+        rejected = math.nextafter(0.0, math.inf)
+        with pytest.raises(InvalidDecisionError) as error:
+            _require_l2_strength(rejected)
+        message = str(error.value)
+        assert "too small to preserve a nonzero" in message
+        assert "numerical contract" in message
+        with pytest.raises(InvalidDecisionError):
+            fit([(0.9, True)], l2_strength=rejected)

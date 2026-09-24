@@ -546,10 +546,18 @@ class TestImportDirection:
         assert result.returncode == 0
 
     def test_calibration_module_source_never_imports_evaluation(self):
+        import ast
+
         import probvenance.calibration as calibration_module
 
-        source = inspect.getsource(calibration_module)
-        assert "calibration_evaluation" not in source
+        tree = ast.parse(inspect.getsource(calibration_module))
+        imported: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module is not None:
+                imported.append(node.module)
+        assert not any("calibration_evaluation" in name for name in imported)
 
 
 # ---------------------------------------------------------------------------

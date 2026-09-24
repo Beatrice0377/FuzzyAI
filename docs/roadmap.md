@@ -113,12 +113,15 @@ implemented (Phase 4C.3, `apply_profile_to_evaluation_dataset`): one exact
 `CalibrationProfile` is applied to one binding-compatible and
 ground-truth-semantics-compatible evaluation dataset to produce one immutable
 `ProfileAppliedEvaluationDataset` that commits the profile identity and the
-source evaluation population identity, with one
-`predicted-winner-correctness` score per eligible observation. The
+source evaluation population identity, and records BOTH the derived
+winner-correctness target label and the profile-produced
+`predicted-winner-correctness` score for every metric-eligible row. The
 post-calibration evaluation foundation is implemented on top of that artifact:
 post-calibration Brier, post-calibration exact log loss, post-calibration
 companion diagnostics, post-calibration equal-width reliability, and the
-post-calibration binned absolute-gap aggregate. Profile
+post-calibration binned absolute-gap aggregate. Every post-calibration metric
+evaluator consumes that one artifact rather than re-binding labels from a
+separately supplied source dataset. Profile
 registries, profile lookup, profile matching policy beyond exact binding match,
 the remaining metrics, runtime profile application, and runtime calibration
 (derived scores on a `DecisionResult`) do not exist, and `predicted_correctness`
@@ -138,10 +141,11 @@ remains `None` for every result the runtime can produce.
   fingerprint v1), the ECE estimator form frozen as a binned absolute-gap
   diagnostic).
 - Expected calibration error (ECE): the equal-width ECE estimator form is
-  delivered as the derived binned absolute-gap diagnostic above, but ECE is
-  NOT completely solved: equal-mass binning, the post-calibration
-  correctness-probability interpretation, and statistical uncertainty
-  quantification remain unimplemented.
+  delivered as the derived binned absolute-gap diagnostic above, and Phase 4C.3
+  delivered the post-calibration correctness-probability interpretation (the
+  score carries `P(winner_correctness = 1)` semantics once a profile is
+  applied). ECE is still NOT completely solved: equal-mass binning and
+  statistical uncertainty quantification remain unimplemented.
 - Equal-mass (quantile) reliability binning (needs its own tie,
   duplicate-score, and deterministic-partition contract).
 - Reliability plotting (structured summary only; no chart artifacts).
