@@ -725,6 +725,19 @@ procedure is recorded, and the final reported quality comes from a split that wa
 not used to select the method. Selecting the best method and then advertising its
 quality on the same held-out set without recording the selection is not evidence.
 
+Dependent observations are recorded here as a methodology constraint, not as a
+dataset identity primitive:
+
+> When observations carry an explicit dependence or group identity, train,
+> validation, and test procedures must not silently split one declared dependency
+> group across partitions when doing so would create leakage.
+
+Core calibration code must not infer groups from case-id prefixes, ladder names,
+string conventions, or observation similarity. Phase 4C.0 does not add a group
+identity field to `CalibrationObservation`, because no general data contract for
+it exists yet. Experiment harnesses may enforce group-aware partitioning
+separately, using their own explicit grouping.
+
 ## 12. Profile identity, matching, and mismatch behavior
 
 ### 12.1 Profile is not a result
@@ -746,11 +759,19 @@ numbers mean:
 CalibrationProfile identity
   = CalibrationBinding
   + GroundTruthSemanticsIdentity
-  + calibration target
+  + calibration target ID and calibration target version
   + method_id and method_version
   + fitted parameters
   + training dataset fingerprint
 ```
+
+The calibration target is an explicit versioned identity, not a prose
+placeholder: as of Phase 4C.0 the single implemented target is
+`winner_correctness` version 1 (`WINNER_CORRECTNESS_TARGET_ID` and
+`WINNER_CORRECTNESS_TARGET_VERSION`). That identity is shared by every
+winner-correctness evaluation artifact and is owned by no single metric. A
+target with the same ID but a different version is a different target
+semantics identity, not the same target under a new label.
 
 The binding alone is not the profile identity: one binding can carry several
 profiles, for different targets, methods, or fitting datasets. The ground-truth
@@ -791,6 +812,12 @@ These may be researched later, but never as a silent substitution. A wrong
 calibration applied silently is worse than no calibration, because it manufactures
 false correctness information.
 
+Exact binding match is also not relaxed by formulation-family membership. The
+probability formulation family does not prove that calibration transfers: the
+Phase 2 identity work is evidence FOR exact binding, not permission for family
+matching. A relaxed match would require its own explicit, identity-bearing
+policy and supporting evidence.
+
 ### 12.4 Missing profile
 
 When no profile applies:
@@ -809,6 +836,89 @@ a margin-derived score
 ```
 
 This preserves the current public contract, which already returns `None`.
+
+### 12.5 Profile application provenance
+
+Frozen requirement, before any profile exists:
+
+```text
+No supported path may produce calibrated = True or a non-None
+predicted_correctness without inspectable calibration-profile identity and
+version provenance.
+```
+
+A calibrated result must be auditable back to the exact profile artifact that
+produced it, otherwise a downstream consumer cannot tell which fitted numbers,
+binding, ground-truth semantics, target, method, and training population the
+value came from. This round records the requirement only. The storage location
+is deliberately NOT frozen yet: it may end up on the calibrated result's own
+provenance, on a separate calibration-application artifact, or as a
+`DecisionTrace` extension, and the design constitution still leaves that open.
+`predicted_correctness` remains `None` for every result the runtime can
+currently produce.
+
+### 12.6 Taxonomy compatibility precondition for fitting and application
+
+Two taxonomy declarations exist and they answer different questions. The
+`CalibrationBinding` taxonomy is part of the declared probability population.
+The `GroundTruthSemanticsIdentity` taxonomy is part of what the labels mean.
+They are not the same concept and neither axis is removed or merged.
+
+A fitting population can currently hold a binding taxonomy of `support` v3
+beside a ground-truth taxonomy of `legacy-support` v1 and remain structurally
+valid, because Phase 4A recorded orthogonal identities. That is not sufficient
+once a profile claims to map scores from one population onto correctness labels
+from another taxonomy. An explicit contradiction must not enter profile
+semantics unexplained.
+
+Frozen rule for the FIRST profile and fitting implementation:
+
+```text
+Case A  both taxonomy IDs concrete and equal
+        potentially compatible; if both versions are concrete they must also be
+        equal, and a concrete version mismatch is an explicit mismatch
+
+Case B  both taxonomy IDs concrete and different
+        profile fitting and application are NOT allowed by the initial
+        contract; fail closed
+
+Case C  one or both taxonomy IDs unknown (None)
+        equality is never invented and the pair is never called proven
+        compatible; the pair stays structurally representable because the
+        taxonomy declaration is optional provenance
+
+Case D  same taxonomy ID but only one version concrete
+        the unknown version is never inferred to equal the known one; this is
+        an unresolved relationship, not an explicit contradiction, and neither
+        side is silently rewritten
+```
+
+Worked examples of the intended rule:
+
+```text
+binding taxonomy support v3   + ground-truth taxonomy support v3
+  -> no explicit contradiction
+
+binding taxonomy support v3   + ground-truth taxonomy support v2
+  -> explicit version mismatch; initial profile fitting fails closed
+
+binding taxonomy support v3   + ground-truth taxonomy legacy-support v1
+  -> cross-taxonomy relationship; initial profile fitting fails closed
+
+binding taxonomy None         + ground-truth taxonomy support v3
+  -> unknown relationship, not proof of equality; never claimed compatible
+```
+
+The rule constrains profile fitting and application only. It does NOT
+retroactively invalidate `CalibrationObservation`, the evaluation cohort, or
+`CalibrationDataset`: those are provenance and data artifacts and may
+legitimately record a mismatch, so their admission is unchanged.
+
+Explicit cross-taxonomy fitting or application requires an identity-bearing
+mapping contract; that contract is not implemented yet and no speculative
+mapping framework is created here. Because no fitter or profile exists yet,
+this rule is frozen in design only. A tested compatibility helper is deferred
+until it has a real caller, so that no dead policy code is added.
 
 ## 13. Calibration method identity
 
@@ -887,6 +997,43 @@ near 1.0. The mass measures how much probability the declared scoring labels hol
 not whether the candidate set is right and not whether the answer is correct. It
 is at most a candidate feature for a future calibrator, never a certainty signal
 and never a correctness proxy.
+
+### 13.4 Method selection remains open
+
+Phase 4C.0 does not select, implement, or canonize a calibrator. Platt scaling,
+temperature scaling, isotonic regression, and histogram or binning methods all
+remain candidates, and none is preferred here. The current design notes already
+argue that winner correctness is a scalar calibration problem, so temperature
+scaling is not obviously the correct first method. Selecting the first fitter
+belongs to a later implementation round with a concrete mathematical contract.
+
+One specific claim must NOT be documented as fact: that an exact log-loss
+objective combined with a `p = 1` sample forces a temperature-scaling parameter
+toward zero. That is not a valid general contract, because different calibrator
+parameterizations behave differently at the endpoints. The only rule frozen here
+is the one in 13.5.
+
+### 13.5 Fitting objective and endpoint policy are semantics-bearing
+
+Frozen rule, before any fitter exists:
+
+```text
+A calibration method's fitting objective and its numerical endpoint policy are
+semantics-bearing method configuration. They must be explicit and versioned.
+```
+
+Consequences that bind a future fitter:
+
+```text
+an evaluation metric is never silently reused as a training objective
+epsilon, clipping, smoothing, finite-endpoint substitution, and regularization
+are never introduced silently; if a fitter needs any of them, they belong to the
+method identity/configuration and must be documented and tested
+```
+
+The reason is the same as for the evaluation metrics: a number produced under an
+undocumented objective and endpoint policy cannot be reproduced, and a silent
+substitution changes what the fitted artifact means without changing its version.
 
 ## 14. Metric semantics
 

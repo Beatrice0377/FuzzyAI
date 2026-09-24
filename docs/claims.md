@@ -459,7 +459,9 @@ has been fitted, and no calibration-quality claim is made anywhere.
    evaluation dataset fingerprints, different Brier artifact fingerprints,
    different log-loss artifact fingerprints, different `source_count`, and
    different `taxonomy_miss_count`. Both `BrierEvaluationResult` and
-   `LogLossEvaluationResult` (fingerprint versions bumped 1 -> 2) commit
+   `LogLossEvaluationResult` (artifact fingerprint schema versions 3 and 3;
+   Phase 4B moved them to 2 and the Phase 4C.0 target-identity migration moved
+   them to 3) commit
    `source_cohort_fingerprint` and its payload version, `source_count`, and
    the exclusion accounting, while `count` remains the number of observations
    actually scored; the metric formulas and the metric versions (Brier
@@ -469,21 +471,32 @@ has been fitted, and no calibration-quality claim is made anywhere.
    construction. Evidence: `tests/test_calibration_evaluation.py`
    (`TestCohortProvenanceNoConflation`, `TestVersionGuards`,
    `TestLogLossVersionGuards`).
- - `[V]` `CalibrationEvaluationDataset` structurally preserves binding,
-   ground-truth semantics, and split provenance: admission is all-or-nothing
-   over fit-eligible observations with accumulated, distinct rejection
-   messages; binding and ground-truth semantics are enforced by canonical-JSON
-   string equality of their identity payloads (`label_source` differences
-   alone are accepted; `labeling_rule` differences are rejected even when the
-   binding matches); invalid split metadata (a non-`EvaluationSplitRole`
-   `split_role`, an empty `split_id`) is rejected; a taxonomy miss, an
-   unresolved ground truth, or an unadjudicated ground truth is rejected as
-    not fit-eligible and never encoded as `correct = False`. The dataset
-    fingerprint is version 2, row-order independent, multiplicity preserving,
-    and commits the declared `split_role` and `split_id` plus the source
-    cohort identity and exclusion accounting. Evidence:
-    `tests/test_calibration_evaluation.py`
-    (`TestEvaluationDatasetProjection`, `TestEvaluationDatasetIdentity`).
+ - `[V]` The three datasets are distinct contracts and must not be conflated.
+   A `CalibrationDataset` (the calibration FITTING dataset) REJECTS
+   non-fit-eligible observations: it refuses a taxonomy miss, an unresolved
+   ground truth, or an unadjudicated ground truth. A
+   `CalibrationEvaluationCohort` (the declared evaluation SOURCE cohort) is
+   the opposite contract: it RETAINS every declared source row, including
+   taxonomy-miss, unresolved, and resolved-but-unadjudicated rows, and
+   ACCOUNTS for them in the four-way partition and in the cohort fingerprint.
+   A `CalibrationEvaluationDataset` is the deterministic METRIC-ELIGIBLE
+   PROJECTION of exactly one cohort
+   (`CalibrationEvaluationDataset.from_cohort(cohort)`): excluded rows are
+   excluded from the projected evaluation rows, NOT rejected as source data
+   and never silently dropped, and the projection keeps the source cohort
+   identity and the exclusion accounting so the exclusion itself remains
+   provenance. Structural projection rules are all-or-nothing over
+   fit-eligible observations with accumulated, distinct rejection messages;
+   binding and ground-truth semantics are enforced by canonical-JSON string
+   equality of their identity payloads (`label_source` differences alone are
+   accepted; `labeling_rule` differences are rejected even when the binding
+   matches); invalid split metadata (a non-`EvaluationSplitRole` `split_role`,
+   an empty `split_id`) is rejected. The dataset fingerprint is version 2,
+   row-order independent, multiplicity preserving, and commits the declared
+   `split_role` and `split_id` plus the source cohort identity and exclusion
+   accounting. Evidence: `tests/test_calibration.py::TestCalibrationDataset`
+   and `tests/test_calibration_evaluation.py`
+   (`TestEvaluationDatasetProjection`, `TestEvaluationDatasetIdentity`).
  - `[V]` Brier evaluation computes `Brier = mean((p_i - y_i)^2)` with
    `math.fsum` accumulation, where `p_i` is the uncalibrated selected semantic
    probability extracted from the recorded `selected_value` by semantic name
@@ -493,7 +506,8 @@ has been fitted, and no calibration-quality claim is made anywhere.
    `tests/test_calibration_evaluation.py`
    (`TestBrierMatrix`, `TestSelectedProbabilityExtraction`).
  - `[V]` `BrierEvaluationResult` commits metric identity and version
-    (`brier`, version 1), the empirical target (`winner_correctness`),
+    (`brier`, version 1), the shared versioned calibration target identity
+   (`winner_correctness`, version 1),
     input-score identity and version
     (`uncalibrated-selected-probability`, version 1), the evaluation dataset
     fingerprint and payload version, the source cohort fingerprint and
@@ -524,7 +538,8 @@ has been fitted, and no calibration-quality claim is made anywhere.
    `TestLogLossExactEndpoints`, `TestLogLossNearBoundary`,
    `TestLogLossInfinityCanonicalization`).
   - `[V]` `LogLossEvaluationResult` commits metric identity and version
-    (`log-loss`, version 1), the empirical target (`winner_correctness`),
+    (`log-loss`, version 1), the shared versioned calibration target identity
+   (`winner_correctness`, version 1),
     input-score identity and version (`uncalibrated-selected-probability`,
     version 1), the evaluation dataset fingerprint and payload version, the
     source cohort fingerprint and payload version, the source count and
@@ -679,6 +694,25 @@ has been fitted, and no calibration-quality claim is made anywhere.
     are the binned absolute-gap diagnostic, the absolute value carries no
     direction, and the ordinary calibration-error interpretation is not
     granted.
+
+ - `[V]` All winner-correctness evaluation artifacts commit ONE shared,
+   explicit, versioned calibration target identity
+   (`WINNER_CORRECTNESS_TARGET_ID = "winner_correctness"`, version 1). The
+   target is no longer owned by Brier: `BrierEvaluationResult`,
+   `LogLossEvaluationResult`, `WinnerCorrectnessDiagnosticsResult`,
+   `WinnerReliabilityResult`, and `WinnerBinnedAbsoluteGapResult` all report
+   the same `target_id` and the same `target_version` when computed over one
+   evaluation population, and the target is committed exactly once per
+   artifact payload as a nested `{"target_id", "target_version"}` object with
+   no separate top-level identity key and no leftover bare unversioned target
+   string. Because the target identity became an explicit versioned identity,
+   the five artifact payload schema versions moved to Brier 3, log loss 3,
+   diagnostics 2, reliability 2, and binned absolute gap 2, while the metric,
+   reliability, binning, input-score, and aggregate semantic versions and
+   every cohort and dataset identity stayed unchanged: only the artifact
+   identity schema moved, not any mathematics. Evidence:
+   `tests/test_calibration_evaluation.py::TestSharedCalibrationTargetIdentity`
+   and the five version-guard classes.
 
 These claims are deterministic implementation claims about the evaluation
 foundation only. They are NOT claims that any model is calibrated, that any

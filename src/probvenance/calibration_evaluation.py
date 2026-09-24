@@ -59,7 +59,6 @@ __all__ = [
     "LOG_LOSS_LOG_BASE",
     "LOG_LOSS_METRIC_ID",
     "LOG_LOSS_METRIC_VERSION",
-    "LOG_LOSS_TARGET",
     "MEAN_SELECTED_PROBABILITY_ID",
     "MEAN_SELECTED_PROBABILITY_VERSION",
     "UNCALIBRATED_SELECTED_PROBABILITY_ID",
@@ -68,6 +67,8 @@ __all__ = [
     "WINNER_BINNED_ABSOLUTE_GAP_RESULT_FINGERPRINT_VERSION",
     "WINNER_BINNED_ABSOLUTE_GAP_VERSION",
     "WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION",
+    "WINNER_CORRECTNESS_TARGET_ID",
+    "WINNER_CORRECTNESS_TARGET_VERSION",
     "WINNER_RELIABILITY_CURVE_ID",
     "WINNER_RELIABILITY_CURVE_VERSION",
     "WINNER_RELIABILITY_RESULT_FINGERPRINT_VERSION",
@@ -93,9 +94,35 @@ __all__ = [
 
 CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION = 1
 CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION = 2
-BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION = 2
-LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION = 2
-WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION = 1
+#: Bumped 2 -> 3 in Phase 4C.0. The canonical payload now commits winner
+#: correctness as an explicit versioned target identity instead of an
+#: unversioned metric-owned string. The metric formula and the metric
+#: semantics did not change; only the artifact identity schema did.
+BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION = 3
+#: Bumped 2 -> 3 for the same Phase 4C.0 target-identity reason as the Brier
+#: result schema.
+LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION = 3
+#: Bumped 1 -> 2 for the same Phase 4C.0 target-identity reason.
+WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION = 2
+
+# ---------------------------------------------------------------------------
+# Calibration target identity
+# ---------------------------------------------------------------------------
+
+#: The single implemented calibration target: whether the recorded selected
+#: semantic value equals the resolved ground truth. This target is shared by
+#: every winner-correctness evaluation artifact and is owned by no single
+#: metric; the target no longer belongs to Brier. A target with the same id but
+#: a different version is a different target semantics identity, because the
+#: meaning of the label could have changed. Exact identity only: no
+#: target-version compatibility policy is implemented.
+#:
+#: Two constants are deliberately sufficient here. A CalibrationTargetIdentity
+#: type becomes justified only when several targets exist, when a target
+#: carries structured configuration, or when target compatibility needs
+#: behaviour; none of those is true yet.
+WINNER_CORRECTNESS_TARGET_ID = "winner_correctness"
+WINNER_CORRECTNESS_TARGET_VERSION = 1
 
 # ---------------------------------------------------------------------------
 # Score semantics identity
@@ -116,13 +143,9 @@ UNCALIBRATED_SELECTED_PROBABILITY_VERSION = 1
 
 BRIER_METRIC_ID = "brier"
 BRIER_METRIC_VERSION = 1
-#: The empirical target the Brier score is computed against.
-BRIER_TARGET = "winner_correctness"
 
 LOG_LOSS_METRIC_ID = "log-loss"
 LOG_LOSS_METRIC_VERSION = 1
-#: The empirical target the log loss is computed against.
-LOG_LOSS_TARGET = "winner_correctness"
 #: The boundary policy of the implemented log loss: exact natural-log
 #: endpoints, no epsilon, no clipping, no smoothing.
 LOG_LOSS_BOUNDARY_POLICY = "exact"
@@ -178,8 +201,10 @@ WINNER_RELIABILITY_CURVE_VERSION = 1
 
 #: The canonical-payload schema version of the reliability result artifact.
 #: It is deliberately distinct from the reliability semantic version and from
-#: the binning-policy semantic version.
-WINNER_RELIABILITY_RESULT_FINGERPRINT_VERSION = 1
+#: the binning-policy semantic version. Bumped 1 -> 2 in Phase 4C.0: the
+#: payload now commits winner correctness as a versioned target identity; the
+#: reliability mathematics did not change.
+WINNER_RELIABILITY_RESULT_FINGERPRINT_VERSION = 2
 
 # ---------------------------------------------------------------------------
 # Binned absolute-gap aggregate identity (ECE-form, derived consumer)
@@ -198,8 +223,10 @@ WINNER_BINNED_ABSOLUTE_GAP_VERSION = 1
 
 #: The canonical-payload schema version of the binned absolute-gap result
 #: artifact. Deliberately distinct from the aggregate semantic version and
-#: from every upstream identity version.
-WINNER_BINNED_ABSOLUTE_GAP_RESULT_FINGERPRINT_VERSION = 1
+#: from every upstream identity version. Bumped 1 -> 2 in Phase 4C.0: the
+#: payload now commits winner correctness as a versioned target identity; the
+#: aggregate mathematics did not change.
+WINNER_BINNED_ABSOLUTE_GAP_RESULT_FINGERPRINT_VERSION = 2
 
 # ---------------------------------------------------------------------------
 # Construction tokens for the supported-path-only artifacts
@@ -718,7 +745,8 @@ class BrierEvaluationResult:
 
     metric_id: str = field(init=False, repr=False)
     metric_version: int = field(init=False, repr=False)
-    target: str = field(init=False, repr=False)
+    target_id: str = field(init=False, repr=False)
+    target_version: int = field(init=False, repr=False)
     input_score_id: str = field(init=False, repr=False)
     input_score_version: int = field(init=False, repr=False)
     evaluation_dataset_fingerprint: str = field(init=False, repr=False)
@@ -760,7 +788,8 @@ class BrierEvaluationResult:
         value = math.fsum(squared_errors) / count
         object.__setattr__(self, "metric_id", BRIER_METRIC_ID)
         object.__setattr__(self, "metric_version", BRIER_METRIC_VERSION)
-        object.__setattr__(self, "target", BRIER_TARGET)
+        object.__setattr__(self, "target_id", WINNER_CORRECTNESS_TARGET_ID)
+        object.__setattr__(self, "target_version", WINNER_CORRECTNESS_TARGET_VERSION)
         object.__setattr__(self, "input_score_id", UNCALIBRATED_SELECTED_PROBABILITY_ID)
         object.__setattr__(self, "input_score_version", UNCALIBRATED_SELECTED_PROBABILITY_VERSION)
         object.__setattr__(self, "evaluation_dataset_fingerprint", dataset.fingerprint)
@@ -798,7 +827,7 @@ class BrierEvaluationResult:
             "v": BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION,
             "metric_id": self.metric_id,
             "metric_version": self.metric_version,
-            "target": self.target,
+            "target": {"target_id": self.target_id, "target_version": self.target_version},
             "input_score_id": self.input_score_id,
             "input_score_version": self.input_score_version,
             "evaluation_dataset_fingerprint": self.evaluation_dataset_fingerprint,
@@ -891,7 +920,8 @@ class LogLossEvaluationResult:
 
     metric_id: str = field(init=False, repr=False)
     metric_version: int = field(init=False, repr=False)
-    target: str = field(init=False, repr=False)
+    target_id: str = field(init=False, repr=False)
+    target_version: int = field(init=False, repr=False)
     input_score_id: str = field(init=False, repr=False)
     input_score_version: int = field(init=False, repr=False)
     evaluation_dataset_fingerprint: str = field(init=False, repr=False)
@@ -944,7 +974,8 @@ class LogLossEvaluationResult:
             )
         object.__setattr__(self, "metric_id", LOG_LOSS_METRIC_ID)
         object.__setattr__(self, "metric_version", LOG_LOSS_METRIC_VERSION)
-        object.__setattr__(self, "target", LOG_LOSS_TARGET)
+        object.__setattr__(self, "target_id", WINNER_CORRECTNESS_TARGET_ID)
+        object.__setattr__(self, "target_version", WINNER_CORRECTNESS_TARGET_VERSION)
         object.__setattr__(self, "input_score_id", UNCALIBRATED_SELECTED_PROBABILITY_ID)
         object.__setattr__(self, "input_score_version", UNCALIBRATED_SELECTED_PROBABILITY_VERSION)
         object.__setattr__(self, "evaluation_dataset_fingerprint", dataset.fingerprint)
@@ -997,7 +1028,7 @@ class LogLossEvaluationResult:
             "v": LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION,
             "metric_id": self.metric_id,
             "metric_version": self.metric_version,
-            "target": self.target,
+            "target": {"target_id": self.target_id, "target_version": self.target_version},
             "input_score_id": self.input_score_id,
             "input_score_version": self.input_score_version,
             "evaluation_dataset_fingerprint": self.evaluation_dataset_fingerprint,
@@ -1114,7 +1145,8 @@ class WinnerCorrectnessDiagnosticsResult:
     every nested object fresh; no caller-owned mapping is stored.
     """
 
-    target: str = field(init=False, repr=False)
+    target_id: str = field(init=False, repr=False)
+    target_version: int = field(init=False, repr=False)
     input_score_id: str = field(init=False, repr=False)
     input_score_version: int = field(init=False, repr=False)
     evaluation_dataset_fingerprint: str = field(init=False, repr=False)
@@ -1170,7 +1202,8 @@ class WinnerCorrectnessDiagnosticsResult:
         empirical_constant_brier_reference = (
             math.fsum((empirical_correctness_rate - label) ** 2 for label in labels) / count
         )
-        object.__setattr__(self, "target", BRIER_TARGET)
+        object.__setattr__(self, "target_id", WINNER_CORRECTNESS_TARGET_ID)
+        object.__setattr__(self, "target_version", WINNER_CORRECTNESS_TARGET_VERSION)
         object.__setattr__(self, "input_score_id", UNCALIBRATED_SELECTED_PROBABILITY_ID)
         object.__setattr__(self, "input_score_version", UNCALIBRATED_SELECTED_PROBABILITY_VERSION)
         object.__setattr__(self, "evaluation_dataset_fingerprint", dataset.fingerprint)
@@ -1213,7 +1246,7 @@ class WinnerCorrectnessDiagnosticsResult:
         """
         return {
             "v": WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION,
-            "target": self.target,
+            "target": {"target_id": self.target_id, "target_version": self.target_version},
             "input_score_id": self.input_score_id,
             "input_score_version": self.input_score_version,
             "evaluation_dataset_fingerprint": self.evaluation_dataset_fingerprint,
@@ -1454,7 +1487,8 @@ class WinnerReliabilityResult:
 
     reliability_id: str = field(init=False, repr=False)
     reliability_version: int = field(init=False, repr=False)
-    target: str = field(init=False, repr=False)
+    target_id: str = field(init=False, repr=False)
+    target_version: int = field(init=False, repr=False)
     input_score_id: str = field(init=False, repr=False)
     input_score_version: int = field(init=False, repr=False)
     binning_id: str = field(init=False, repr=False)
@@ -1544,7 +1578,8 @@ class WinnerReliabilityResult:
             )
         object.__setattr__(self, "reliability_id", WINNER_RELIABILITY_CURVE_ID)
         object.__setattr__(self, "reliability_version", WINNER_RELIABILITY_CURVE_VERSION)
-        object.__setattr__(self, "target", BRIER_TARGET)
+        object.__setattr__(self, "target_id", WINNER_CORRECTNESS_TARGET_ID)
+        object.__setattr__(self, "target_version", WINNER_CORRECTNESS_TARGET_VERSION)
         object.__setattr__(self, "input_score_id", UNCALIBRATED_SELECTED_PROBABILITY_ID)
         object.__setattr__(self, "input_score_version", UNCALIBRATED_SELECTED_PROBABILITY_VERSION)
         object.__setattr__(self, "binning_id", EQUAL_WIDTH_BINNING_ID)
@@ -1587,7 +1622,7 @@ class WinnerReliabilityResult:
             "v": WINNER_RELIABILITY_RESULT_FINGERPRINT_VERSION,
             "reliability_id": self.reliability_id,
             "reliability_version": self.reliability_version,
-            "target": self.target,
+            "target": {"target_id": self.target_id, "target_version": self.target_version},
             "input_score_id": self.input_score_id,
             "input_score_version": self.input_score_version,
             "binning": {
@@ -1717,7 +1752,8 @@ class WinnerBinnedAbsoluteGapResult:
 
     aggregate_id: str = field(init=False, repr=False)
     aggregate_version: int = field(init=False, repr=False)
-    target: str = field(init=False, repr=False)
+    target_id: str = field(init=False, repr=False)
+    target_version: int = field(init=False, repr=False)
     input_score_id: str = field(init=False, repr=False)
     input_score_version: int = field(init=False, repr=False)
     reliability_fingerprint: str = field(init=False, repr=False)
@@ -1797,7 +1833,8 @@ class WinnerBinnedAbsoluteGapResult:
             )
         object.__setattr__(self, "aggregate_id", WINNER_BINNED_ABSOLUTE_GAP_ID)
         object.__setattr__(self, "aggregate_version", WINNER_BINNED_ABSOLUTE_GAP_VERSION)
-        object.__setattr__(self, "target", reliability.target)
+        object.__setattr__(self, "target_id", reliability.target_id)
+        object.__setattr__(self, "target_version", reliability.target_version)
         object.__setattr__(self, "input_score_id", reliability.input_score_id)
         object.__setattr__(self, "input_score_version", reliability.input_score_version)
         object.__setattr__(self, "reliability_fingerprint", reliability.fingerprint)
@@ -1851,7 +1888,7 @@ class WinnerBinnedAbsoluteGapResult:
             "v": WINNER_BINNED_ABSOLUTE_GAP_RESULT_FINGERPRINT_VERSION,
             "aggregate_id": self.aggregate_id,
             "aggregate_version": self.aggregate_version,
-            "target": self.target,
+            "target": {"target_id": self.target_id, "target_version": self.target_version},
             "input_score_id": self.input_score_id,
             "input_score_version": self.input_score_version,
             "reliability_fingerprint": self.reliability_fingerprint,

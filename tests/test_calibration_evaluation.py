@@ -75,7 +75,6 @@ from probvenance.calibration_evaluation import (
     LOG_LOSS_LOG_BASE,
     LOG_LOSS_METRIC_ID,
     LOG_LOSS_METRIC_VERSION,
-    LOG_LOSS_TARGET,
     MEAN_SELECTED_PROBABILITY_ID,
     MEAN_SELECTED_PROBABILITY_VERSION,
     UNCALIBRATED_SELECTED_PROBABILITY_ID,
@@ -84,6 +83,8 @@ from probvenance.calibration_evaluation import (
     WINNER_BINNED_ABSOLUTE_GAP_RESULT_FINGERPRINT_VERSION,
     WINNER_BINNED_ABSOLUTE_GAP_VERSION,
     WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION,
+    WINNER_CORRECTNESS_TARGET_ID,
+    WINNER_CORRECTNESS_TARGET_VERSION,
     WINNER_RELIABILITY_CURVE_ID,
     WINNER_RELIABILITY_CURVE_VERSION,
     WINNER_RELIABILITY_RESULT_FINGERPRINT_VERSION,
@@ -936,7 +937,8 @@ class TestBrierEvaluationResult:
         result = evaluate_uncalibrated_winner_brier(evaluation_dataset([choice_observation()]))
         assert result.metric_id == "brier"
         assert result.metric_version == 1
-        assert result.target == "winner_correctness"
+        assert result.target_id == WINNER_CORRECTNESS_TARGET_ID
+        assert result.target_version == WINNER_CORRECTNESS_TARGET_VERSION
         assert result.input_score_id == "uncalibrated-selected-probability"
         assert result.input_score_version == 1
         assert result.count == 1
@@ -950,7 +952,10 @@ class TestBrierEvaluationResult:
             "v": BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION,
             "metric_id": "brier",
             "metric_version": 1,
-            "target": "winner_correctness",
+            "target": {
+                "target_id": WINNER_CORRECTNESS_TARGET_ID,
+                "target_version": WINNER_CORRECTNESS_TARGET_VERSION,
+            },
             "input_score_id": "uncalibrated-selected-probability",
             "input_score_version": 1,
             "evaluation_dataset_fingerprint": dataset.fingerprint,
@@ -1102,9 +1107,9 @@ class TestNoConflation:
 
 
 class TestVersionGuards:
-    def test_new_versions_are_two(self):
+    def test_new_versions_are_three(self):
         assert CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION == 2
-        assert BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION == 2
+        assert BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION == 3
         assert UNCALIBRATED_SELECTED_PROBABILITY_VERSION == 1
         assert BRIER_METRIC_VERSION == 1
 
@@ -1354,7 +1359,8 @@ class TestLogLossEvaluationResult:
         result = self._result()
         assert result.metric_id == "log-loss"
         assert result.metric_version == 1
-        assert result.target == "winner_correctness"
+        assert result.target_id == WINNER_CORRECTNESS_TARGET_ID
+        assert result.target_version == WINNER_CORRECTNESS_TARGET_VERSION
         assert result.input_score_id == "uncalibrated-selected-probability"
         assert result.input_score_version == 1
         assert result.count == 1
@@ -1412,7 +1418,8 @@ class TestLogLossCrossMetricProvenance:
         )
         assert log_loss.input_score_id == brier.input_score_id
         assert log_loss.input_score_version == brier.input_score_version
-        assert log_loss.target == brier.target
+        assert log_loss.target_id == brier.target_id
+        assert log_loss.target_version == brier.target_version
         assert log_loss.count == brier.count
         assert log_loss.metric_id != brier.metric_id
         assert log_loss.fingerprint != brier.fingerprint
@@ -1470,13 +1477,15 @@ class TestLogLossNoConflation:
 
 
 class TestLogLossVersionGuards:
-    def test_new_log_loss_versions_are_two(self):
+    def test_log_loss_fingerprint_schema_moved_to_three(self):
+        # Phase 4C.0: the canonical payload now commits winner correctness as an
+        # explicit versioned target identity. The metric formula and the metric
+        # semantics did not change; only the artifact identity schema did.
+        assert LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION == 3
         assert LOG_LOSS_METRIC_VERSION == 1
-        assert LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION == 2
 
     def test_log_loss_identity_constants(self):
         assert LOG_LOSS_METRIC_ID == "log-loss"
-        assert LOG_LOSS_TARGET == "winner_correctness"
         assert LOG_LOSS_BOUNDARY_POLICY == "exact"
         assert LOG_LOSS_LOG_BASE == "e"
 
@@ -1930,7 +1939,8 @@ class TestWinnerDiagnosticsCrossArtifactAlignment:
         assert diagnostics.unresolved_count == log_loss.unresolved_count
         assert diagnostics.unadjudicated_resolved_count == brier.unadjudicated_resolved_count
         assert diagnostics.unadjudicated_resolved_count == log_loss.unadjudicated_resolved_count
-        assert diagnostics.target == brier.target == log_loss.target
+        assert diagnostics.target_id == brier.target_id == log_loss.target_id
+        assert diagnostics.target_version == brier.target_version == log_loss.target_version
         assert diagnostics.input_score_id == brier.input_score_id == log_loss.input_score_id
         assert diagnostics.input_score_version == (
             brier.input_score_version == log_loss.input_score_version
@@ -2043,8 +2053,9 @@ class TestWinnerDiagnosticsNoConflation:
 
 
 class TestWinnerDiagnosticsVersionGuards:
-    def test_new_diagnostics_fingerprint_version_is_one(self):
-        assert WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION == 1
+    def test_diagnostics_fingerprint_version_moved_to_two(self):
+        # Phase 4C.0: versioned target identity; diagnostics mathematics unchanged.
+        assert WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION == 2
 
     def test_diagnostics_identity_constants(self):
         assert EMPIRICAL_CORRECTNESS_RATE_ID == "empirical-winner-correctness-rate"
@@ -2060,8 +2071,8 @@ class TestWinnerDiagnosticsVersionGuards:
     def test_pre_existing_versions_unchanged(self):
         assert CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION == 1
         assert CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION == 2
-        assert BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION == 2
-        assert LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION == 2
+        assert BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION == 3
+        assert LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION == 3
         assert BRIER_METRIC_VERSION == 1
         assert LOG_LOSS_METRIC_VERSION == 1
         assert UNCALIBRATED_SELECTED_PROBABILITY_VERSION == 1
@@ -2318,7 +2329,13 @@ class TestWinnerReliabilityCrossArtifactProvenance:
         assert reliability.unadjudicated_resolved_count == (
             diagnostics.unadjudicated_resolved_count
         )
-        assert reliability.target == brier.target == log_loss.target == diagnostics.target
+        assert reliability.target_id == brier.target_id == log_loss.target_id
+        assert (
+            reliability.target_version
+            == brier.target_version
+            == log_loss.target_version
+            == diagnostics.target_version
+        )
         assert reliability.input_score_id == brier.input_score_id
         assert reliability.input_score_version == diagnostics.input_score_version
         assert (
@@ -2545,19 +2562,20 @@ class TestWinnerReliabilityNoConflation:
 
 
 class TestWinnerReliabilityVersionGuards:
-    def test_new_reliability_versions_are_one(self):
+    def test_reliability_result_fingerprint_version_moved_to_two(self):
+        # Phase 4C.0: versioned target identity; reliability mathematics unchanged.
         assert EQUAL_WIDTH_BINNING_ID == "equal-width"
         assert EQUAL_WIDTH_BINNING_VERSION == 1
         assert WINNER_RELIABILITY_CURVE_ID == "winner-reliability-curve"
         assert WINNER_RELIABILITY_CURVE_VERSION == 1
-        assert WINNER_RELIABILITY_RESULT_FINGERPRINT_VERSION == 1
+        assert WINNER_RELIABILITY_RESULT_FINGERPRINT_VERSION == 2
 
     def test_pre_existing_versions_unchanged(self):
         assert CALIBRATION_EVALUATION_COHORT_FINGERPRINT_VERSION == 1
         assert CALIBRATION_EVALUATION_DATASET_FINGERPRINT_VERSION == 2
-        assert BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION == 2
-        assert LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION == 2
-        assert WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION == 1
+        assert BRIER_EVALUATION_RESULT_FINGERPRINT_VERSION == 3
+        assert LOG_LOSS_EVALUATION_RESULT_FINGERPRINT_VERSION == 3
+        assert WINNER_CORRECTNESS_DIAGNOSTICS_FINGERPRINT_VERSION == 2
         assert BRIER_METRIC_VERSION == 1
         assert LOG_LOSS_METRIC_VERSION == 1
         assert EMPIRICAL_CORRECTNESS_RATE_VERSION == 1
@@ -2952,11 +2970,72 @@ class TestWinnerBinnedAbsoluteGapVersionGuards:
             "winner-correctness-equal-width-binned-absolute-gap"
         )
         assert WINNER_BINNED_ABSOLUTE_GAP_VERSION == 1
-        assert WINNER_BINNED_ABSOLUTE_GAP_RESULT_FINGERPRINT_VERSION == 1
+        # Phase 4C.0: versioned target identity; aggregate mathematics unchanged.
+        assert WINNER_BINNED_ABSOLUTE_GAP_RESULT_FINGERPRINT_VERSION == 2
 
     def test_upstream_reliability_versions_unchanged(self):
         assert EQUAL_WIDTH_BINNING_ID == "equal-width"
         assert EQUAL_WIDTH_BINNING_VERSION == 1
         assert WINNER_RELIABILITY_CURVE_ID == "winner-reliability-curve"
         assert WINNER_RELIABILITY_CURVE_VERSION == 1
-        assert WINNER_RELIABILITY_RESULT_FINGERPRINT_VERSION == 1
+        assert WINNER_RELIABILITY_RESULT_FINGERPRINT_VERSION == 2
+
+
+# ---------------------------------------------------------------------------
+# Phase 4C.0: one shared versioned calibration target identity
+# ---------------------------------------------------------------------------
+
+
+def _five_artifacts():
+    dataset = evaluation_dataset([choice_observation()])
+    reliability = evaluate_uncalibrated_winner_reliability(dataset, bin_count=2)
+    return {
+        "brier": evaluate_uncalibrated_winner_brier(dataset),
+        "log_loss": evaluate_uncalibrated_winner_log_loss(dataset),
+        "diagnostics": evaluate_uncalibrated_winner_diagnostics(dataset),
+        "reliability": reliability,
+        "gap": evaluate_winner_binned_absolute_gap(reliability),
+    }
+
+
+class TestSharedCalibrationTargetIdentity:
+    def test_all_five_artifacts_share_the_target_id_and_version(self):
+        for name, artifact in _five_artifacts().items():
+            assert artifact.target_id == WINNER_CORRECTNESS_TARGET_ID, name
+            assert artifact.target_version == WINNER_CORRECTNESS_TARGET_VERSION, name
+
+    def test_artifacts_keep_distinct_result_fingerprints(self):
+        fingerprints = {artifact.fingerprint for artifact in _five_artifacts().values()}
+        assert len(fingerprints) == 5
+
+    def test_target_identity_is_committed_exactly_once_with_id_and_version(self):
+        for name, artifact in _five_artifacts().items():
+            payload = artifact.canonical_payload()
+            target = payload["target"]
+            assert isinstance(target, dict), name
+            assert sorted(target) == ["target_id", "target_version"], name
+            assert target["target_id"] == WINNER_CORRECTNESS_TARGET_ID, name
+            assert target["target_version"] == WINNER_CORRECTNESS_TARGET_VERSION, name
+            assert "target_id" not in payload, name
+            assert "target_version" not in payload, name
+
+    def test_target_version_is_inside_the_hashed_payload(self):
+        for artifact in _five_artifacts().values():
+            payload = artifact.canonical_payload()
+            assert payload["target"]["target_version"] == WINNER_CORRECTNESS_TARGET_VERSION
+            assert artifact.fingerprint == fingerprint(payload)
+
+    def test_no_artifact_payload_contains_a_bare_target_string(self):
+        def collect(value, found):
+            if isinstance(value, dict):
+                for key, nested in value.items():
+                    if key == "target":
+                        assert not isinstance(nested, str)
+                    collect(nested, found)
+            elif isinstance(value, list):
+                for nested in value:
+                    collect(nested, found)
+
+        for name, artifact in _five_artifacts().items():
+            collect(artifact.canonical_payload(), set())
+            assert name

@@ -89,7 +89,12 @@ identity, binding, profile identity, and evaluation contract are designed in
 binding, observation, dataset, and their identities and fingerprints) and the
 pre-calibration evaluation foundation (the declared evaluation source cohort,
 the metric-eligible dataset projection with explicit exclusion accounting, and
-the winner-correctness Brier and exact log-loss metrics) are implemented.
+the winner-correctness Brier and exact log-loss metrics) are implemented. The
+Phase 4C.0 target and compatibility identity preparation is also implemented:
+`winner_correctness` is one shared, explicit, versioned calibration target
+identity that every winner-correctness evaluation artifact commits, and the
+taxonomy-compatibility precondition for a future profile is frozen in
+`docs/calibration-semantics.md` as design only.
 `CalibrationProfile`, fitting, the remaining metrics, profile matching, and
 runtime profile application do not exist, and `predicted_correctness` remains
 `None` for every result the runtime can produce.
