@@ -143,13 +143,20 @@ profile is returned, zero eligible raises an explicit no-eligible error, and
 more than one distinct eligible profile raises an ambiguity error with no
 tie-break; eligibility is an exact binding match plus the winner-correctness
 target and uncalibrated-selected-probability input semantics, and selection is
-storage-agnostic and applies nothing. Profile registries, binding-based lookup,
-profile matching policy beyond exact binding match, profile discovery or
-catalog, quality ranking, latest/best/default policy, a signed profile
-distribution, automatic runtime profile selection, the remaining metrics, and
-automatic runtime calibration (deriving scores without an explicit
-caller-supplied profile) do not exist, and `predicted_correctness` remains
-`None` for every runtime result that no caller has explicitly calibrated.
+storage-agnostic and applies nothing. An explicit in-memory profile catalog and
+non-authoritative runtime discovery are implemented (Phase 4C.8,
+`CalibrationProfileCatalog`, `discover_calibration_profile_references_for_runtime`):
+a catalog is built from a caller-supplied tuple of profiles and discovery returns
+deterministic exact profile references whose discovery metadata matches the same
+runtime eligibility projection as selection, while authorizing, loading,
+selecting, and applying nothing. Profile registries, binding-based lookup,
+profile matching policy beyond exact binding match, catalog
+serialization/persistence, store enumeration, quality ranking,
+latest/best/default policy, a signed profile distribution, automatic runtime
+profile selection, the remaining metrics, and automatic runtime calibration
+(deriving scores without an explicit caller-supplied profile) do not exist, and
+`predicted_correctness` remains `None` for every runtime result that no caller
+has explicitly calibrated.
 
 - Evaluation harness (started: declared evaluation source cohort, metric-eligible
   dataset projection, Brier, log loss; delivered: winner-correctness companion

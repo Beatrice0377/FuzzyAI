@@ -77,8 +77,11 @@ Fitting algorithms:        implemented (one scalar fitting method, Phase 4C.2
 Calibration runtime:       explicit runtime-linked application implemented
                            (apply_profile_to_runtime_evaluation) plus explicit
                            candidate-set unique-or-ambiguous profile selection
-                           (select_calibration_profile_for_runtime); automatic
-                           profile selection, registry, and lookup not
+                           (select_calibration_profile_for_runtime) plus
+                           non-authoritative candidate-reference discovery from
+                           an explicit catalog
+                           (discover_calibration_profile_references_for_runtime);
+                           automatic profile selection, registry, and lookup not
                            implemented
 Profile serialization:     versioned canonical JSON serialization and
                            identity-verified loading implemented
@@ -97,9 +100,20 @@ Profile selection:         explicit caller-supplied candidate-set eligibility
                            one eligible profile returned, zero eligible raises
                            an explicit no-eligible error, and more than one
                            distinct eligible profile raises an ambiguity error
-                           with no tie-break; discovery, catalog, binding
-                           index, quality ranking, latest/best/default policy,
-                           and automatic runtime selection are NOT implemented
+                           with no tie-break; binding index, quality ranking,
+                           latest/best/default policy, and automatic runtime
+                           selection are NOT implemented
+Profile catalog:           explicit immutable in-memory discovery index
+                           implemented (CalibrationProfileCatalog,
+                           CalibrationProfileReference,
+                           discover_calibration_profile_references_for_runtime):
+                           built from a caller-supplied tuple of profiles,
+                           returns deterministic exact profile references whose
+                           discovery metadata matches the runtime eligibility
+                           projection, and authorizes, loads, selects, and
+                           applies nothing; catalog serialization/persistence,
+                           store enumeration, and automatic store/catalog
+                           synchronization are NOT implemented
 predicted_correctness:     None unless an explicit compatible
                            CalibrationProfile is applied through
                            apply_profile_to_runtime_evaluation
@@ -1965,7 +1979,95 @@ supported method, because selection eligibility is not current method execution
 capability. Selection does not modify the evaluation and produces no selection
 provenance artifact; it returns a profile only.
 
-### 18.4 What `calibrated = True` means
+### 18.4 Explicit profile catalog and non-authoritative discovery
+
+A `CalibrationProfileCatalog` is an immutable in-memory discovery index of known
+exact profile identities. It is built only from a caller-supplied tuple of real
+`CalibrationProfile` artifacts via `CalibrationProfileCatalog.from_profiles(...)`;
+construction never scans the store, walks a directory, reads the environment, or
+consults a registry. It retains only a discovery projection per profile (the
+exact reference plus the binding, target, and input-score metadata) and never the
+full profiles.
+
+The complete explicit choreography is:
+
+```text
+evaluate_with_trace(...)                              -> uncalibrated Evaluation
+discover_calibration_profile_references_for_runtime() -> exact CalibrationProfileReference values
+store.get(reference fingerprint/version)              -> loaded CalibrationProfile objects
+select_calibration_profile_for_runtime(...)           -> the one eligible CalibrationProfile
+apply_profile_to_runtime_evaluation(...)              -> calibrated Evaluation
+```
+
+There is no shortcut API that collapses these layers:
+
+```python
+evaluation = runtime.evaluate_with_trace(decision)
+
+refs = discover_calibration_profile_references_for_runtime(
+    evaluation,
+    catalog,
+    task_id="support-routing",
+    taxonomy_id="support",
+    taxonomy_version=3,
+)
+
+profiles = tuple(
+    store.get(
+        profile_fingerprint=ref.profile_fingerprint,
+        profile_fingerprint_version=ref.profile_fingerprint_version,
+    )
+    for ref in refs
+)
+
+profile = select_calibration_profile_for_runtime(
+    evaluation,
+    profiles,
+    task_id="support-routing",
+    taxonomy_id="support",
+    taxonomy_version=3,
+)
+
+calibrated = apply_profile_to_runtime_evaluation(
+    evaluation,
+    profile,
+    task_id="support-routing",
+    taxonomy_id="support",
+    taxonomy_version=3,
+)
+```
+
+Discovery proposes candidate identities; selection authorizes one loaded
+profile; application applies that exact profile. Discovery is non-authoritative:
+a discovered reference is NOT authorization to apply the referenced profile, and
+catalog metadata is discovery-index metadata rather than runtime authorization
+provenance. It may be stale relative to an external store. The selector
+re-validates the actual loaded profiles, so catalog discovery never weakens
+selection.
+
+Eligibility uses the same exact binding plus `winner_correctness` v1 target and
+`uncalibrated-selected-probability` v1 input-score projection as the selector,
+reconstructed from the trace plus the CALLER's declarations. Ground-truth
+semantics, method, method configuration, fitted parameters, training dataset,
+quality metrics, recency, and catalog input order are deliberately NOT discovery
+filters, so distinct profiles sharing the runtime projection are all returned.
+
+Cardinality is not an error:
+
+```text
+0 matching references -> ()
+1 matching reference  -> (reference,)
+N matching references -> tuple of N references
+```
+
+Discovery never raises a selection no-eligible or ambiguity error merely because
+of cardinality; those are selection-policy outcomes owned by Phase 4C.7 after the
+referenced profiles are loaded by exact identity. A catalog contains no
+fingerprint, version, or serialization schema: catalog persistence is a separate
+future phase. Catalog membership is not part of profile identity, so building a
+catalog never changes a profile fingerprint, canonical payload, or serialization.
+
+### 18.5 What `calibrated = True` means
 
 `calibrated = True` records that a supported `CalibrationProfile` was applied
 through the declared application contract and `predicted_correctness` was
@@ -1983,7 +2085,7 @@ training data was independent. Applying a profile does not change
 outcome distribution stays the uncalibrated one, and `predicted_correctness` is
 a separate calibrated correctness estimate.
 
-### 18.5 Abstention boundary
+### 18.6 Abstention boundary
 
 Calibrated predicted correctness is an input to a future policy, not the policy.
 This document does not implement or define `accept`, `abstain`, `review`, or

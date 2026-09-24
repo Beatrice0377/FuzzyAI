@@ -36,9 +36,15 @@ profiles and returns the single eligible profile, raises an explicit no-eligible
 error when none is eligible, and raises an ambiguity error when more than one
 distinct profile is eligible, with no tie-break. Selection is authorization, not
 recommendation: it is storage-agnostic, applies nothing, and uses neither
-quality metrics nor method support as a preference. Automatic runtime profile
-selection, profile registries, binding-based lookup, profile discovery, quality
-ranking, and a signed distribution do not exist, and `predicted_correctness`
+quality metrics nor method support as a preference. An explicit in-memory profile
+catalog and non-authoritative runtime discovery are implemented: a
+`CalibrationProfileCatalog` is built from a caller-supplied tuple of profiles,
+and `discover_calibration_profile_references_for_runtime` returns deterministic
+exact profile references whose discovery metadata matches the same runtime
+eligibility projection as selection, while authorizing, loading, selecting, and
+applying nothing. Automatic runtime profile selection, profile registries,
+binding-based lookup, catalog serialization/persistence, store enumeration,
+quality ranking, and a signed distribution do not exist, and `predicted_correctness`
 remains `None` for every runtime result that no caller has explicitly
 calibrated. Abstention and every other Choice strategy are not implemented.
 

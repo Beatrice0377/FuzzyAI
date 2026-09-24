@@ -1311,6 +1311,37 @@ them generalises to other models, revisions, prompts, or tasks.
   exists. Evidence:
   `tests/test_profile_serialization.py::TestExpectedIdentityPinning`.
 
+### Explicit runtime profile catalog discovery (Phase 4C.8)
+
+- [V] `CalibrationProfileCatalog` is an immutable explicit index constructed
+  from a caller-supplied tuple of `CalibrationProfile` artifacts; catalog
+  construction does not scan the profile store, filesystem, environment, or
+  registry. Evidence: `tests/test_calibration_catalog.py::TestConstruction`,
+  `...::TestScopeBoundaries`.
+
+- [V] Runtime catalog discovery returns deterministic exact profile references
+  whose discovery metadata satisfies the same exact binding plus
+  winner-correctness target and uncalibrated-selected-probability input
+  eligibility projection used by the explicit Phase 4C.7 selector, but discovery
+  does not authorize, load, select, or apply a profile. Evidence:
+  `tests/test_calibration_catalog.py::TestDiscoveryEligibility`,
+  `...::TestDiscoveryCardinality`, `...::TestLayerSeparation`.
+
+- [V] Ground-truth semantics, calibration method, method configuration, fitted
+  parameters, training-dataset provenance, quality metrics, recency, and catalog
+  input order are not runtime discovery filters; distinct profiles sharing the
+  runtime eligibility projection are all returned. Evidence:
+  `tests/test_calibration_catalog.py::TestDiscoveryEligibility`,
+  `...::TestConstruction`.
+
+- [V] A discovered profile reference must still be retrieved by exact identity
+  and passed as a real `CalibrationProfile` to the Phase 4C.7 selector; stale,
+  missing, corrupted, multiply eligible, or unsupported-method profiles
+  therefore continue to fail at their existing store/selection/application
+  boundaries. Evidence:
+  `tests/test_calibration_catalog.py::TestEndToEnd`,
+  `...::TestLayerSeparation`.
+
 ## Current hypotheses
 
 - `[H]` An explicit scoring doctrine may improve cross-model semantic

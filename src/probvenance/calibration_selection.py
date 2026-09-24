@@ -28,16 +28,12 @@ from __future__ import annotations
 
 from probvenance.calibration import (
     CALIBRATION_PROFILE_FINGERPRINT_VERSION,
-    UNCALIBRATED_SELECTED_PROBABILITY_ID,
-    UNCALIBRATED_SELECTED_PROBABILITY_VERSION,
-    WINNER_CORRECTNESS_TARGET_ID,
-    WINNER_CORRECTNESS_TARGET_VERSION,
     CalibrationBinding,
     CalibrationProfile,
     _abbreviate,
-    _binding_payloads_equal,
     _require_uncalibrated_runtime_evaluation,
     _runtime_calibration_binding,
+    _runtime_profile_semantics_are_eligible,
 )
 from probvenance.errors import (
     AmbiguousCalibrationProfileSelectionError,
@@ -95,21 +91,16 @@ def _is_eligible(
 ) -> bool:
     """Return whether a profile is eligible for the runtime population.
 
-    Eligibility requires an exact binding match plus the exact target and input
-    score semantics of the existing runtime winner-correctness application.
-    Method, fitted parameters, training dataset, ground-truth semantics, and
-    every quality metric are deliberately not eligibility dimensions.
+    Delegates to the shared eligibility-projection helper so selection and
+    catalog discovery can never drift on what runtime eligibility means.
     """
-    if not _binding_payloads_equal(profile.binding, runtime_binding):
-        return False
-    if (
-        profile.target_id != WINNER_CORRECTNESS_TARGET_ID
-        or profile.target_version != WINNER_CORRECTNESS_TARGET_VERSION
-    ):
-        return False
-    return (
-        profile.input_score_id == UNCALIBRATED_SELECTED_PROBABILITY_ID
-        and profile.input_score_version == UNCALIBRATED_SELECTED_PROBABILITY_VERSION
+    return _runtime_profile_semantics_are_eligible(
+        profile_binding=profile.binding,
+        target_id=profile.target_id,
+        target_version=profile.target_version,
+        input_score_id=profile.input_score_id,
+        input_score_version=profile.input_score_version,
+        runtime_binding=runtime_binding,
     )
 
 

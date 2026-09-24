@@ -1357,6 +1357,37 @@ def _binding_payloads_equal(left: CalibrationBinding, right: CalibrationBinding)
     return canonical_json(left.canonical_payload()) == canonical_json(right.canonical_payload())
 
 
+def _runtime_profile_semantics_are_eligible(
+    *,
+    profile_binding: CalibrationBinding,
+    target_id: str,
+    target_version: int,
+    input_score_id: str,
+    input_score_version: int,
+    runtime_binding: CalibrationBinding,
+) -> bool:
+    """Return whether a profile's discovery semantics match the runtime contract.
+
+    This is the single eligibility-projection truth source shared by explicit
+    profile selection and catalog runtime discovery, so the two can never drift.
+    Eligibility requires an exact binding match plus the exact target and input
+    score semantics of the existing runtime winner-correctness application.
+    Method, fitted parameters, training dataset, ground-truth semantics, and
+    every quality metric are deliberately not eligibility dimensions.
+    """
+    if not _binding_payloads_equal(profile_binding, runtime_binding):
+        return False
+    if (
+        target_id != WINNER_CORRECTNESS_TARGET_ID
+        or target_version != WINNER_CORRECTNESS_TARGET_VERSION
+    ):
+        return False
+    return (
+        input_score_id == UNCALIBRATED_SELECTED_PROBABILITY_ID
+        and input_score_version == UNCALIBRATED_SELECTED_PROBABILITY_VERSION
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class CalibrationProfile:
     """A reusable fitted calibration artifact and its full identity.
@@ -1824,6 +1855,38 @@ def _abbreviate(value: Any, max_chars: int = 200) -> str:
         return text
     omitted = len(text) - max_chars
     return f"{text[:max_chars]} ...<{omitted} more chars>"
+
+
+def _require_profile_fingerprint_identity(
+    profile_fingerprint: object,
+    profile_fingerprint_version: object,
+) -> None:
+    """Validate an exact profile identity key shape or raise.
+
+    This is the single shape validator for an exact profile identity
+    (fingerprint plus fingerprint schema version) shared by the exact profile
+    store and the profile catalog, so the two can never drift on what a valid
+    key looks like. It validates shape only; whether a concrete schema version
+    is supported is decided by each consumer.
+    """
+    if (
+        not isinstance(profile_fingerprint, str)
+        or len(profile_fingerprint) != 64
+        or any(character not in "0123456789abcdef" for character in profile_fingerprint)
+    ):
+        raise InvalidDecisionError(
+            "profile_fingerprint must be exactly 64 lowercase hexadecimal "
+            f"characters, got {_abbreviate(profile_fingerprint)}"
+        )
+    if (
+        isinstance(profile_fingerprint_version, bool)
+        or not isinstance(profile_fingerprint_version, int)
+        or profile_fingerprint_version < 1
+    ):
+        raise InvalidDecisionError(
+            "profile_fingerprint_version must be an integer greater than or equal "
+            f"to 1, got {profile_fingerprint_version!r}"
+        )
 
 
 def _require_exact_keys(name: str, mapping: Any, expected: frozenset[str]) -> dict[str, Any]:

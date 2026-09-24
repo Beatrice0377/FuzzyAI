@@ -25,14 +25,13 @@ the requested path is rejected.
 
 import contextlib
 import os
-import re
 import tempfile
 from pathlib import Path
 
 from probvenance.calibration import (
     CALIBRATION_PROFILE_FINGERPRINT_VERSION,
     CalibrationProfile,
-    _abbreviate,
+    _require_profile_fingerprint_identity,
     load_calibration_profile,
     serialize_calibration_profile,
 )
@@ -52,7 +51,6 @@ None of these versions are interchangeable.
 """
 
 _STORE_DIRECTORY = f"store-v{CALIBRATION_PROFILE_DIRECTORY_STORE_VERSION}"
-_FINGERPRINT_PATTERN = re.compile(r"\A[0-9a-f]{64}\Z")
 
 
 class DirectoryCalibrationProfileStore:
@@ -179,22 +177,7 @@ class DirectoryCalibrationProfileStore:
     def _validate_identity(
         self, profile_fingerprint: object, profile_fingerprint_version: object
     ) -> None:
-        if not isinstance(profile_fingerprint, str) or not _FINGERPRINT_PATTERN.match(
-            profile_fingerprint
-        ):
-            raise InvalidDecisionError(
-                "profile_fingerprint must be exactly 64 lowercase hexadecimal "
-                f"characters, got {_abbreviate(profile_fingerprint)}"
-            )
-        if (
-            isinstance(profile_fingerprint_version, bool)
-            or not isinstance(profile_fingerprint_version, int)
-            or profile_fingerprint_version < 1
-        ):
-            raise InvalidDecisionError(
-                "profile_fingerprint_version must be an integer greater than or equal "
-                f"to 1, got {profile_fingerprint_version!r}"
-            )
+        _require_profile_fingerprint_identity(profile_fingerprint, profile_fingerprint_version)
         if profile_fingerprint_version != CALIBRATION_PROFILE_FINGERPRINT_VERSION:
             raise InvalidDecisionError(
                 f"the store does not understand profile fingerprint schema version "
