@@ -1251,6 +1251,34 @@ them generalises to other models, revisions, prompts, or tasks.
   not provenance attestation. Evidence:
   `tests/test_runtime_calibration.py::TestManualResultStateMachine`.
 
+### Explicit runtime profile selection (Phase 4C.7)
+
+- [V] Runtime Profile selection operates only over an explicit caller-supplied
+  tuple of `CalibrationProfile` objects; it performs no store enumeration,
+  discovery, registry lookup, or ambient Profile search. Evidence:
+  `tests/test_calibration_selection.py::TestCandidateSet`,
+  `...::TestHierarchyAndScope`.
+
+- [V] A Profile is eligible only when its exact `CalibrationBinding` matches the
+  binding reconstructed from the runtime trace plus caller declarations and its
+  target and input-score semantics match the existing winner-correctness runtime
+  application contract. Evidence:
+  `tests/test_calibration_selection.py::TestEligibility`,
+  `...::TestSelectorApplicationConsistency`.
+
+- [V] Selection is unique-or-fail-closed: zero eligible Profiles raises an
+  explicit no-eligible error, one eligible Profile returns that exact artifact,
+  and more than one distinct eligible Profile raises an ambiguity error with no
+  method, training-dataset, metric, recency, or candidate-order tie-break.
+  Evidence: `tests/test_calibration_selection.py::TestEligibility`,
+  `...::TestAmbiguity`, `...::TestMethodNeutrality`.
+
+- [V] `GroundTruthSemanticsIdentity` is not used as a runtime selection filter:
+  two distinct Profiles with the same eligible Binding/target/input but
+  different ground-truth semantics remain ambiguous, because the runtime event
+  has no future ground-truth identity to authorize one over the other. Evidence:
+  `tests/test_calibration_selection.py::TestAmbiguity`.
+
 ### CalibrationProfile serialization (Phase 4C.5)
 
 - [V] `CalibrationProfile` has a versioned canonical JSON serialization

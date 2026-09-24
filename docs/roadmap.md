@@ -136,8 +136,16 @@ content-addressed directory store is implemented (Phase 4C.6,
 only from its fingerprint schema version and exact fingerprint, and retrieval
 requires both values, restores the artifact through the identity-verified
 loader with the requested identity supplied as an independent expected pin, and
-performs no matching or fallback. Profile registries, binding-based lookup,
-profile matching policy beyond exact binding match, a signed profile
+performs no matching or fallback. Explicit runtime profile selection is
+implemented (Phase 4C.7, `select_calibration_profile_for_runtime`): over an
+explicit caller-supplied tuple of candidate profiles, exactly one eligible
+profile is returned, zero eligible raises an explicit no-eligible error, and
+more than one distinct eligible profile raises an ambiguity error with no
+tie-break; eligibility is an exact binding match plus the winner-correctness
+target and uncalibrated-selected-probability input semantics, and selection is
+storage-agnostic and applies nothing. Profile registries, binding-based lookup,
+profile matching policy beyond exact binding match, profile discovery or
+catalog, quality ranking, latest/best/default policy, a signed profile
 distribution, automatic runtime profile selection, the remaining metrics, and
 automatic runtime calibration (deriving scores without an explicit
 caller-supplied profile) do not exist, and `predicted_correctness` remains

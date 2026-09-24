@@ -75,7 +75,9 @@ evaluation:                implemented (src/probvenance/calibration_evaluation.p
 Fitting algorithms:        implemented (one scalar fitting method, Phase 4C.2
                            and Phase 4C.2a; no automatic method selection)
 Calibration runtime:       explicit runtime-linked application implemented
-                           (apply_profile_to_runtime_evaluation); automatic
+                           (apply_profile_to_runtime_evaluation) plus explicit
+                           candidate-set unique-or-ambiguous profile selection
+                           (select_calibration_profile_for_runtime); automatic
                            profile selection, registry, and lookup not
                            implemented
 Profile serialization:     versioned canonical JSON serialization and
@@ -87,6 +89,17 @@ Profile store:             exact content-addressed directory store and
                            (DirectoryCalibrationProfileStore); no registry,
                            no binding lookup, no automatic selection, no
                            signed distribution
+Profile selection:         explicit caller-supplied candidate-set eligibility
+                           and unique-or-fail-closed selection implemented
+                           (select_calibration_profile_for_runtime):
+                           exact-binding plus winner-correctness target and
+                           uncalibrated-selected-probability input eligibility,
+                           one eligible profile returned, zero eligible raises
+                           an explicit no-eligible error, and more than one
+                           distinct eligible profile raises an ambiguity error
+                           with no tie-break; discovery, catalog, binding
+                           index, quality ranking, latest/best/default policy,
+                           and automatic runtime selection are NOT implemented
 predicted_correctness:     None unless an explicit compatible
                            CalibrationProfile is applied through
                            apply_profile_to_runtime_evaluation
@@ -1902,7 +1915,8 @@ The profile must already be compatible: the function reconstructs a
 taxonomy declarations the CALLER supplies, and requires an exact match against
 the profile's binding. Optional declarations are never copied from the profile
 to manufacture a match. There is no registry, no lookup, and no nearest profile:
-the caller supplies the profile directly. The runtime never selects a profile on
+the caller supplies the profile directly, optionally after selecting it from an
+explicit candidate set (section 18.3). The runtime never selects a profile on
 its own, and `Probvenance.evaluate` and `Probvenance.evaluate_with_trace` never
 auto-calibrate.
 
@@ -1911,7 +1925,47 @@ value; it never re-runs `argmax` and never re-breaks a tie. It uses the same
 numerical method path as offline application, so offline and runtime scores
 agree exactly for the same profile and selected probability.
 
-### 18.3 What `calibrated = True` means
+### 18.3 Explicit profile selection
+
+Selection is authorization, not recommendation. `select_calibration_profile_for_runtime`
+takes one uncalibrated runtime `Evaluation` and an explicit caller-supplied tuple
+of candidate `CalibrationProfile` objects:
+
+```text
+evaluate_with_trace(...)                    -> uncalibrated Evaluation
+select_calibration_profile_for_runtime(...) -> the one eligible CalibrationProfile
+apply_profile_to_runtime_evaluation(...)    -> calibrated Evaluation
+```
+
+Selection does not apply, load, store, search, rank, or score profile quality,
+and it is storage-agnostic: it performs no store enumeration, discovery,
+registry lookup, directory scanning, or ambient profile search. The caller may
+retrieve known identities from `DirectoryCalibrationProfileStore` and pass the
+resulting objects here.
+
+Eligibility requires an exact `CalibrationBinding` match against the binding
+reconstructed from the runtime trace plus the CALLER's declarations, plus the
+exact `winner_correctness` v1 target and `uncalibrated-selected-probability` v1
+input-score semantics. Declarations are never copied from a candidate profile,
+and `None` is never a wildcard.
+
+The v1 policy is unique-or-fail-closed and has no tie-break:
+
+```text
+0 eligible unique profiles  -> NoEligibleCalibrationProfileError
+1 eligible unique profile   -> return that exact profile
+>1 eligible unique profiles -> AmbiguousCalibrationProfileSelectionError
+```
+
+Method identity, fitted parameters, training dataset, ground-truth semantics,
+quality metrics, recency, and candidate order are deliberately NOT eligibility
+or preference dimensions. Two distinct profiles that share an eligible binding
+and target/input semantics remain ambiguous even when only one uses a currently
+supported method, because selection eligibility is not current method execution
+capability. Selection does not modify the evaluation and produces no selection
+provenance artifact; it returns a profile only.
+
+### 18.4 What `calibrated = True` means
 
 `calibrated = True` records that a supported `CalibrationProfile` was applied
 through the declared application contract and `predicted_correctness` was
@@ -1929,7 +1983,7 @@ training data was independent. Applying a profile does not change
 outcome distribution stays the uncalibrated one, and `predicted_correctness` is
 a separate calibrated correctness estimate.
 
-### 18.4 Abstention boundary
+### 18.5 Abstention boundary
 
 Calibrated predicted correctness is an input to a future policy, not the policy.
 This document does not implement or define `accept`, `abstain`, `review`, or

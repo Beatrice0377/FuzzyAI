@@ -1347,6 +1347,16 @@ def _require_coherent_taxonomy_identity(
         )
 
 
+def _binding_payloads_equal(left: CalibrationBinding, right: CalibrationBinding) -> bool:
+    """Return whether two bindings share one exact canonical identity.
+
+    This is the single exact-binding equality truth source. It compares the full
+    canonical binding identity rather than a hand-picked subset of dimensions,
+    so selection filtering and application enforcement can never drift.
+    """
+    return canonical_json(left.canonical_payload()) == canonical_json(right.canonical_payload())
+
+
 @dataclass(frozen=True, slots=True)
 class CalibrationProfile:
     """A reusable fitted calibration artifact and its full identity.
@@ -1646,9 +1656,7 @@ class CalibrationProfile:
             raise InvalidDecisionError(
                 f"binding must be a CalibrationBinding, got {type(binding).__name__} ({binding!r})"
             )
-        profile_binding_json = canonical_json(self.binding.canonical_payload())
-        candidate_binding_json = canonical_json(binding.canonical_payload())
-        if profile_binding_json != candidate_binding_json:
+        if not _binding_payloads_equal(self.binding, binding):
             raise InvalidDecisionError(
                 "the profile binding does not match the supplied binding: profile "
                 f"binding fingerprint {self.binding.fingerprint!r} vs supplied "
@@ -2786,6 +2794,89 @@ def _runtime_selected_probability(result: BoolResult | ChoiceResult) -> float:
     )
 
 
+def _require_uncalibrated_runtime_evaluation(
+    evaluation: Evaluation,
+    *,
+    operation: str,
+) -> tuple[BoolResult | ChoiceResult, DecisionTrace]:
+    """Return the result and trace of an uncalibrated, coherent evaluation.
+
+    This is the single runtime-input contract shared by profile selection and
+    runtime-linked profile application. It requires an ``Evaluation`` whose
+    result and trace are uncalibrated, are linked by one non-null trace id,
+    and agree on the concrete decision family. ``operation`` names the caller
+    in the rejection messages.
+    """
+    if not isinstance(evaluation, Evaluation):
+        raise InvalidDecisionError(
+            f"evaluation must be an Evaluation, got {type(evaluation).__name__} ({evaluation!r})"
+        )
+    result = evaluation.result
+    trace = evaluation.trace
+    if (
+        result.calibrated
+        or result.predicted_correctness is not None
+        or result.calibration_profile_fingerprint is not None
+        or result.calibration_profile_fingerprint_version is not None
+    ):
+        raise InvalidDecisionError(
+            f"{operation} requires an uncalibrated result; "
+            "the supplied evaluation is already calibrated and is never recalibrated, "
+            "stacked, or overwritten"
+        )
+    if (
+        trace.calibration_profile_fingerprint is not None
+        or trace.calibration_profile_fingerprint_version is not None
+    ):
+        raise InvalidDecisionError(
+            f"{operation} requires an uncalibrated trace; "
+            "the supplied trace already carries calibration provenance"
+        )
+    if result.trace_id is None or result.trace_id != trace.trace_id:
+        raise InvalidDecisionError(
+            "the result and trace must share one non-null trace id before a calibration "
+            f"profile can be used, got result.trace_id={result.trace_id!r} and "
+            f"trace.trace_id={trace.trace_id!r}"
+        )
+    if trace.decision_family == "bool":
+        if not isinstance(result, BoolResult):
+            raise InvalidDecisionError(
+                f"a bool decision_family requires a BoolResult, got {type(result).__name__}"
+            )
+    elif trace.decision_family == "choice":
+        if not isinstance(result, ChoiceResult):
+            raise InvalidDecisionError(
+                f"a choice decision_family requires a ChoiceResult, got {type(result).__name__}"
+            )
+    else:
+        raise InvalidDecisionError(f"unsupported decision_family {trace.decision_family!r}")
+    return result, trace
+
+
+def _runtime_calibration_binding(
+    trace: DecisionTrace,
+    *,
+    task_id: str | None,
+    domain_id: str | None,
+    taxonomy_id: str | None,
+    taxonomy_version: int | None,
+) -> CalibrationBinding:
+    """Reconstruct the runtime binding from trace provenance plus declarations.
+
+    This is the one reconstruction truth source shared by profile selection and
+    runtime-linked profile application, so the two can never drift. The
+    declarations come only from the caller and are never read from a candidate
+    profile.
+    """
+    return CalibrationBinding.from_trace(
+        trace,
+        task_id=task_id,
+        domain_id=domain_id,
+        taxonomy_id=taxonomy_id,
+        taxonomy_version=taxonomy_version,
+    )
+
+
 def apply_profile_to_runtime_evaluation(
     evaluation: Evaluation,
     profile: CalibrationProfile,
@@ -2822,54 +2913,14 @@ def apply_profile_to_runtime_evaluation(
     applied, not that the profile is statistically valid or improves any
     metric.
     """
-    if not isinstance(evaluation, Evaluation):
-        raise InvalidDecisionError(
-            f"evaluation must be an Evaluation, got {type(evaluation).__name__} ({evaluation!r})"
-        )
     if not isinstance(profile, CalibrationProfile):
         raise InvalidDecisionError(
             f"profile must be a CalibrationProfile, got {type(profile).__name__} ({profile!r})"
         )
-    result = evaluation.result
-    trace = evaluation.trace
-    if (
-        result.calibrated
-        or result.predicted_correctness is not None
-        or result.calibration_profile_fingerprint is not None
-        or result.calibration_profile_fingerprint_version is not None
-    ):
-        raise InvalidDecisionError(
-            "runtime-linked calibration application requires an uncalibrated result; "
-            "the supplied evaluation is already calibrated and is never recalibrated, "
-            "stacked, or overwritten"
-        )
-    if (
-        trace.calibration_profile_fingerprint is not None
-        or trace.calibration_profile_fingerprint_version is not None
-    ):
-        raise InvalidDecisionError(
-            "runtime-linked calibration application requires an uncalibrated trace; "
-            "the supplied trace already carries calibration provenance"
-        )
-    if result.trace_id is None or result.trace_id != trace.trace_id:
-        raise InvalidDecisionError(
-            "the result and trace must share one non-null trace id before calibration "
-            f"application, got result.trace_id={result.trace_id!r} and "
-            f"trace.trace_id={trace.trace_id!r}"
-        )
-    if trace.decision_family == "bool":
-        if not isinstance(result, BoolResult):
-            raise InvalidDecisionError(
-                f"a bool decision_family requires a BoolResult, got {type(result).__name__}"
-            )
-    elif trace.decision_family == "choice":
-        if not isinstance(result, ChoiceResult):
-            raise InvalidDecisionError(
-                f"a choice decision_family requires a ChoiceResult, got {type(result).__name__}"
-            )
-    else:
-        raise InvalidDecisionError(f"unsupported decision_family {trace.decision_family!r}")
-    runtime_binding = CalibrationBinding.from_trace(
+    result, trace = _require_uncalibrated_runtime_evaluation(
+        evaluation, operation="runtime-linked calibration application"
+    )
+    runtime_binding = _runtime_calibration_binding(
         trace,
         task_id=task_id,
         domain_id=domain_id,

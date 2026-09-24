@@ -71,3 +71,30 @@ class CalibrationProfileStoreIntegrityError(CalibrationProfileStoreError):
     violated the store invariant: it is unreadable, malformed, not the
     canonical serialization, or does not match the requested profile identity.
     """
+
+
+class CalibrationProfileSelectionError(ProbvenanceError):
+    """An explicit candidate set could not yield exactly one eligible profile.
+
+    Selection is authorization, not recommendation: it establishes that a
+    profile is semantically eligible for a declared runtime population and
+    never that one profile is statistically better, newer, or preferable.
+    """
+
+
+class NoEligibleCalibrationProfileError(CalibrationProfileSelectionError):
+    """No candidate profile is eligible for the declared runtime population.
+
+    The caller decides what an absent eligible profile means operationally.
+    The selector never substitutes ``None``, a nearest candidate, or a silent
+    fallback to uncalibrated behaviour.
+    """
+
+
+class AmbiguousCalibrationProfileSelectionError(CalibrationProfileSelectionError):
+    """More than one distinct candidate profile is eligible.
+
+    The v1 policy has no tie-break: it does not prefer a method, a training
+    dataset, fitted parameters, a quality metric, recency, or candidate order.
+    The caller must disambiguate by supplying a narrower candidate set.
+    """

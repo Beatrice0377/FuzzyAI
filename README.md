@@ -29,11 +29,18 @@ An exact content-addressed directory store is implemented: it persists a profile
 under a path derived only from its fingerprint schema version and exact
 fingerprint, and retrieval requires both values, restores the artifact through
 the identity-verified loader with the requested identity as an independent
-expected pin, and performs no matching or fallback. Automatic runtime profile
-selection, profile registries, binding-based lookup, and a signed distribution
-do not exist, and `predicted_correctness` remains `None` for every runtime
-result that no caller has explicitly calibrated. Abstention and every other
-Choice strategy are not implemented.
+expected pin, and performs no matching or fallback. Explicit runtime profile
+selection is implemented: `select_calibration_profile_for_runtime` takes one
+uncalibrated evaluation and an explicit caller-supplied tuple of candidate
+profiles and returns the single eligible profile, raises an explicit no-eligible
+error when none is eligible, and raises an ambiguity error when more than one
+distinct profile is eligible, with no tie-break. Selection is authorization, not
+recommendation: it is storage-agnostic, applies nothing, and uses neither
+quality metrics nor method support as a preference. Automatic runtime profile
+selection, profile registries, binding-based lookup, profile discovery, quality
+ranking, and a signed distribution do not exist, and `predicted_correctness`
+remains `None` for every runtime result that no caller has explicitly
+calibrated. Abstention and every other Choice strategy are not implemented.
 
 Probvenance is a provider-agnostic probabilistic decision runtime. It turns language
 models into evaluable, calibratable, trackable semantic-probability decision
