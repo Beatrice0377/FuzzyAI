@@ -906,8 +906,8 @@ distinguished by input-score identity:
   against the derived winner-correctness label. It is implemented in
   `src/probvenance/calibration_evaluation.py` as
   `evaluate_uncalibrated_winner_brier` over a `CalibrationEvaluationDataset`.
-  It measures the empirical quality of the raw semantic probability and is a
-  baseline.
+  It compares the raw score against the derived winner-correctness label on the
+  evaluated rows and is a baseline.
 - Post-calibration evaluation would evaluate `predicted_correctness` (the
   score a future calibration profile would produce) against the same derived
   winner-correctness label. It does not exist yet: no `CalibrationProfile`
@@ -1021,7 +1021,7 @@ a proper scoring rule when its input is read as a probability forecast of the
 scored binary target, that is, when `p_i` is claimed to estimate
 `P(Y_correct = 1)`; propriety then says a forecaster minimizes the expected score
 by reporting its true belief. It says nothing about whether a particular input
-already carries that meaning. Phase 4B.1 deliberately does not grant that
+already carries that meaning. Phase 4B deliberately does not grant that
 interpretation to the uncalibrated selected semantic probability (section 14.0):
 there the same formula is used as a pre-calibration diagnostic baseline against
 winner correctness, its value does not establish that the raw score already means
@@ -1041,7 +1041,7 @@ For binary correctness:
 log_loss = -mean( y * log(p) + (1 - y) * log(1 - p) )
 ```
 
-Phase 4B.2 implements this metric for the pre-calibration winner-correctness
+Phase 4B implements this metric for the pre-calibration winner-correctness
 baseline, using the natural logarithm with an exact boundary policy:
 
 ```text

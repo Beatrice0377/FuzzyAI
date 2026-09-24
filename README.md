@@ -5,7 +5,9 @@
 **Status: early development.** The deterministic core, a Bool vertical slice
 with a real local Hugging Face backend, and direct categorical Choice inference
 for the closed-set, single-label, single-token scoring path are implemented.
-Calibration, abstention, and every other Choice strategy are not.
+The Phase 4B winner-correctness evaluation foundation is implemented. Calibration
+fitting, a calibration profile, runtime calibration application, abstention, and
+every other Choice strategy are not.
 
 Probvenance is a provider-agnostic probabilistic decision runtime. It turns language
 models into evaluable, calibratable, trackable semantic-probability decision

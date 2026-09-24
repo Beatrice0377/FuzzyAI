@@ -2,7 +2,7 @@
 
 # Probvenance
 
-**状态：早期开发阶段（Status: early development）。** 确定性内核（deterministic core）、Bool 垂直切片（vertical slice，真实本地 Hugging Face 后端），以及 direct categorical Choice 推理（仅限 closed-set、single-label、single-token 打分标签路径）均已实现。校准（calibration）、弃权（abstention）与其他所有 Choice 策略尚未实现。
+**状态：早期开发阶段（Status: early development）。** 确定性内核（deterministic core）、Bool 垂直切片（vertical slice，真实本地 Hugging Face 后端），以及 direct categorical Choice 推理（仅限 closed-set、single-label、single-token 打分标签路径）均已实现。Phase 4B winner-correctness 评估基础（evaluation cohort / dataset、Brier、exact log loss、companion diagnostics、等宽可靠性分箱、ECE-form binned absolute-gap aggregate）已实现。校准拟合（calibration fitting）、校准档案（calibration profile）、运行时校准应用（runtime calibration application）、弃权（abstention）与其他所有 Choice 策略尚未实现。
 
 Probvenance 是一个 provider-agnostic（供应商无关）的概率决策运行时（probabilistic decision runtime）。它把语言模型变成可评估（evaluable）、可校准（calibratable）、可追踪（trackable）的语义概率决策组件。
 
