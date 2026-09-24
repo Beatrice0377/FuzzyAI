@@ -1280,14 +1280,15 @@ class CalibrationProfile:
     identity describes what the fitted ``predicted_correctness`` refers to,
     and the event being predicted normally has no ground truth yet.
 
-    The only supported construction path is the internal
+    No public fitter exists yet, so no supported user workflow produces a
+    profile. Internally, construction goes through the module-private
     :meth:`_from_fitted_state`, which derives the binding, the ground-truth
     semantics identity, the target identity, the input-score identity, and
     the training dataset fingerprint from a fitted
     :class:`CalibrationDataset`. Direct field construction is rejected, and
     so is ``dataclasses.replace`` reconstruction: both rebuild a profile
     through the constructor without the construction capability, and neither
-    passes through the supported construction path that derives the
+    passes through the internal construction path that derives the
     identity from a dataset. Lower-level Python escape hatches such as
     ``object.__new__``, ``copy``, and ``pickle`` are inherent to the
     language, are not supported construction paths, and are not defended
@@ -1326,9 +1327,10 @@ class CalibrationProfile:
     ) -> None:
         if _construction_token is not _PROFILE_CONSTRUCTION_TOKEN:
             raise InvalidDecisionError(
-                "CalibrationProfile must be constructed via "
-                "CalibrationProfile._from_fitted_state(...), which derives the "
-                "profile identity from a fitted CalibrationDataset"
+                "CalibrationProfile cannot be constructed directly: a profile is "
+                "produced by a supported calibration fitter, which derives its "
+                "identity from a fitted CalibrationDataset, and no public "
+                "calibration fitter is implemented yet"
             )
         object.__setattr__(self, "binding", binding)
         object.__setattr__(self, "ground_truth_semantics", ground_truth_semantics)

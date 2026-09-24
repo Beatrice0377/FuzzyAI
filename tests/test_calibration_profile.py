@@ -95,27 +95,40 @@ def taxonomy_mismatch_dataset(
 # ---------------------------------------------------------------------------
 
 
+def direct_construction_kwargs() -> dict[str, Any]:
+    """Field values a caller would need to hand-build a profile."""
+    return {
+        "binding": fitting_dataset().binding,
+        "ground_truth_semantics": fitting_dataset().ground_truth_semantics,
+        "target_id": WINNER_CORRECTNESS_TARGET_ID,
+        "target_version": WINNER_CORRECTNESS_TARGET_VERSION,
+        "input_score_id": UNCALIBRATED_SELECTED_PROBABILITY_ID,
+        "input_score_version": UNCALIBRATED_SELECTED_PROBABILITY_VERSION,
+        "method_id": "test-method",
+        "method_version": 1,
+        "method_configuration": {},
+        "fitted_parameters": {},
+        "training_dataset_fingerprint": "fabricated",
+        "training_dataset_fingerprint_version": 1,
+    }
+
+
 class TestProfileConstructionGuard:
     def test_direct_construction_rejected(self):
-        with pytest.raises(InvalidDecisionError, match="_from_fitted_state"):
-            CalibrationProfile(
-                binding=fitting_dataset().binding,
-                ground_truth_semantics=fitting_dataset().ground_truth_semantics,
-                target_id=WINNER_CORRECTNESS_TARGET_ID,
-                target_version=WINNER_CORRECTNESS_TARGET_VERSION,
-                input_score_id=UNCALIBRATED_SELECTED_PROBABILITY_ID,
-                input_score_version=UNCALIBRATED_SELECTED_PROBABILITY_VERSION,
-                method_id="test-method",
-                method_version=1,
-                method_configuration={},
-                fitted_parameters={},
-                training_dataset_fingerprint="fabricated",
-                training_dataset_fingerprint_version=1,
-            )
+        with pytest.raises(InvalidDecisionError, match="cannot be constructed directly"):
+            CalibrationProfile(**direct_construction_kwargs())
+
+    def test_rejection_message_does_not_advertise_the_internal_builder(self):
+        with pytest.raises(InvalidDecisionError) as excinfo:
+            CalibrationProfile(**direct_construction_kwargs())
+        message = str(excinfo.value)
+        assert "supported calibration fitter" in message
+        assert "no public calibration fitter is implemented yet" in message
+        assert "_from_fitted_state" not in message
 
     def test_replace_rejected(self):
         profile = make_profile()
-        with pytest.raises(InvalidDecisionError, match="_from_fitted_state"):
+        with pytest.raises(InvalidDecisionError, match="cannot be constructed directly"):
             replace(profile)
 
     def test_non_dataset_training_source_rejected(self):
