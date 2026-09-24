@@ -9,10 +9,12 @@ The Phase 4B winner-correctness evaluation foundation is implemented, as is the
 `CalibrationProfile` identity foundation: the profile artifact commits its
 binding, ground-truth semantics, target, input-score, method, fitted-parameter,
 and training-dataset provenance, and fails closed on a concrete taxonomy
-contradiction or an exact binding mismatch. No fitting algorithm exists, no
-supported public fitter produces a profile, no runtime calibration application
-exists, and `predicted_correctness` remains `None` for every result the runtime
-can produce. Abstention and every other Choice strategy are not implemented.
+contradiction or an exact binding mismatch. One supported scalar fitting method
+is implemented: `fit_l2_logistic_selected_probability` fits an L2-regularized
+logistic map of the selected probability onto winner correctness. Runtime
+calibration application and post-calibration evaluation do not exist, so
+`predicted_correctness` remains `None` for every result the runtime can
+produce. Abstention and every other Choice strategy are not implemented.
 
 Probvenance is a provider-agnostic probabilistic decision runtime. It turns language
 models into evaluable, calibratable, trackable semantic-probability decision

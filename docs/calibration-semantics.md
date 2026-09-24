@@ -8,8 +8,10 @@ CalibrationObservation:    implemented (src/probvenance/calibration.py)
 CalibrationBinding:        implemented (src/probvenance/calibration.py)
 CalibrationDataset:        implemented (src/probvenance/calibration.py)
 CalibrationProfile:        implemented (src/probvenance/calibration.py):
-                           identity/artifact foundation only; no fitting
-                           algorithm, no public fitter, no runtime application
+                           identity/artifact foundation, plus one scalar
+                           fitting method
+                           (fit_l2_logistic_selected_probability); no runtime
+                           application
 Evaluation cohort:         implemented (src/probvenance/calibration_evaluation.py):
                            declared evaluation source cohort, full observation
                            statuses retained, cohort fingerprint v1
@@ -60,8 +62,11 @@ provenance. The `CalibrationProfile` identity foundation is implemented in
 ground-truth semantics identity, target identity, input-score identity, method
 identity and configuration, fitted parameters, and training dataset identity,
 and it fails closed on a concrete taxonomy contradiction or an exact binding
-mismatch. Fitting algorithms, a supported public fitter, profile registries,
-profile lookup, the remaining metrics, and runtime profile application remain
+mismatch. One scalar fitting method
+(`fit_l2_logistic_selected_probability`) is implemented: an L2-regularized
+logistic map of the selected probability onto winner correctness. Profile
+registries, profile lookup, the remaining metrics, post-calibration
+(derived-score) evaluation, and runtime profile application remain
 unimplemented, and this document does not add any.
 
 This document is in part a design proposal. The deterministic data model and
@@ -931,8 +936,9 @@ legitimately record a mismatch, so their admission is unchanged.
 
 Explicit cross-taxonomy fitting or application requires an identity-bearing
 mapping contract; that contract is not implemented yet and no speculative
-mapping framework is created here. Because no fitter or profile exists yet,
-this rule is frozen in design only. A tested compatibility helper is deferred
+mapping framework is created here. No fitting or application path consumes
+cross-taxonomy observations, so this rule is enforced only by profile
+construction. A tested compatibility helper is deferred
 until it has a real caller, so that no dead policy code is added.
 
 ## 13. Calibration method identity
@@ -1019,8 +1025,10 @@ Phase 4C.0 does not select, implement, or canonize a calibrator. Platt scaling,
 temperature scaling, isotonic regression, and histogram or binning methods all
 remain candidates, and none is preferred here. The current design notes already
 argue that winner correctness is a scalar calibration problem, so temperature
-scaling is not obviously the correct first method. Selecting the first fitter
-belongs to a later implementation round with a concrete mathematical contract.
+scaling is not obviously the correct first method. The first fitter implemented
+is L2-regularized logistic scaling on the selected probability, chosen because
+winner correctness is a scalar target over a scalar input whose endpoints need no
+epsilon, clipping, or logit transform.
 
 One specific claim must NOT be documented as fact: that an exact log-loss
 objective combined with a `p = 1` sample forces a temperature-scaling parameter
@@ -1072,10 +1080,11 @@ distinguished by input-score identity:
   evaluated rows and is a baseline.
 - Post-calibration evaluation would evaluate `predicted_correctness` (the
   score a fitted calibration profile would produce) against the same derived
-  winner-correctness label. It does not exist yet: although the
-  `CalibrationProfile` identity foundation exists, no fitting algorithm does,
-  so no fitted profile has ever been produced, and the runtime keeps
-  `predicted_correctness = None` and `calibrated = False`.
+  winner-correctness label. It does not exist yet: the `CalibrationProfile`
+  identity foundation and one scalar fitting method
+  (`fit_l2_logistic_selected_probability`) now exist, so a fitted profile can be
+  produced, but no derived-score application contract exists, so the runtime
+  still keeps `predicted_correctness = None` and `calibrated = False`.
 
 The pre-calibration baseline must NOT be presented as calibration-quality
 evidence: no calibrator was involved in producing it, so it cannot show how
@@ -1814,8 +1823,8 @@ implement, and does not decide the eventual API for:
 
 ```text
 CalibrationProfile, CalibrationProfileFingerprint
-any calibration fitting algorithm or library
-temperature scaling, Platt scaling, isotonic regression, binning
+temperature scaling, isotonic regression, and binning calibrators
+any calibration fitting library
 post-calibration metric runs (predicted_correctness as the input score)
 log loss, ECE, or reliability-curve runtime code
 profile matching runtime

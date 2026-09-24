@@ -100,10 +100,17 @@ commits its exact binding, ground-truth semantics identity, winner-correctness
 target identity, selected-probability input-score identity, method
 identity/configuration, fitted parameters, and training dataset identity, and
 it fails closed on a concrete taxonomy contradiction or an exact binding
-mismatch. Fitting algorithms, profile registries, profile lookup, profile
-matching policy beyond exact binding match, the remaining metrics, and runtime
-profile application do not exist, and `predicted_correctness` remains `None`
-for every result the runtime can produce.
+mismatch.
+One scalar fitting method is implemented (Phase 4C.2,
+`fit_l2_logistic_selected_probability`): an L2-regularized logistic map of the
+selected probability onto winner correctness, with the objective `mean Bernoulli
+NLL + positive L2 on both slope and intercept`, no endpoint epsilon, clipping,
+label smoothing, or logit transform, and a deterministic `newton-backtracking`
+v1 solver. The profile fingerprint version is unchanged by it. Profile
+registries, profile lookup, profile matching policy beyond exact binding match,
+the remaining metrics, runtime profile application, and post-calibration
+(derived-score) evaluation do not exist, and `predicted_correctness` remains
+`None` for every result the runtime can produce.
 
 - Evaluation harness (started: declared evaluation source cohort, metric-eligible
   dataset projection, Brier, log loss; delivered: winner-correctness companion

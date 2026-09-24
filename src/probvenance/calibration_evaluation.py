@@ -42,6 +42,7 @@ from probvenance.calibration import (
     CalibrationObservationStatus,
     GroundTruthSemanticsIdentity,
     _require_non_empty_str,
+    _selected_probability,
 )
 from probvenance.errors import InvalidDecisionError
 from probvenance.fingerprint import JSONValue, canonical_json, fingerprint
@@ -221,9 +222,6 @@ _DIAGNOSTICS_RESULT_CONSTRUCTION_TOKEN = object()
 _RELIABILITY_RESULT_CONSTRUCTION_TOKEN = object()
 _BINNED_ABSOLUTE_GAP_RESULT_CONSTRUCTION_TOKEN = object()
 
-_BOOL_TRUE_NAME = "true"
-_BOOL_FALSE_NAME = "false"
-
 
 class EvaluationSplitRole(StrEnum):
     """Declared role of an evaluation split.
@@ -235,50 +233,6 @@ class EvaluationSplitRole(StrEnum):
 
     VALIDATION = "validation"
     TEST = "test"
-
-
-def _selected_probability(
-    observation: CalibrationObservation,
-) -> float:
-    """Extract the uncalibrated selected semantic probability.
-
-    The recorded ``selected_value`` is the selection carried by the supplied
-    runtime-linked result: the winner is NOT recomputed and tie-breaking is
-    NOT re-run. For Choice decisions the probability is looked up by semantic
-    candidate name (never by a scoring label such as ``A``/``B``/``C`` and
-    never by a token id). For Bool decisions the outcome order is
-    ``("false", "true")`` and the name is chosen from the recorded boolean.
-    """
-    selected_value = observation.selected_value
-    if observation.decision_family == "bool":
-        if selected_value is True:
-            name = _BOOL_TRUE_NAME
-        elif selected_value is False:
-            name = _BOOL_FALSE_NAME
-        else:
-            raise InvalidDecisionError(
-                "cannot map the recorded selected_value "
-                f"{selected_value!r} of a bool observation to an outcome name; "
-                "the recorded selected_value must be a real bool"
-            )
-    else:
-        if not isinstance(selected_value, str):
-            raise InvalidDecisionError(
-                "cannot map the recorded selected_value "
-                f"{selected_value!r} of a choice observation to a semantic "
-                "candidate name; the recorded selected_value must be a "
-                "candidate name string"
-            )
-        name = selected_value
-    for candidate_name, probability in observation.probabilities:
-        if candidate_name == name:
-            return probability
-    raise InvalidDecisionError(
-        f"the recorded selected_value {selected_value!r} of observation "
-        f"{observation.fingerprint} has no recorded probability under outcome "
-        f"order {observation.outcome_order!r}; the uncalibrated selected "
-        "semantic probability cannot be extracted"
-    )
 
 
 def _binary_log_loss_term(probability: float, correct: bool) -> float:

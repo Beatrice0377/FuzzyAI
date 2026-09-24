@@ -130,7 +130,10 @@ construction path that derives the profile identity from a fitted
 :class:`CalibrationDataset`.
 """
 
-_BOOL_OUTCOME_ORDER: tuple[str, ...] = ("false", "true")
+_BOOL_TRUE_NAME: str = "true"
+_BOOL_FALSE_NAME: str = "false"
+
+_BOOL_OUTCOME_ORDER: tuple[str, ...] = (_BOOL_FALSE_NAME, _BOOL_TRUE_NAME)
 """Semantic Bool outcome order, matching the formulation identity order.
 
 The first entry wins ties, so a 0.5 / 0.5 Bool tie selects ``False``.
@@ -965,6 +968,53 @@ def _select_bool_value(probability_true: float) -> bool:
     return probability_true > 0.5
 
 
+def _selected_probability(observation: CalibrationObservation) -> float:
+    """Extract the uncalibrated selected semantic probability of an observation.
+
+    The recorded ``selected_value`` is the selection carried by the supplied
+    runtime-linked result: the winner is NOT recomputed and tie-breaking is
+    NOT re-run. For Choice decisions the probability is looked up by semantic
+    candidate name (never by a scoring label such as ``A``/``B``/``C`` and
+    never by a token id). For Bool decisions the name is chosen from the
+    recorded boolean over the Bool semantic outcome order.
+
+    This is the single owner of the calibrator input-score semantics: the
+    fitting objective and the evaluation metrics both consume exactly this
+    function, so no second mapping, argmax, or tie-break implementation may
+    exist anywhere else.
+    """
+    selected_value = observation.selected_value
+    if observation.decision_family == "bool":
+        if selected_value is True:
+            name = _BOOL_TRUE_NAME
+        elif selected_value is False:
+            name = _BOOL_FALSE_NAME
+        else:
+            raise InvalidDecisionError(
+                "cannot map the recorded selected_value "
+                f"{selected_value!r} of a bool observation to an outcome name; "
+                "the recorded selected_value must be a real bool"
+            )
+    else:
+        if not isinstance(selected_value, str):
+            raise InvalidDecisionError(
+                "cannot map the recorded selected_value "
+                f"{selected_value!r} of a choice observation to a semantic "
+                "candidate name; the recorded selected_value must be a "
+                "candidate name string"
+            )
+        name = selected_value
+    for candidate_name, probability in observation.probabilities:
+        if candidate_name == name:
+            return probability
+    raise InvalidDecisionError(
+        f"the recorded selected_value {selected_value!r} of observation "
+        f"{observation.fingerprint} has no recorded probability under outcome "
+        f"order {observation.outcome_order!r}; the uncalibrated selected "
+        "semantic probability cannot be extracted"
+    )
+
+
 def _validate_bool_ground_truth(ground_truth: GroundTruthRecord) -> None:
     """A resolved Bool ground truth must be a real bool; no coercion."""
     if ground_truth.resolution_status is not GroundTruthResolutionStatus.RESOLVED:
@@ -1273,15 +1323,17 @@ class CalibrationProfile:
     fingerprint says which observations were fitted, NOT that they were a
     good fitting population.
 
-    No fitting algorithm exists yet and no supported public fitter produces
-    a profile; the first real producer is a later phase. Runtime
-    application does not exist either. Applying a profile does not require
-    a runtime ground-truth record: the profile's ground-truth semantics
-    identity describes what the fitted ``predicted_correctness`` refers to,
-    and the event being predicted normally has no ground truth yet.
+    A supported public fitter now exists:
+    :func:`fit_l2_logistic_selected_probability` produces a profile from a
+    fitting :class:`CalibrationDataset`. That fitter proves only that its
+    declared fitting problem was solved; evaluating the fitted mapping on
+    held-out data, and runtime profile application, are later phases.
+    Applying a profile does not require a runtime ground-truth record: the
+    profile's ground-truth semantics identity describes what the fitted
+    ``predicted_correctness`` refers to, and the event being predicted
+    normally has no ground truth yet.
 
-    No public fitter exists yet, so no supported user workflow produces a
-    profile. Internally, construction goes through the module-private
+    Internally, construction goes through the module-private
     :meth:`_from_fitted_state`, which derives the binding, the ground-truth
     semantics identity, the target identity, the input-score identity, and
     the training dataset fingerprint from a fitted
@@ -1328,9 +1380,9 @@ class CalibrationProfile:
         if _construction_token is not _PROFILE_CONSTRUCTION_TOKEN:
             raise InvalidDecisionError(
                 "CalibrationProfile cannot be constructed directly: a profile is "
-                "produced by a supported calibration fitter, which derives its "
-                "identity from a fitted CalibrationDataset, and no public "
-                "calibration fitter is implemented yet"
+                "produced by a supported calibration fitter "
+                "(fit_l2_logistic_selected_probability), which derives its "
+                "identity from a fitted CalibrationDataset"
             )
         object.__setattr__(self, "binding", binding)
         object.__setattr__(self, "ground_truth_semantics", ground_truth_semantics)
@@ -1531,3 +1583,404 @@ class CalibrationProfile:
     def fingerprint(self) -> str:
         """Versioned fingerprint of the calibration profile identity."""
         return fingerprint(self.canonical_payload())
+
+
+# ---------------------------------------------------------------------------
+# L2-regularized logistic scaling on the selected probability (Phase 4C.2)
+# ---------------------------------------------------------------------------
+
+#: The first supported calibration fitting method. Its v1 mapping is
+#: ``q(p) = sigmoid(slope * p + intercept)``, where ``p`` is the uncalibrated
+#: selected semantic probability produced by :func:`_selected_probability`.
+#: ``slope`` and ``intercept`` are the only fitted parameters, and both are
+#: L2-regularized.
+#:
+#: This is deliberately NOT temperature scaling: temperature scaling divides a
+#: logit by a fitted scalar and leaves no intercept, whereas this method is an
+#: affine map in the raw probability domain.
+#:
+#: The mapping has the same functional form as Platt scaling, so the
+#: distinction is not the formula: classic Platt scaling fits a sigmoid over a
+#: decision-function value and commonly targets the signed distance to an SVM
+#: separating hyperplane; here the single feature IS the uncalibrated selected
+#: probability itself, and the positive L2 term is mandatory rather than
+#: optional. "L2-regularized logistic scaling on selected probability" is the
+#: precise name.
+L2_LOGISTIC_SELECTED_PROBABILITY_METHOD_ID = "l2-logistic-selected-probability"
+L2_LOGISTIC_SELECTED_PROBABILITY_METHOD_VERSION = 1
+
+_L2_LOGISTIC_OBJECTIVE_ID = "mean-bernoulli-nll-plus-l2"
+_L2_LOGISTIC_OBJECTIVE_VERSION = 1
+_L2_LOGISTIC_INPUT_TRANSFORM_ID = "identity-selected-probability"
+_L2_LOGISTIC_INPUT_TRANSFORM_VERSION = 1
+_L2_LOGISTIC_ENDPOINT_POLICY_ID = "exact-raw-selected-probability"
+_L2_LOGISTIC_ENDPOINT_POLICY_VERSION = 1
+_L2_LOGISTIC_SOLVER_ID = "newton-backtracking"
+_L2_LOGISTIC_SOLVER_VERSION = 1
+_L2_LOGISTIC_REGULARIZED_PARAMETERS: tuple[str, ...] = ("slope", "intercept")
+
+_L2_LOGISTIC_INITIAL_SLOPE = 0.0
+_L2_LOGISTIC_INITIAL_INTERCEPT = 0.0
+_L2_LOGISTIC_GRADIENT_TOLERANCE = 1e-10
+_L2_LOGISTIC_MAX_ITERATIONS = 100
+_L2_LOGISTIC_BACKTRACKING_FACTOR = 0.5
+_L2_LOGISTIC_ARMIJO_COEFFICIENT = 1e-4
+_L2_LOGISTIC_MAX_BACKTRACKING_STEPS = 60
+
+
+def _stable_sigmoid(z: float) -> float:
+    """Numerically stable logistic sigmoid.
+
+    The branch keeps the exponential argument non-positive, so the result is
+    finite and strictly inside ``(0, 1)`` for every finite ``z``. That is why
+    no endpoint epsilon or clipping is needed anywhere in this method.
+    """
+    if z >= 0.0:
+        return 1.0 / (1.0 + math.exp(-z))
+    exp_z = math.exp(z)
+    return exp_z / (1.0 + exp_z)
+
+
+def _stable_softplus(z: float) -> float:
+    """Numerically stable ``log(1 + exp(z))``.
+
+    Written as ``z + log1p(exp(-z))`` for ``z >= 0`` so the exponential
+    argument is never positive. ``log(sigmoid(z))`` and ``log(1 - sigmoid(z))``
+    are never formed, so the training objective has no hidden approximation.
+    """
+    if z >= 0.0:
+        return z + math.log1p(math.exp(-z))
+    return math.log1p(math.exp(z))
+
+
+def _l2_logistic_mapping(p: float, slope: float, intercept: float) -> float:
+    """The frozen v1 mapping ``q(p) = sigmoid(slope * p + intercept)``."""
+    return _stable_sigmoid(slope * p + intercept)
+
+
+def _l2_logistic_objective(
+    rows: Sequence[tuple[float, float]],
+    slope: float,
+    intercept: float,
+    l2_strength: float,
+) -> float:
+    """Mean Bernoulli NLL plus the L2 penalty, at the given parameters."""
+    terms = []
+    for p, y in rows:
+        z = slope * p + intercept
+        terms.append(_stable_softplus(z) - y * z)
+    mean_nll = math.fsum(terms) / len(rows)
+    return mean_nll + (l2_strength / 2.0) * (slope * slope + intercept * intercept)
+
+
+def _l2_logistic_gradient(
+    rows: Sequence[tuple[float, float]],
+    slope: float,
+    intercept: float,
+    l2_strength: float,
+) -> tuple[float, float]:
+    """Objective gradient: mean((q - y) * p) + lambda * slope, and the intercept twin."""
+    slope_terms = []
+    intercept_terms = []
+    for p, y in rows:
+        residual = _l2_logistic_mapping(p, slope, intercept) - y
+        slope_terms.append(residual * p)
+        intercept_terms.append(residual)
+    count = len(rows)
+    grad_slope = math.fsum(slope_terms) / count + l2_strength * slope
+    grad_intercept = math.fsum(intercept_terms) / count + l2_strength * intercept
+    return grad_slope, grad_intercept
+
+
+def _l2_logistic_data_hessian(
+    rows: Sequence[tuple[float, float]],
+    slope: float,
+    intercept: float,
+) -> tuple[float, float, float]:
+    """Symmetric 2x2 Hessian ``(H_aa, H_ab, H_bb)`` of the mean NLL alone.
+
+    The L2 penalty is deliberately excluded so the caller can assemble the
+    regularized matrix from the data term and the penalty term separately.
+    Adding ``l2_strength`` to a diagonal entry before the determinant is formed
+    loses the penalty entirely when ``l2_strength`` is below the unit in the
+    last place of the data term, which would make a well-posed fit look
+    singular.
+    """
+    aa_terms = []
+    ab_terms = []
+    bb_terms = []
+    for p, _ in rows:
+        q = _l2_logistic_mapping(p, slope, intercept)
+        weight = q * (1.0 - q)
+        aa_terms.append(weight * p * p)
+        ab_terms.append(weight * p)
+        bb_terms.append(weight)
+    count = len(rows)
+    return (
+        math.fsum(aa_terms) / count,
+        math.fsum(ab_terms) / count,
+        math.fsum(bb_terms) / count,
+    )
+
+
+def _l2_logistic_hessian(
+    rows: Sequence[tuple[float, float]],
+    slope: float,
+    intercept: float,
+    l2_strength: float,
+) -> tuple[float, float, float]:
+    """Symmetric 2x2 Hessian ``(H_aa, H_ab, H_bb)`` at the given parameters.
+
+    This is the Hessian of the regularized objective: the mean-NLL Hessian with
+    ``l2_strength`` added to both diagonal entries.
+    """
+    data_aa, data_ab, data_bb = _l2_logistic_data_hessian(rows, slope, intercept)
+    return (data_aa + l2_strength, data_ab, data_bb + l2_strength)
+
+
+def _require_l2_strength(l2_strength: Any) -> float:
+    """Validate and normalize the L2 strength to a finite float strictly above zero.
+
+    A bool is rejected even though it is an ``int`` subclass. No hidden maximum
+    is imposed.
+    """
+    if isinstance(l2_strength, bool) or not isinstance(l2_strength, (int, float)):
+        raise InvalidDecisionError(
+            "l2_strength must be a finite real number > 0, got "
+            f"{type(l2_strength).__name__} ({l2_strength!r})"
+        )
+    try:
+        value = float(l2_strength)
+    except OverflowError:
+        raise InvalidDecisionError(
+            f"l2_strength must be a finite real number > 0, got {l2_strength!r}"
+        ) from None
+    if not math.isfinite(value) or value <= 0.0:
+        raise InvalidDecisionError(
+            f"l2_strength must be a finite real number > 0, got {l2_strength!r}"
+        )
+    return value
+
+
+def _ordered_fitting_rows(dataset: CalibrationDataset) -> list[tuple[float, float]]:
+    """Build the fitting rows in a row-order-independent order.
+
+    The dataset fingerprint is row-order independent, so the fitting
+    arithmetic must be too. ``math.fsum`` is used for every accumulation, which
+    is exactly rounded and therefore independent of the summation order; the
+    deterministic ordering below is a secondary safeguard for any accumulation
+    that is not exactly rounded, not the primary guarantee. Multiplicity is
+    preserved because a sorted list is used, never a set.
+
+    Each row is exactly ``(uncalibrated selected probability, winner
+    correctness)``. No other observation attribute may enter the model: not
+    entropy, not any scoring diagnostic statistic, not the model name, and not
+    the candidate count. The binding identity determines the population and is
+    not a numerical feature.
+    """
+    ordered = sorted(dataset.observations, key=lambda observation: observation.fingerprint)
+    rows: list[tuple[float, float]] = []
+    for observation in ordered:
+        correct = observation.correct
+        if not isinstance(correct, bool):
+            raise InvalidDecisionError(
+                "a fitting row requires a real bool winner-correctness label, got "
+                f"{type(correct).__name__} ({correct!r}); the fitter never coerces "
+                "an unknown or non-bool correctness into a label"
+            )
+        probability = _selected_probability(observation)
+        if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
+            raise InvalidDecisionError(
+                f"the selected probability {probability!r} of observation "
+                f"{observation.fingerprint} is not a finite value in [0, 1]"
+            )
+        rows.append((probability, 1.0 if correct else 0.0))
+    return rows
+
+
+def _l2_logistic_method_configuration(l2_strength: float) -> dict[str, JSONValue]:
+    """The identity-bearing v1 method configuration.
+
+    Everything needed to reproduce the intended fitting problem is recorded:
+    what was optimized, which parameters were regularized, whether the input
+    probability was transformed, clipped, or smoothed, and which solver
+    contract produced the parameters. Solver iteration telemetry is
+    deliberately absent because it is execution telemetry, not semantics.
+    """
+    return {
+        "objective": {
+            "id": _L2_LOGISTIC_OBJECTIVE_ID,
+            "version": _L2_LOGISTIC_OBJECTIVE_VERSION,
+        },
+        "l2_strength": l2_strength,
+        "regularized_parameters": list(_L2_LOGISTIC_REGULARIZED_PARAMETERS),
+        "input_transform": {
+            "id": _L2_LOGISTIC_INPUT_TRANSFORM_ID,
+            "version": _L2_LOGISTIC_INPUT_TRANSFORM_VERSION,
+        },
+        "endpoint_policy": {
+            "id": _L2_LOGISTIC_ENDPOINT_POLICY_ID,
+            "version": _L2_LOGISTIC_ENDPOINT_POLICY_VERSION,
+            "epsilon": None,
+            "clipping": False,
+            "label_smoothing": False,
+        },
+        "solver": {
+            "id": _L2_LOGISTIC_SOLVER_ID,
+            "version": _L2_LOGISTIC_SOLVER_VERSION,
+            "initial_slope": _L2_LOGISTIC_INITIAL_SLOPE,
+            "initial_intercept": _L2_LOGISTIC_INITIAL_INTERCEPT,
+            "gradient_tolerance": _L2_LOGISTIC_GRADIENT_TOLERANCE,
+            "max_iterations": _L2_LOGISTIC_MAX_ITERATIONS,
+            "backtracking_factor": _L2_LOGISTIC_BACKTRACKING_FACTOR,
+            "armijo_coefficient": _L2_LOGISTIC_ARMIJO_COEFFICIENT,
+            "max_backtracking_steps": _L2_LOGISTIC_MAX_BACKTRACKING_STEPS,
+        },
+    }
+
+
+def _solve_l2_logistic(
+    rows: Sequence[tuple[float, float]],
+    l2_strength: float,
+) -> tuple[float, float]:
+    """Deterministic 2-parameter Newton fit with a backtracking line search.
+
+    The objective is strictly convex and coercive whenever ``l2_strength > 0``
+    and the fitting rows are non-empty, because the L2 penalty regularizes BOTH
+    ``slope`` and ``intercept``. That makes the Hessian positive definite, so
+    the Newton direction is always a descent direction and the unique finite
+    global optimum is reachable from the fixed zero initialization.
+
+    The frozen solver contract does not contain a best-effort mode: if the
+    declared tolerance is not reached within the declared iteration budget, or
+    if the line search cannot find a sufficient decrease, the fit fails loudly
+    instead of returning a partially converged parameter pair. The regularized
+    Hessian is positive definite for every ``l2_strength > 0``, so a
+    numerically degenerate Hessian solve uses a deterministically scaled
+    gradient direction instead of failing the fit; the line search still has to
+    accept every step.
+    """
+    slope = _L2_LOGISTIC_INITIAL_SLOPE
+    intercept = _L2_LOGISTIC_INITIAL_INTERCEPT
+    objective = _l2_logistic_objective(rows, slope, intercept, l2_strength)
+    for _iteration in range(_L2_LOGISTIC_MAX_ITERATIONS):
+        grad_slope, grad_intercept = _l2_logistic_gradient(rows, slope, intercept, l2_strength)
+        if max(abs(grad_slope), abs(grad_intercept)) <= _L2_LOGISTIC_GRADIENT_TOLERANCE:
+            return slope, intercept
+        data_aa, data_ab, data_bb = _l2_logistic_data_hessian(rows, slope, intercept)
+        hessian_aa = data_aa + l2_strength
+        hessian_bb = data_bb + l2_strength
+        # ``det(l2_strength * I + M)`` assembled from the data term and the
+        # penalty term separately. Forming ``(data_aa + lambda) *
+        # (data_bb + lambda)`` directly cancels the penalty below the unit in
+        # the last place of the data term (tiny ``l2_strength``) and overflows
+        # to infinity above roughly ``1e154``, even though the regularized
+        # Hessian is positive definite by construction for every
+        # ``l2_strength > 0``.
+        determinant = (
+            data_aa * data_bb
+            - data_ab * data_ab
+            + l2_strength * (data_aa + data_bb)
+            + l2_strength * l2_strength
+        )
+        if math.isfinite(determinant) and determinant > 0.0:
+            # The numerators keep ``l2_strength`` algebraically separate for the
+            # same reason as the determinant: folding it into a diagonal entry
+            # first rounds it away when it is below that entry's unit in the
+            # last place, which would zero the whole Newton step.
+            delta_slope = (
+                -(data_bb * grad_slope - data_ab * grad_intercept + l2_strength * grad_slope)
+                / determinant
+            )
+            delta_intercept = (
+                -(-data_ab * grad_slope + data_aa * grad_intercept + l2_strength * grad_intercept)
+                / determinant
+            )
+        else:
+            # ``l2_strength * I`` plus a positive semi-definite data term is
+            # positive definite for every ``l2_strength > 0``, so a non-finite
+            # or non-positive assembled determinant is a scaling artifact
+            # rather than genuine indefiniteness. Fall back to a
+            # deterministically scaled gradient direction, which stays a
+            # descent direction, and let the line search enforce decrease.
+            scale = max(abs(hessian_aa), abs(hessian_bb), abs(data_ab), 1.0)
+            delta_slope = -grad_slope / scale
+            delta_intercept = -grad_intercept / scale
+        directional_derivative = grad_slope * delta_slope + grad_intercept * delta_intercept
+        step = 1.0
+        accepted = False
+        for _backtrack in range(_L2_LOGISTIC_MAX_BACKTRACKING_STEPS):
+            candidate_slope = slope + step * delta_slope
+            candidate_intercept = intercept + step * delta_intercept
+            candidate_objective = _l2_logistic_objective(
+                rows, candidate_slope, candidate_intercept, l2_strength
+            )
+            if candidate_objective <= (
+                objective + _L2_LOGISTIC_ARMIJO_COEFFICIENT * step * directional_derivative
+            ):
+                slope = candidate_slope
+                intercept = candidate_intercept
+                objective = candidate_objective
+                accepted = True
+                break
+            step *= _L2_LOGISTIC_BACKTRACKING_FACTOR
+        if not accepted:
+            raise InvalidDecisionError(
+                "the fitting line search could not find a sufficient objective "
+                f"decrease within {_L2_LOGISTIC_MAX_BACKTRACKING_STEPS} reductions; "
+                "no calibration profile is produced from an unconverged fit"
+            )
+    raise InvalidDecisionError(
+        "the fitting solver did not reach the declared gradient tolerance "
+        f"{_L2_LOGISTIC_GRADIENT_TOLERANCE!r} within "
+        f"{_L2_LOGISTIC_MAX_ITERATIONS} iterations; no calibration profile is "
+        "produced from an unconverged fit"
+    )
+
+
+def fit_l2_logistic_selected_probability(
+    dataset: CalibrationDataset,
+    *,
+    l2_strength: float,
+) -> CalibrationProfile:
+    """Fit the v1 L2-regularized logistic calibrator for winner correctness.
+
+    This is the first SUPPORTED producer of a :class:`CalibrationProfile`. It
+    deterministically maps one fitting :class:`CalibrationDataset` to a profile
+    by minimizing
+
+        ``mean_i(softplus(z_i) - y_i * z_i) + (l2_strength / 2) * (a^2 + b^2)``
+
+    with ``z_i = a * p_i + b``, ``p_i`` the frozen uncalibrated selected
+    semantic probability, and ``y_i`` the winner-correctness label. Nothing is
+    returned unless the declared solver contract reports convergence.
+
+    The mapping is ``q(p) = sigmoid(a * p + b)`` with ``slope = a`` and
+    ``intercept = b``. ``p = 0`` and ``p = 1`` are ordinary finite inputs: no
+    epsilon, clipping, label smoothing, or logit transform is used.
+
+    Fitting proves only that the declared fitting problem was solved. It does
+    NOT establish that the calibrator is good, that it generalizes, or that
+    anything is calibrated; a fitted profile is evaluated on held-out data in a
+    later phase. The profile this returns carries the dataset's exact binding
+    and ground-truth semantics identity, so no profile matching or compatibility
+    policy is added here.
+    """
+    if not isinstance(dataset, CalibrationDataset):
+        raise InvalidDecisionError(
+            f"dataset must be a CalibrationDataset, got {type(dataset).__name__} ({dataset!r})"
+        )
+    strength = _require_l2_strength(l2_strength)
+    rows = _ordered_fitting_rows(dataset)
+    slope, intercept = _solve_l2_logistic(rows, strength)
+    if not math.isfinite(slope) or not math.isfinite(intercept):
+        raise InvalidDecisionError(
+            f"the fitted parameters must be finite, got slope {slope!r} and intercept {intercept!r}"
+        )
+    return CalibrationProfile._from_fitted_state(
+        dataset,
+        method_id=L2_LOGISTIC_SELECTED_PROBABILITY_METHOD_ID,
+        method_version=L2_LOGISTIC_SELECTED_PROBABILITY_METHOD_VERSION,
+        method_configuration=_l2_logistic_method_configuration(strength),
+        fitted_parameters={"slope": slope, "intercept": intercept},
+    )

@@ -717,10 +717,11 @@ has been fitted, and no calibration-quality claim is made anywhere.
 These claims are deterministic implementation claims about the evaluation
 foundation only. They are NOT claims that any model is calibrated, that any
 calibration improves anything, or that any pre-calibration baseline is
-calibration-quality evidence: no calibrator exists, no fitting has happened,
-and no fitted `CalibrationProfile` has ever been produced. The profile
-identity/artifact foundation exists in `src/probvenance/calibration.py`, but
-nothing in the runtime or the evaluation layer creates one.
+calibration-quality evidence: one supported scalar fitting method exists
+(`fit_l2_logistic_selected_probability`), but no runtime application and no
+post-calibration evaluation exist, so no result carries a calibrated score. The
+profile identity/artifact foundation also exists in
+`src/probvenance/calibration.py`.
 
 ### Calibration profile identity foundation (Phase 4C.1)
 
@@ -759,13 +760,49 @@ nothing in the runtime or the evaluation layer creates one.
   `tests/test_calibration_profile.py::TestPhase4BFingerprintsUnchanged`,
   `...::TestImportDirection`.
 
+- [V] The v1 L2 logistic selected-probability fitter deterministically maps one
+  `CalibrationDataset` to a `CalibrationProfile` by optimizing the documented
+  strictly-convex regularized Bernoulli objective whenever the declared solver
+  converges, and raises instead of returning a profile when the declared
+  gradient tolerance is genuinely unreachable. Evidence:
+  `tests/test_calibration_fitter.py::TestMathematicalRegressions`,
+  `...::TestDeterminismAndProvenance`,
+  `...::TestForgedInputsFailClosed::test_unconverged_fit_never_produces_a_profile`.
+
+- [V] The fitter's Hessian solve is robust across the representable
+  `l2_strength` range: a constant selected probability with `l2_strength = 1e-17`
+  fits, and `l2_strength` of `1e154` through `1e300` does not overflow it.
+  Evidence: `tests/test_calibration_fitter.py::TestMathematicalRegressions`,
+  `...::TestInputValidation`.
+
+- [V] The fitter consumes only the frozen uncalibrated selected-probability
+  score and winner-correctness label, uses no clipping, epsilon, label
+  smoothing, or logit transform, and records its method configuration and
+  training dataset identity in the profile. Evidence:
+  `tests/test_calibration_fitter.py::TestMethodConfiguration`,
+  `...::TestScopeBoundaries`.
+
+- [V] Positive L2 regularization on both slope and intercept makes the declared
+  v1 objective strictly convex with one finite global optimum, and all-correct,
+  all-wrong, and completely separated fitting datasets fit to finite parameters
+  at the tested strengths. Evidence:
+  `tests/test_calibration_fitter.py::TestMathematicalRegressions`,
+  `...::TestForgedInputsFailClosed`.
+
+- [V] The uncalibrated selected semantic probability has exactly one extraction
+  implementation, owned by `probvenance.calibration`; the evaluation layer
+  consumes that same function object rather than a copy. Evidence:
+  `tests/test_calibration_fitter.py::TestScopeBoundaries::test_selected_probability_extraction_has_one_owner`,
+  `...::TestImportGraphAndFrozenIdentities`.
+
 These are structural identity claims. A valid `CalibrationProfile` proves only
 that its provenance and identity are structurally coherent. It does NOT prove
 that the calibrator improves Brier or log loss, that it generalizes beyond its
 training data, that the training data is representative, or that a
-training/evaluation split is independent. No fitting algorithm exists, no
-supported public fitter produces a profile, and no result carries a
-`predicted_correctness`.
+training/evaluation split is independent. One supported scalar fitting method
+exists, but no derived-score application contract exists, so no result carries a
+`predicted_correctness`: a fitted profile is evidence about a fitting problem,
+not about calibration quality.
 
 ## Experimental records
 

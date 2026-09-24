@@ -123,7 +123,7 @@ class TestProfileConstructionGuard:
             CalibrationProfile(**direct_construction_kwargs())
         message = str(excinfo.value)
         assert "supported calibration fitter" in message
-        assert "no public calibration fitter is implemented yet" in message
+        assert "fit_l2_logistic_selected_probability" in message
         assert "_from_fitted_state" not in message
 
     def test_replace_rejected(self):
