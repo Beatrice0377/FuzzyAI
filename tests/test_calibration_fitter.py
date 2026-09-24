@@ -30,14 +30,20 @@ from test_calibration import (
 
 from probvenance import EvidenceKind, RawEvidence
 from probvenance.calibration import (
+    _L2_LOGISTIC_OBJECTIVE_SUBOPTIMALITY_TOLERANCE,
     CALIBRATION_PROFILE_FINGERPRINT_VERSION,
     L2_LOGISTIC_SELECTED_PROBABILITY_METHOD_ID,
     L2_LOGISTIC_SELECTED_PROBABILITY_METHOD_VERSION,
     CalibrationBinding,
     CalibrationDataset,
     CalibrationProfile,
+    _binary_logistic_terms,
+    _l2_logistic_certificate_threshold,
+    _l2_logistic_gradient,
     _l2_logistic_objective,
+    _ordered_fitting_rows,
     _selected_probability,
+    _solve_l2_logistic,
     fit_l2_logistic_selected_probability,
 )
 from probvenance.errors import InvalidDecisionError
@@ -385,14 +391,19 @@ class TestMethodConfiguration:
         }
         solver = config["solver"]
         assert solver["id"] == "newton-backtracking"
-        assert solver["version"] == 1
+        assert solver["version"] == 2
         assert solver["initial_slope"] == 0.0
         assert solver["initial_intercept"] == 0.0
-        assert solver["gradient_tolerance"] == 1e-10
         assert solver["max_iterations"] == 100
         assert solver["backtracking_factor"] == 0.5
         assert solver["armijo_coefficient"] == 1e-4
         assert solver["max_backtracking_steps"] == 60
+        assert solver["convergence"] == {
+            "id": "strong-convexity-objective-gap",
+            "version": 1,
+            "objective_suboptimality_tolerance": (_L2_LOGISTIC_OBJECTIVE_SUBOPTIMALITY_TOLERANCE),
+        }
+        assert "gradient_tolerance" not in solver
 
     def test_fitted_parameters_are_only_slope_and_intercept(self):
         profile = fit([(0.5, True)], l2_strength=1.0)
@@ -675,7 +686,7 @@ class TestForgedInputsFailClosed:
         original = calibration_module._L2_LOGISTIC_MAX_ITERATIONS
         try:
             object.__setattr__(calibration_module, "_L2_LOGISTIC_MAX_ITERATIONS", 0)
-            with pytest.raises(InvalidDecisionError, match="unconverged"):
+            with pytest.raises(InvalidDecisionError, match="uncertified"):
                 fit_l2_logistic_selected_probability(dataset, l2_strength=1.0)
         finally:
             object.__setattr__(calibration_module, "_L2_LOGISTIC_MAX_ITERATIONS", original)
@@ -830,3 +841,291 @@ class TestProfileFoundationStillHolds:
         dataset = fitting_dataset([(0.5, True)])
         assert dataset.observations[0].ground_truth.provenance == adjudicated_provenance()
         assert all(observation.fit_eligible for observation in dataset.observations)
+
+
+# ---------------------------------------------------------------------------
+# Phase 4C.2a: numerical convergence hardening
+# ---------------------------------------------------------------------------
+
+
+def _constant_rows(probability: float, correct: bool) -> list[tuple[float, bool]]:
+    return [(probability, correct), (probability, correct)]
+
+
+def _oracle_constant_optimum(
+    probability: float, correct: bool, l2_strength: float
+) -> tuple[float, float]:
+    """Independent scalar oracle for an all-identical-score fitting problem.
+
+    With every row sharing the score ``p`` and the label, the first-order
+    conditions force ``slope = p * intercept``, so the optimum reduces to one
+    scalar equation in ``z = intercept * (1 + p**2)``. It is found by bisection
+    so the oracle never consults the fitter.
+    """
+    scale = 1.0 + probability * probability
+    if correct:
+
+        def residual(z: float) -> float:
+            return 1.0 / (1.0 + math.exp(z)) - l2_strength * z / scale
+
+        low, high = 0.0, 1.0
+        while residual(high) > 0.0:
+            high *= 2.0
+    else:
+
+        def residual(z: float) -> float:
+            return -(1.0 / (1.0 + math.exp(-z)) + l2_strength * z / scale)
+
+        high, low = 0.0, -1.0
+        while residual(low) <= 0.0:
+            low *= 2.0
+    for _ in range(300):
+        middle = (low + high) / 2.0
+        if residual(middle) > 0.0:
+            low = middle
+        else:
+            high = middle
+    intercept = (low + high) / 2.0 / scale
+    return probability * intercept, intercept
+
+
+class TestNumericalConvergenceHardening:
+    """Part 1 to Part 21 and the Part 35 attacks of the 4C.2a repair."""
+
+    def test_terms_match_independent_central_differences(self):
+        step = 1e-4
+
+        def stable_nll(value: float, correct: bool) -> float:
+            exponent = -value if correct else value
+            return math.log1p(math.exp(exponent))
+
+        for z in (-3.0, -1.0, 0.0, 1.0, 3.0):
+            for correct in (True, False):
+                _loss, residual, curvature = _binary_logistic_terms(z, correct)
+                numeric_residual = (
+                    stable_nll(z + step, correct) - stable_nll(z - step, correct)
+                ) / (2.0 * step)
+                numeric_curvature = (
+                    stable_nll(z + step, correct)
+                    - 2.0 * stable_nll(z, correct)
+                    + stable_nll(z - step, correct)
+                ) / (step * step)
+                assert residual == pytest.approx(numeric_residual, rel=1e-5, abs=1e-9)
+                assert curvature == pytest.approx(numeric_curvature, rel=1e-3, abs=1e-6)
+
+    def test_objective_and_gradient_agree_by_finite_difference(self):
+        rows = [(0.2, False), (0.55, True), (0.9, True)]
+        l2_strength = 0.7
+        slope, intercept = 0.4, -0.3
+        step = 1e-6
+        numeric_slope = (
+            _l2_logistic_objective(rows, slope + step, intercept, l2_strength)
+            - _l2_logistic_objective(rows, slope - step, intercept, l2_strength)
+        ) / (2.0 * step)
+        numeric_intercept = (
+            _l2_logistic_objective(rows, slope, intercept + step, l2_strength)
+            - _l2_logistic_objective(rows, slope, intercept - step, l2_strength)
+        ) / (2.0 * step)
+        gradient_slope, gradient_intercept = _l2_logistic_gradient(
+            rows, slope, intercept, l2_strength
+        )
+        assert gradient_slope == pytest.approx(numeric_slope, abs=1e-8)
+        assert gradient_intercept == pytest.approx(numeric_intercept, abs=1e-8)
+
+    def test_large_positive_z_terms_do_not_cancel(self):
+        for z in (20.0, 40.0):
+            expected = math.exp(-z) / (1.0 + math.exp(-z))
+            loss, residual, curvature = _binary_logistic_terms(z, True)
+            assert loss > 0.0
+            assert residual < 0.0
+            assert curvature > 0.0
+            assert loss == pytest.approx(expected, rel=1e-12)
+            assert residual == pytest.approx(-expected, rel=1e-12)
+            assert curvature == pytest.approx(expected, rel=1e-12)
+
+    def test_large_negative_z_terms_do_not_cancel(self):
+        for z in (-20.0, -40.0):
+            expected = math.exp(z) / (1.0 + math.exp(z))
+            loss, residual, curvature = _binary_logistic_terms(z, False)
+            assert loss > 0.0
+            assert residual > 0.0
+            assert curvature > 0.0
+            assert loss == pytest.approx(expected, rel=1e-12)
+            assert residual == pytest.approx(expected, rel=1e-12)
+            assert curvature == pytest.approx(expected, rel=1e-12)
+
+    def test_terms_stay_representable_at_extreme_z(self):
+        for z, correct, sign in ((100.0, True, -1.0), (-100.0, False, 1.0)):
+            loss, residual, curvature = _binary_logistic_terms(z, correct)
+            assert loss > 0.0
+            assert curvature > 0.0
+            assert residual != 0.0
+            assert residual * sign > 0.0
+
+    def test_the_cancelling_objective_form_is_gone_from_the_source(self):
+        import probvenance.calibration as calibration_module
+
+        source = inspect.getsource(calibration_module)
+        assert "softplus(z) - y * z" not in source
+        assert "softplus(z) - y*z" not in source
+
+    def test_the_certificate_threshold_is_the_strong_convexity_bound(self):
+        assert _l2_logistic_certificate_threshold(1.0) == pytest.approx(
+            math.sqrt(2.0 * _L2_LOGISTIC_OBJECTIVE_SUBOPTIMALITY_TOLERANCE), rel=1e-12
+        )
+        assert _l2_logistic_certificate_threshold(4.0) == pytest.approx(
+            2.0 * _l2_logistic_certificate_threshold(1.0), rel=1e-12
+        )
+
+    def test_the_certificate_threshold_never_underflows_or_overflows(self):
+        assert 2.0 * 1e-320 * _L2_LOGISTIC_OBJECTIVE_SUBOPTIMALITY_TOLERANCE == 0.0
+        for l2_strength in (5e-324, 1e-320, 1e-20, 1.0, 1e154, 1e300):
+            threshold = _l2_logistic_certificate_threshold(l2_strength)
+            assert math.isfinite(threshold)
+            assert threshold > 0.0
+
+    def test_the_previously_accepted_point_fails_the_certificate(self):
+        rows = _constant_rows(0.9, True)
+        for l2_strength in (1e-16, 1e-18, 1e-20):
+            slope, intercept = 11.5305, 12.8117
+            norm = math.hypot(*_l2_logistic_gradient(rows, slope, intercept, l2_strength))
+            assert norm > _l2_logistic_certificate_threshold(l2_strength)
+            assert norm * norm / (2.0 * l2_strength) > (
+                _L2_LOGISTIC_OBJECTIVE_SUBOPTIMALITY_TOLERANCE
+            )
+
+    def test_the_fitter_never_returns_the_old_false_success(self):
+        dataset = fitting_dataset([(0.9, True), (0.9, True)])
+        rows = _constant_rows(0.9, True)
+        for l2_strength in (1e-18, 1e-20):
+            try:
+                profile = fit_l2_logistic_selected_probability(dataset, l2_strength=l2_strength)
+            except InvalidDecisionError:
+                continue
+            gradient = _l2_logistic_gradient(
+                rows, slope_of(profile), intercept_of(profile), l2_strength
+            )
+            assert math.hypot(*gradient) <= _l2_logistic_certificate_threshold(l2_strength)
+            assert abs(0.9 * slope_of(profile) + intercept_of(profile) - 23.1891) > 1.0
+
+    def test_a_tiny_strength_either_certifies_or_fails_closed(self):
+        # Part 12 accepts either outcome; what is forbidden is a success that
+        # the certificate does not cover, or a stale underflow diagnosis.
+        dataset = fitting_dataset([(0.9, True), (0.9, True)])
+        rows = _ordered_fitting_rows(dataset)
+        for l2_strength in (1e-19, 1e-20):
+            try:
+                profile = fit_l2_logistic_selected_probability(dataset, l2_strength=l2_strength)
+            except InvalidDecisionError as error:
+                message = str(error)
+                assert "certify" in message
+                assert "underflow" not in message
+                assert "gradient tolerance" not in message
+                continue
+            gradient = _l2_logistic_gradient(
+                rows, slope_of(profile), intercept_of(profile), l2_strength
+            )
+            assert math.hypot(*gradient) <= _l2_logistic_certificate_threshold(l2_strength)
+
+    def test_constant_positive_labels_match_the_independent_scalar_oracle(self):
+        l2_strength = 1e-18
+        dataset = fitting_dataset([(0.9, True), (0.9, True)])
+        rows = _ordered_fitting_rows(dataset)
+        probability = rows[0][0]
+        profile = fit_l2_logistic_selected_probability(dataset, l2_strength=l2_strength)
+        slope, intercept = slope_of(profile), intercept_of(profile)
+        assert slope == pytest.approx(probability * intercept, rel=1e-9)
+        oracle_slope, oracle_intercept = _oracle_constant_optimum(probability, True, l2_strength)
+        fitted_objective = _l2_logistic_objective(rows, slope, intercept, l2_strength)
+        oracle_objective = _l2_logistic_objective(rows, oracle_slope, oracle_intercept, l2_strength)
+        assert fitted_objective >= oracle_objective
+        assert fitted_objective - oracle_objective <= (
+            _L2_LOGISTIC_OBJECTIVE_SUBOPTIMALITY_TOLERANCE
+        )
+
+    def test_ordinary_strength_parameters_reach_the_independent_oracle(self):
+        # Where the strong-convexity bound is tight, the fitted parameters must
+        # land on the independently derived optimum, not merely certify.
+        rows = [(0.9, 1.0), (0.9, 1.0)]
+        for l2_strength in (0.05, 1.0):
+            oracle_slope, oracle_intercept = _oracle_constant_optimum(0.9, True, l2_strength)
+            slope, intercept = _solve_l2_logistic(rows, l2_strength)
+            assert slope == pytest.approx(oracle_slope, rel=1e-9)
+            assert intercept == pytest.approx(oracle_intercept, rel=1e-9)
+
+    def test_tiny_strength_looseness_is_bounded_and_certified(self):
+        # A tiny strong-convexity modulus makes the objective-gap certificate
+        # loose in PARAMETER terms: the returned point can sit a few percent
+        # away from the true optimum while still certifying. That looseness is
+        # recorded rather than hidden, and the certificate still holds.
+        rows = [(0.9, 1.0), (0.9, 1.0)]
+        l2_strength = 1e-18
+        oracle_slope, oracle_intercept = _oracle_constant_optimum(0.9, True, l2_strength)
+        slope, intercept = _solve_l2_logistic(rows, l2_strength)
+        relative_gap = max(
+            abs(slope - oracle_slope) / abs(oracle_slope),
+            abs(intercept - oracle_intercept) / abs(oracle_intercept),
+        )
+        assert 1e-6 < relative_gap < 0.5
+        gradient = _l2_logistic_gradient(rows, slope, intercept, l2_strength)
+        assert math.hypot(*gradient) <= _l2_logistic_certificate_threshold(l2_strength)
+
+    def test_constant_negative_labels_are_the_exact_mirror(self):
+        probability, l2_strength = 0.9, 1e-18
+        positive = fit([(probability, True), (probability, True)], l2_strength=l2_strength)
+        negative = fit([(probability, False), (probability, False)], l2_strength=l2_strength)
+        assert slope_of(negative) == pytest.approx(-slope_of(positive), rel=1e-9)
+        assert intercept_of(negative) == pytest.approx(-intercept_of(positive), rel=1e-9)
+
+    def test_balanced_no_signal_is_the_exact_zero_optimum(self):
+        for l2_strength in (1e-20, 1.0):
+            profile = fit([(0.5, False), (0.5, True)], l2_strength=l2_strength)
+            assert slope_of(profile) == 0.0
+            assert intercept_of(profile) == 0.0
+
+    def test_every_produced_profile_satisfies_the_certificate(self):
+        datasets = [
+            [(0.5, False), (0.5, True)],
+            [(0.5, False), (1.0, True)],
+            [(0.6, False), (0.9, True)],
+            [(0.9, True), (0.9, True)],
+            [(0.9, False), (0.9, False)],
+            [(1.0, True)],
+        ]
+        for rows in datasets:
+            for l2_strength in (0.05, 0.5, 1.0, 2.0, 1e-12, 1e-16):
+                try:
+                    profile = fit(rows, l2_strength=l2_strength)
+                except InvalidDecisionError:
+                    continue
+                gradient = _l2_logistic_gradient(
+                    rows, slope_of(profile), intercept_of(profile), l2_strength
+                )
+                assert math.hypot(*gradient) <= (_l2_logistic_certificate_threshold(l2_strength))
+
+    def test_ordinary_strength_optima_are_certified_and_stable(self):
+        # Pinned certified baselines for the ordinary strength range. A solver
+        # contract change re-measures them; the values match the pre-hardening
+        # solver to within one float64 ulp, so a change beyond that is a
+        # regression rather than a re-measurement.
+        expected = {
+            0.01: (4.223427207949436, -3.010267396178393),
+            0.05: (1.4100660705060897, -0.8763321265979911),
+            0.1: (0.8039038041256639, -0.42911826388273655),
+            0.5: (0.20517543661252272, -0.0512414386090694),
+            1.0: (0.1108100666536127, -0.016614064906515198),
+            2.0: (0.058394873785144914, -0.004865462890014107),
+        }
+        rows = [(0.5, False), (1.0, True)]
+        for l2_strength, (slope, intercept) in expected.items():
+            profile = fit(rows, l2_strength=l2_strength)
+            assert slope_of(profile) == slope
+            assert intercept_of(profile) == intercept
+            gradient = _l2_logistic_gradient(rows, slope, intercept, l2_strength)
+            assert math.hypot(*gradient) <= _l2_logistic_certificate_threshold(l2_strength)
+
+    def test_subnormal_strengths_are_valid_inputs(self):
+        import probvenance.calibration as calibration_module
+
+        assert calibration_module._require_l2_strength(1e-300) == 1e-300
+        assert calibration_module._require_l2_strength(5e-324) == 5e-324

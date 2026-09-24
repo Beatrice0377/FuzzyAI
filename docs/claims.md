@@ -762,18 +762,57 @@ profile identity/artifact foundation also exists in
 
 - [V] The v1 L2 logistic selected-probability fitter deterministically maps one
   `CalibrationDataset` to a `CalibrationProfile` by optimizing the documented
-  strictly-convex regularized Bernoulli objective whenever the declared solver
-  converges, and raises instead of returning a profile when the declared
-  gradient tolerance is genuinely unreachable. Evidence:
-  `tests/test_calibration_fitter.py::TestMathematicalRegressions`,
+  strictly-convex regularized Bernoulli objective, and returns a profile only
+  when the computed gradient satisfies the declared strong-convexity
+  objective-gap certificate for the declared positive L2 strength. When that
+  certificate cannot be established within the frozen solver contract the
+  fitter raises instead of returning a profile, and no fixed absolute gradient
+  threshold can authorize a profile on its own. Evidence:
+  `tests/test_calibration_fitter.py::TestNumericalConvergenceHardening`,
   `...::TestDeterminismAndProvenance`,
   `...::TestForgedInputsFailClosed::test_unconverged_fit_never_produces_a_profile`.
 
+- [V] The L2 logistic fitter's success condition is the strong-convexity
+  objective-gap certificate: `||grad|| <= sqrt(2 * l2_strength *
+  objective_suboptimality_tolerance)` with
+  `objective_suboptimality_tolerance = 1e-14`, assembled as
+  `sqrt(2) * sqrt(l2_strength) * sqrt(tolerance)` so it stays representable
+  across the whole accepted strength range instead of underflowing. The
+  Bernoulli terms are label-aware, so a correct row at large positive `z` keeps
+  a strictly positive representable loss, residual, and curvature where
+  `softplus(z) - z` and `q * (1 - q)` would cancel to exactly zero. A constant
+  selected probability with `l2_strength = 1e-18` either certifies or fails
+  closed instead of returning the previously accepted uncertified point, and
+  the ordinary-strength fitted parameters match the pre-hardening solver to
+  within one float64 ulp.
+  Evidence: `tests/test_calibration_fitter.py::TestNumericalConvergenceHardening`.
+
+- [V] The declared `objective_suboptimality_tolerance` is the loosest value that
+  preserves ordinary-strength fidelity. Measured against a 60-digit reference
+  solution of the same objective, `1e-14` restores the pre-hardening fitted
+  parameters to within one ulp across `l2_strength` of `0.01` through `2.0`,
+  while `1e-12` stops the solver one Newton step early and moves
+  `l2_strength = 0.01` about `7e-7`; tightening to `1e-16`, `1e-18`, `1e-20`, or
+  `1e-21` changes no fitted parameter, and `1e-16` sits at the float64
+  resolution of an order-one objective. Evidence:
+  `tests/test_calibration_fitter.py::TestNumericalConvergenceHardening::test_ordinary_strength_parameters_reach_the_independent_oracle`,
+  `...::test_ordinary_strength_optima_are_certified_and_stable`.
+
+- [V] The method identity stays at version 1 because the frozen v1 semantic
+  method was already the exact L2-regularized logistic objective, and only its
+  numerical evaluation and stopping rule were defective; the solver identity
+  moves to version 2 because its convergence contract materially changed.
+  Evidence: `docs/calibration-semantics.md`,
+  `src/probvenance/calibration.py` (`_L2_LOGISTIC_SOLVER_VERSION`).
+
 - [V] The fitter's Hessian solve is robust across the representable
   `l2_strength` range: a constant selected probability with `l2_strength = 1e-17`
-  fits, and `l2_strength` of `1e154` through `1e300` does not overflow it.
-  Evidence: `tests/test_calibration_fitter.py::TestMathematicalRegressions`,
-  `...::TestInputValidation`.
+  fits, `l2_strength` of `1e154` through `1e300` does not overflow it, and the
+  positive-semi-definite data term's rounding-only negative determinant is
+  clamped instead of being allowed to flip the sign of the
+  penalty-dominated determinant. Evidence:
+  `tests/test_calibration_fitter.py::TestMathematicalRegressions`,
+  `...::TestNumericalConvergenceHardening`, `...::TestInputValidation`.
 
 - [V] The fitter consumes only the frozen uncalibrated selected-probability
   score and winner-correctness label, uses no clipping, epsilon, label
@@ -783,10 +822,14 @@ profile identity/artifact foundation also exists in
   `...::TestScopeBoundaries`.
 
 - [V] Positive L2 regularization on both slope and intercept makes the declared
-  v1 objective strictly convex with one finite global optimum, and all-correct,
-  all-wrong, and completely separated fitting datasets fit to finite parameters
-  at the tested strengths. Evidence:
-  `tests/test_calibration_fitter.py::TestMathematicalRegressions`,
+  v1 objective strictly convex with one finite mathematical minimizer, and the
+  fitter returns that minimizer within the declared objective-gap tolerance for
+  the all-correct, all-wrong, and completely separated fitting datasets at the
+  tested strengths. Mathematical convexity and implementation convergence are
+  separate claims: the objective is strictly convex for every positive L2
+  strength, while a returned profile additionally requires the certificate.
+  Evidence: `tests/test_calibration_fitter.py::TestMathematicalRegressions`,
+  `...::TestNumericalConvergenceHardening`,
   `...::TestForgedInputsFailClosed`.
 
 - [V] The uncalibrated selected semantic probability has exactly one extraction

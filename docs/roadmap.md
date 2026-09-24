@@ -106,7 +106,9 @@ One scalar fitting method is implemented (Phase 4C.2,
 selected probability onto winner correctness, with the objective `mean Bernoulli
 NLL + positive L2 on both slope and intercept`, no endpoint epsilon, clipping,
 label smoothing, or logit transform, and a deterministic `newton-backtracking`
-v1 solver. The profile fingerprint version is unchanged by it. Profile
+v2 solver whose success condition is a strong-convexity objective-gap
+certificate rather than a fixed absolute gradient threshold (Phase 4C.2a). The
+profile fingerprint version is unchanged by it. Profile
 registries, profile lookup, profile matching policy beyond exact binding match,
 the remaining metrics, runtime profile application, and post-calibration
 (derived-score) evaluation do not exist, and `predicted_correctness` remains

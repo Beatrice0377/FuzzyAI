@@ -1616,12 +1616,26 @@ _L2_LOGISTIC_INPUT_TRANSFORM_VERSION = 1
 _L2_LOGISTIC_ENDPOINT_POLICY_ID = "exact-raw-selected-probability"
 _L2_LOGISTIC_ENDPOINT_POLICY_VERSION = 1
 _L2_LOGISTIC_SOLVER_ID = "newton-backtracking"
-_L2_LOGISTIC_SOLVER_VERSION = 1
+_L2_LOGISTIC_SOLVER_VERSION = 2
+_L2_LOGISTIC_CONVERGENCE_ID = "strong-convexity-objective-gap"
+_L2_LOGISTIC_CONVERGENCE_VERSION = 1
 _L2_LOGISTIC_REGULARIZED_PARAMETERS: tuple[str, ...] = ("slope", "intercept")
 
 _L2_LOGISTIC_INITIAL_SLOPE = 0.0
 _L2_LOGISTIC_INITIAL_INTERCEPT = 0.0
-_L2_LOGISTIC_GRADIENT_TOLERANCE = 1e-10
+#: Declared objective-gap tolerance of the convergence certificate. The
+#: objective is ``l2_strength``-strongly convex, so a gradient norm bound
+#: certifies suboptimality; see :func:`_l2_logistic_certificate_threshold`.
+#: Justified against the three required factors: float64 carries about 2.2e-16
+#: relative precision, so a 1e-16 objective gap sits at the representable
+#: resolution of an order-one objective and a tighter tolerance cannot be
+#: defended; the two-parameter objective reaches its float plateau long before
+#: 1e-14, so tightening to 1e-16, 1e-18, 1e-20, or 1e-21 changes no fitted
+#: parameter; and against a 60-digit reference solution 1e-14 restores the
+#: ordinary-strength fitted parameters exactly while 1e-12 stops the solver one
+#: Newton step early and pushes ``l2_strength = 0.01`` about 7e-7 away from the
+#: optimum. 1e-14 is therefore the loosest tolerance that preserves fidelity.
+_L2_LOGISTIC_OBJECTIVE_SUBOPTIMALITY_TOLERANCE = 1e-14
 _L2_LOGISTIC_MAX_ITERATIONS = 100
 _L2_LOGISTIC_BACKTRACKING_FACTOR = 0.5
 _L2_LOGISTIC_ARMIJO_COEFFICIENT = 1e-4
@@ -1653,9 +1667,26 @@ def _stable_softplus(z: float) -> float:
     return math.log1p(math.exp(z))
 
 
-def _l2_logistic_mapping(p: float, slope: float, intercept: float) -> float:
-    """The frozen v1 mapping ``q(p) = sigmoid(slope * p + intercept)``."""
-    return _stable_sigmoid(slope * p + intercept)
+def _binary_logistic_terms(z: float, correct: bool) -> tuple[float, float, float]:
+    """Label-aware ``(loss, residual, curvature)`` of one Bernoulli row.
+
+    ``loss`` is the row's Bernoulli NLL, ``residual`` is ``d(loss)/dz``, and
+    ``curvature`` is ``d2(loss)/dz2``. The objective, gradient, and Hessian all
+    consume this one function so no two of them can disagree numerically.
+
+    Each branch is written in the form that stays significant when ``q`` itself
+    rounds to exactly ``0.0`` or ``1.0``. For a correct row at large positive
+    ``z`` the algebraically equivalent ``softplus(z) - z`` cancels to exactly
+    ``0.0`` although the true loss is a representable tiny positive number, and
+    ``q * (1 - q)`` cancels the curvature for the same reason. Neither
+    ``log(sigmoid(z))`` nor ``log(1 - sigmoid(z))`` is ever formed.
+    """
+    q = _stable_sigmoid(z)
+    complement = _stable_sigmoid(-z)
+    curvature = q * complement
+    if correct:
+        return _stable_softplus(-z), -complement, curvature
+    return _stable_softplus(z), q, curvature
 
 
 def _l2_logistic_objective(
@@ -1667,8 +1698,8 @@ def _l2_logistic_objective(
     """Mean Bernoulli NLL plus the L2 penalty, at the given parameters."""
     terms = []
     for p, y in rows:
-        z = slope * p + intercept
-        terms.append(_stable_softplus(z) - y * z)
+        loss, _residual, _curvature = _binary_logistic_terms(slope * p + intercept, y == 1.0)
+        terms.append(loss)
     mean_nll = math.fsum(terms) / len(rows)
     return mean_nll + (l2_strength / 2.0) * (slope * slope + intercept * intercept)
 
@@ -1679,11 +1710,11 @@ def _l2_logistic_gradient(
     intercept: float,
     l2_strength: float,
 ) -> tuple[float, float]:
-    """Objective gradient: mean((q - y) * p) + lambda * slope, and the intercept twin."""
+    """Objective gradient: mean(residual * p) + lambda * slope, and the intercept twin."""
     slope_terms = []
     intercept_terms = []
     for p, y in rows:
-        residual = _l2_logistic_mapping(p, slope, intercept) - y
+        _loss, residual, _curvature = _binary_logistic_terms(slope * p + intercept, y == 1.0)
         slope_terms.append(residual * p)
         intercept_terms.append(residual)
     count = len(rows)
@@ -1709,12 +1740,11 @@ def _l2_logistic_data_hessian(
     aa_terms = []
     ab_terms = []
     bb_terms = []
-    for p, _ in rows:
-        q = _l2_logistic_mapping(p, slope, intercept)
-        weight = q * (1.0 - q)
-        aa_terms.append(weight * p * p)
-        ab_terms.append(weight * p)
-        bb_terms.append(weight)
+    for p, y in rows:
+        _loss, _residual, curvature = _binary_logistic_terms(slope * p + intercept, y == 1.0)
+        aa_terms.append(curvature * p * p)
+        ab_terms.append(curvature * p)
+        bb_terms.append(curvature)
     count = len(rows)
     return (
         math.fsum(aa_terms) / count,
@@ -1736,6 +1766,29 @@ def _l2_logistic_hessian(
     """
     data_aa, data_ab, data_bb = _l2_logistic_data_hessian(rows, slope, intercept)
     return (data_aa + l2_strength, data_ab, data_bb + l2_strength)
+
+
+def _l2_logistic_certificate_threshold(l2_strength: float) -> float:
+    """Gradient norm bound equivalent to the declared objective-gap certificate.
+
+    The declared objective is ``l2_strength``-strongly convex because both
+    parameters carry a positive L2 penalty, so for the unique minimizer
+    ``theta*``::
+
+        J(theta) - J(theta*) <= ||grad J(theta)||^2 / (2 * l2_strength)
+
+    Therefore ``J - J* <= objective_suboptimality_tolerance`` is exactly
+    ``||grad J|| <= sqrt(2 * l2_strength * tolerance)``. The bound is
+    assembled as ``sqrt(2) * sqrt(l2_strength) * sqrt(tolerance)`` because
+    forming ``2 * l2_strength * tolerance`` underflows to ``0.0`` for tiny
+    subnormal strengths, which would make the certificate demand an exact zero
+    gradient, whereas each factor here stays representable far deeper.
+    """
+    return (
+        math.sqrt(2.0)
+        * math.sqrt(l2_strength)
+        * math.sqrt(_L2_LOGISTIC_OBJECTIVE_SUBOPTIMALITY_TOLERANCE)
+    )
 
 
 def _require_l2_strength(l2_strength: Any) -> float:
@@ -1763,14 +1816,14 @@ def _require_l2_strength(l2_strength: Any) -> float:
 
 
 def _ordered_fitting_rows(dataset: CalibrationDataset) -> list[tuple[float, float]]:
-    """Build the fitting rows in a row-order-independent order.
+    """Build the fitting rows in a deterministic canonical order.
 
-    The dataset fingerprint is row-order independent, so the fitting
-    arithmetic must be too. ``math.fsum`` is used for every accumulation, which
-    is exactly rounded and therefore independent of the summation order; the
-    deterministic ordering below is a secondary safeguard for any accumulation
-    that is not exactly rounded, not the primary guarantee. Multiplicity is
-    preserved because a sorted list is used, never a set.
+    The dataset fingerprint is row-order independent, so the fitting arithmetic
+    must be too. The deterministic canonical ordering below, sorted by
+    observation fingerprint, is the formal row-order-independence mechanism;
+    ``math.fsum`` is used for every accumulation to reduce rounding error and
+    support stable deterministic arithmetic. Multiplicity is preserved because
+    a sorted list is used, never a set.
 
     Each row is exactly ``(uncalibrated selected probability, winner
     correctness)``. No other observation attribute may enter the model: not
@@ -1830,11 +1883,17 @@ def _l2_logistic_method_configuration(l2_strength: float) -> dict[str, JSONValue
             "version": _L2_LOGISTIC_SOLVER_VERSION,
             "initial_slope": _L2_LOGISTIC_INITIAL_SLOPE,
             "initial_intercept": _L2_LOGISTIC_INITIAL_INTERCEPT,
-            "gradient_tolerance": _L2_LOGISTIC_GRADIENT_TOLERANCE,
             "max_iterations": _L2_LOGISTIC_MAX_ITERATIONS,
             "backtracking_factor": _L2_LOGISTIC_BACKTRACKING_FACTOR,
             "armijo_coefficient": _L2_LOGISTIC_ARMIJO_COEFFICIENT,
             "max_backtracking_steps": _L2_LOGISTIC_MAX_BACKTRACKING_STEPS,
+            "convergence": {
+                "id": _L2_LOGISTIC_CONVERGENCE_ID,
+                "version": _L2_LOGISTIC_CONVERGENCE_VERSION,
+                "objective_suboptimality_tolerance": (
+                    _L2_LOGISTIC_OBJECTIVE_SUBOPTIMALITY_TOLERANCE
+                ),
+            },
         },
     }
 
@@ -1851,21 +1910,24 @@ def _solve_l2_logistic(
     the Newton direction is always a descent direction and the unique finite
     global optimum is reachable from the fixed zero initialization.
 
-    The frozen solver contract does not contain a best-effort mode: if the
-    declared tolerance is not reached within the declared iteration budget, or
-    if the line search cannot find a sufficient decrease, the fit fails loudly
-    instead of returning a partially converged parameter pair. The regularized
-    Hessian is positive definite for every ``l2_strength > 0``, so a
+    The frozen solver contract does not contain a best-effort mode: a parameter
+    pair is returned only when the strong-convexity objective-gap certificate
+    is satisfied. Any other exit, including the iteration budget running out or
+    the line search failing, raises instead of returning a partially converged
+    parameter pair. The certificate is the sole success condition; no separate
+    gradient tolerance can authorize a profile on its own. For every
+    ``l2_strength > 0`` the regularized Hessian is positive definite, so a
     numerically degenerate Hessian solve uses a deterministically scaled
     gradient direction instead of failing the fit; the line search still has to
-    accept every step.
+    accept every step, and the fallback never authorizes convergence by itself.
     """
     slope = _L2_LOGISTIC_INITIAL_SLOPE
     intercept = _L2_LOGISTIC_INITIAL_INTERCEPT
     objective = _l2_logistic_objective(rows, slope, intercept, l2_strength)
+    certificate_threshold = _l2_logistic_certificate_threshold(l2_strength)
     for _iteration in range(_L2_LOGISTIC_MAX_ITERATIONS):
         grad_slope, grad_intercept = _l2_logistic_gradient(rows, slope, intercept, l2_strength)
-        if max(abs(grad_slope), abs(grad_intercept)) <= _L2_LOGISTIC_GRADIENT_TOLERANCE:
+        if math.hypot(grad_slope, grad_intercept) <= certificate_threshold:
             return slope, intercept
         data_aa, data_ab, data_bb = _l2_logistic_data_hessian(rows, slope, intercept)
         hessian_aa = data_aa + l2_strength
@@ -1876,12 +1938,17 @@ def _solve_l2_logistic(
         # the last place of the data term (tiny ``l2_strength``) and overflows
         # to infinity above roughly ``1e154``, even though the regularized
         # Hessian is positive definite by construction for every
-        # ``l2_strength > 0``.
+        # ``l2_strength > 0``. The data term is a curvature-weighted second
+        # moment, so it is positive semi-definite and its determinant is
+        # mathematically non-negative; a negative computed value is pure
+        # rounding (it appears when every selected probability is equal, which
+        # makes the data term rank one) and is clamped so it cannot flip the
+        # sign of a penalty-dominated determinant.
+        data_determinant = data_aa * data_bb - data_ab * data_ab
+        if data_determinant < 0.0:
+            data_determinant = 0.0
         determinant = (
-            data_aa * data_bb
-            - data_ab * data_ab
-            + l2_strength * (data_aa + data_bb)
-            + l2_strength * l2_strength
+            data_determinant + l2_strength * (data_aa + data_bb) + l2_strength * l2_strength
         )
         if math.isfinite(determinant) and determinant > 0.0:
             # The numerators keep ``l2_strength`` algebraically separate for the
@@ -1927,14 +1994,17 @@ def _solve_l2_logistic(
         if not accepted:
             raise InvalidDecisionError(
                 "the fitting line search could not find a sufficient objective "
-                f"decrease within {_L2_LOGISTIC_MAX_BACKTRACKING_STEPS} reductions; "
-                "no calibration profile is produced from an unconverged fit"
+                f"decrease within {_L2_LOGISTIC_MAX_BACKTRACKING_STEPS} reductions, "
+                "so the solver cannot certify an objective gap within "
+                f"{_L2_LOGISTIC_OBJECTIVE_SUBOPTIMALITY_TOLERANCE!r} for "
+                f"l2_strength {l2_strength!r}; no calibration profile is produced "
+                "from an uncertified fit"
             )
     raise InvalidDecisionError(
-        "the fitting solver did not reach the declared gradient tolerance "
-        f"{_L2_LOGISTIC_GRADIENT_TOLERANCE!r} within "
-        f"{_L2_LOGISTIC_MAX_ITERATIONS} iterations; no calibration profile is "
-        "produced from an unconverged fit"
+        "the fitting solver could not certify an objective gap within "
+        f"{_L2_LOGISTIC_OBJECTIVE_SUBOPTIMALITY_TOLERANCE!r} for l2_strength "
+        f"{l2_strength!r} within {_L2_LOGISTIC_MAX_ITERATIONS} iterations; no "
+        "calibration profile is produced from an uncertified fit"
     )
 
 
