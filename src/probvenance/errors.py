@@ -73,6 +73,35 @@ class CalibrationProfileStoreIntegrityError(CalibrationProfileStoreError):
     """
 
 
+class CalibrationProfileCatalogStoreError(ProbvenanceError):
+    """A calibration profile catalog store could not complete an operation.
+
+    This covers operational failures (the root path is not a directory, a
+    managed read or write failed) as well as the two more specific store
+    conditions below. It is deliberately separate from the profile store
+    hierarchy: one store's operational failure is not the other's.
+    """
+
+
+class CalibrationProfileCatalogNotFoundError(CalibrationProfileCatalogStoreError):
+    """No artifact exists at the requested exact catalog snapshot identity.
+
+    Absence is distinct from corruption: this is raised only when the exact
+    requested identity has no stored artifact, never when a stored artifact
+    exists but fails validation.
+    """
+
+
+class CalibrationProfileCatalogStoreIntegrityError(CalibrationProfileCatalogStoreError):
+    """A stored artifact exists at the requested identity but is invalid.
+
+    The caller supplied a valid store key, so the managed stored artifact
+    violated the store invariant: it is unreadable, malformed, not the
+    canonical serialization, or does not restore the requested catalog snapshot
+    identity.
+    """
+
+
 class CalibrationProfileSelectionError(ProbvenanceError):
     """An explicit candidate set could not yield exactly one eligible profile.
 

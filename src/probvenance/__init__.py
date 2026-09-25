@@ -45,6 +45,9 @@ from probvenance.doctrine import (
 )
 from probvenance.errors import (
     AmbiguousCalibrationProfileSelectionError,
+    CalibrationProfileCatalogNotFoundError,
+    CalibrationProfileCatalogStoreError,
+    CalibrationProfileCatalogStoreIntegrityError,
     CalibrationProfileNotFoundError,
     CalibrationProfileSelectionError,
     CalibrationProfileStoreError,
@@ -99,6 +102,9 @@ __all__ = [
     "BoolCompiler",
     "BoolDecision",
     "BoolResult",
+    "CalibrationProfileCatalogNotFoundError",
+    "CalibrationProfileCatalogStoreError",
+    "CalibrationProfileCatalogStoreIntegrityError",
     "CalibrationProfileNotFoundError",
     "CalibrationProfileSelectionError",
     "CalibrationProfileStoreError",

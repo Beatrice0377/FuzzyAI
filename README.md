@@ -48,14 +48,22 @@ serialization and loading (`serialize_calibration_profile_catalog` /
 `load_calibration_profile_catalog`): the snapshot commits the ordered references
 plus the Binding and target/input discovery projection, and loading recomputes
 the canonical payload and catalog fingerprint rather than trusting the embedded
-hash. A catalog snapshot is non-authoritative discovery metadata: its fingerprint
-proves the snapshot identity, not that referenced profiles exist, that store
-artifacts are intact, or that the snapshot metadata still matches the real
-profiles. Automatic runtime profile selection, profile registries, binding-based
-lookup, a catalog filesystem or database store, store enumeration, quality
-ranking, and a signed distribution do not exist, and `predicted_correctness`
-remains `None` for every runtime result that no caller has explicitly
-calibrated. Abstention and every other Choice strategy are not implemented.
+hash. An exact content-addressed directory store for those snapshots is
+implemented (`DirectoryCalibrationProfileCatalogStore`): a snapshot is persisted
+under a path derived only from the catalog store layout version, the catalog
+fingerprint schema version, and the exact catalog fingerprint, and retrieval
+requires both values, restores the snapshot through the identity-verified catalog
+loader with the requested identity supplied as an independent expected pin, and
+does no lifecycle, latest/default, alias, enumeration, or fallback matching. A
+catalog snapshot is non-authoritative discovery metadata: its fingerprint proves
+the snapshot identity, not that referenced profiles exist, that store artifacts
+are intact, or that the snapshot metadata still matches the real profiles.
+Automatic runtime profile selection, profile registries, binding-based lookup,
+catalog lifecycle (latest, active, default, or production channels), store
+enumeration, quality ranking, and a signed distribution do not exist, and
+`predicted_correctness` remains `None` for every runtime result that no caller
+has explicitly calibrated. Abstention and every other Choice strategy are not
+implemented.
 
 Probvenance is a provider-agnostic probabilistic decision runtime. It turns language
 models into evaluable, calibratable, trackable semantic-probability decision

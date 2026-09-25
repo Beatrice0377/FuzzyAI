@@ -23,11 +23,18 @@ identity pin, so a different but internally self-consistent profile placed at
 the requested path is rejected.
 """
 
-import contextlib
 import os
-import tempfile
 from pathlib import Path
 
+from probvenance._directory_artifact_store import (
+    create_managed_directories,
+    managed_path_exists,
+    publish_atomically,
+    read_managed_text,
+    reject_non_directory_components,
+    require_directory_root,
+)
+from probvenance._strict_json import abbreviate_untrusted
 from probvenance.calibration import (
     CALIBRATION_PROFILE_FINGERPRINT_VERSION,
     CalibrationProfile,
@@ -51,6 +58,29 @@ None of these versions are interchangeable.
 """
 
 _STORE_DIRECTORY = f"store-v{CALIBRATION_PROFILE_DIRECTORY_STORE_VERSION}"
+
+#: Noun phrases the shared filesystem helper uses to phrase this store's own
+#: messages. The helper is domain neutral, so the store supplies its own nouns.
+_ARTIFACT_NAME = "calibration profile"
+_STORE_NAME = "calibration profile store"
+
+
+def _operational_error(detail: str) -> Exception:
+    """Build this store's operational error for the shared helper."""
+    return CalibrationProfileStoreError(detail)
+
+
+def _integrity_error(detail: str) -> Exception:
+    """Build this store's integrity error for the shared helper."""
+    return CalibrationProfileStoreIntegrityError(detail)
+
+
+def _managed_components(target: Path) -> tuple[tuple[Path, str], ...]:
+    """Return the managed layout components that must be directories."""
+    return (
+        (target.parent.parent, "store layout version directory"),
+        (target.parent, "profile fingerprint version directory"),
+    )
 
 
 class DirectoryCalibrationProfileStore:
@@ -107,19 +137,31 @@ class DirectoryCalibrationProfileStore:
         version = CALIBRATION_PROFILE_FINGERPRINT_VERSION
         serialized = serialize_calibration_profile(profile)
         target = self._path_for(fingerprint, version)
-        self._require_usable_root()
-        self._require_managed_directories(target)
-        try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-        except OSError as error:
-            raise CalibrationProfileStoreError(
-                f"the calibration profile store could not create its directories "
-                f"under {self._root}: {error}"
-            ) from error
-        if target.exists():
+        require_directory_root(
+            self._root,
+            store=_STORE_NAME,
+            on_wrong_shape=_operational_error,
+            on_operational=_operational_error,
+        )
+        reject_non_directory_components(
+            _managed_components(target),
+            store=_STORE_NAME,
+            on_damaged=_integrity_error,
+            on_operational=_operational_error,
+        )
+        create_managed_directories(
+            target.parent, root=self._root, store=_STORE_NAME, on_operational=_operational_error
+        )
+        if managed_path_exists(target, store=_STORE_NAME, on_operational=_operational_error):
             self._verify_existing_artifact(target, fingerprint, version)
             return
-        self._write_atomically(target, serialized)
+        publish_atomically(
+            target,
+            serialized,
+            temporary_prefix=".tmp-profile-",
+            store=_STORE_NAME,
+            on_operational=_operational_error,
+        )
 
     def get(
         self,
@@ -137,15 +179,30 @@ class DirectoryCalibrationProfileStore:
         explicit failure.
         """
         self._validate_identity(profile_fingerprint, profile_fingerprint_version)
-        self._require_usable_root()
+        require_directory_root(
+            self._root,
+            store=_STORE_NAME,
+            on_wrong_shape=_operational_error,
+            on_operational=_operational_error,
+        )
         target = self._path_for(profile_fingerprint, profile_fingerprint_version)
-        self._require_managed_directories(target)
-        if not target.exists():
+        reject_non_directory_components(
+            _managed_components(target),
+            store=_STORE_NAME,
+            on_damaged=_integrity_error,
+            on_operational=_operational_error,
+        )
+        if not managed_path_exists(target, store=_STORE_NAME, on_operational=_operational_error):
             raise CalibrationProfileNotFoundError(
                 f"no calibration profile is stored for profile fingerprint "
                 f"{profile_fingerprint!r} version {profile_fingerprint_version}"
             )
-        text = self._read_text(target)
+        text = read_managed_text(
+            target,
+            artifact=_ARTIFACT_NAME,
+            on_integrity=_integrity_error,
+            on_operational=_operational_error,
+        )
         try:
             loaded = load_calibration_profile(
                 text,
@@ -181,51 +238,20 @@ class DirectoryCalibrationProfileStore:
         if profile_fingerprint_version != CALIBRATION_PROFILE_FINGERPRINT_VERSION:
             raise InvalidDecisionError(
                 f"the store does not understand profile fingerprint schema version "
-                f"{profile_fingerprint_version}; it supports version "
+                f"{abbreviate_untrusted(profile_fingerprint_version)}; it supports version "
                 f"{CALIBRATION_PROFILE_FINGERPRINT_VERSION} only, and an unsupported "
                 "identity schema is not an absent identity"
             )
 
-    def _require_usable_root(self) -> None:
-        if self._root.exists() and not self._root.is_dir():
-            raise CalibrationProfileStoreError(
-                f"the calibration profile store root is not a directory: {self._root}"
-            )
-
-    def _require_managed_directories(self, target: Path) -> None:
-        """Reject a managed layout component that exists but is not a directory.
-
-        An absent managed directory means the exact profile is simply absent. A
-        component that exists as an incompatible filesystem object means the
-        managed store layout was damaged, which is corruption and never
-        ordinary absence.
-        """
-        for path, role in (
-            (target.parent.parent, "store layout version directory"),
-            (target.parent, "profile fingerprint version directory"),
-        ):
-            if path.exists() and not path.is_dir():
-                raise CalibrationProfileStoreIntegrityError(
-                    f"the managed calibration profile store {role} exists but is not a "
-                    f"directory, so the store layout is damaged: {path}"
-                )
-
-    def _read_text(self, target: Path) -> str:
-        try:
-            return target.read_text(encoding="utf-8")
-        except UnicodeDecodeError as error:
-            raise CalibrationProfileStoreIntegrityError(
-                f"the stored calibration profile at {target} is not valid UTF-8: {error}"
-            ) from error
-        except OSError as error:
-            raise CalibrationProfileStoreError(
-                f"the stored calibration profile at {target} could not be read: {error}"
-            ) from error
-
     def _verify_existing_artifact(
         self, target: Path, profile_fingerprint: str, profile_fingerprint_version: int
     ) -> None:
-        text = self._read_text(target)
+        text = read_managed_text(
+            target,
+            artifact=_ARTIFACT_NAME,
+            on_integrity=_integrity_error,
+            on_operational=_operational_error,
+        )
         try:
             loaded = load_calibration_profile(
                 text,
@@ -244,29 +270,3 @@ class DirectoryCalibrationProfileStore:
                 f"canonical serialization for profile fingerprint {profile_fingerprint!r} "
                 f"version {profile_fingerprint_version}; it is not overwritten"
             )
-
-    def _write_atomically(self, target: Path, serialized: str) -> None:
-        try:
-            descriptor, temporary_name = tempfile.mkstemp(
-                dir=target.parent, prefix=".tmp-profile-", suffix=".json"
-            )
-        except OSError as error:
-            raise CalibrationProfileStoreError(
-                f"the calibration profile store could not create a temporary file "
-                f"next to {target}: {error}"
-            ) from error
-        temporary_path = Path(temporary_name)
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                handle.write(serialized)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary_path, target)
-        except OSError as error:
-            raise CalibrationProfileStoreError(
-                f"the calibration profile store could not publish the artifact at {target}: {error}"
-            ) from error
-        finally:
-            if temporary_path.exists():
-                with contextlib.suppress(OSError):
-                    temporary_path.unlink()

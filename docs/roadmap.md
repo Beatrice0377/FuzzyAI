@@ -156,15 +156,22 @@ deterministic, identity-verified catalog serialization/loading exist (Phase 4C.9
 the snapshot commits the ordered references plus the Binding and target/input
 discovery projection, excludes ground-truth semantics, method state, training
 provenance, and source order, and loading recomputes the canonical payload and
-catalog fingerprint rather than trusting the embedded hash. A catalog snapshot
-remains non-authoritative discovery metadata: it proves the snapshot identity,
-not that referenced profiles exist, that store artifacts are intact, or that the
-snapshot metadata still matches the real profiles. Profile registries,
-binding-based lookup, profile matching policy beyond exact binding match, a
-catalog filesystem/database store, automatic store/catalog synchronization, store
-enumeration, quality ranking, latest/best/default policy, a signed profile
-distribution, automatic runtime profile selection, the remaining metrics, and
-automatic runtime calibration
+catalog fingerprint rather than trusting the embedded hash. An exact
+content-addressed directory store for those snapshots is implemented (Phase
+4C.10, `DirectoryCalibrationProfileCatalogStore`): a snapshot is persisted under
+a path derived only from the catalog store layout version, the catalog
+fingerprint schema version, and the exact catalog fingerprint, and retrieval
+requires both values, restores the snapshot through the identity-verified catalog
+loader with the requested identity supplied as an independent expected pin, and
+performs no lifecycle, latest/default, alias, enumeration, or fallback matching.
+A catalog snapshot remains non-authoritative discovery metadata: it proves the
+snapshot identity, not that referenced profiles exist, that store artifacts are
+intact, or that the snapshot metadata still matches the real profiles. Profile
+registries, binding-based lookup, profile matching policy beyond exact binding
+match, catalog lifecycle (latest, active, default, or production channels and
+catalog supersession), automatic store/catalog synchronization, store
+enumeration, quality ranking, a signed profile distribution, automatic runtime
+profile selection, the remaining metrics, and automatic runtime calibration
 (deriving scores without an explicit caller-supplied profile) do not exist, and
 `predicted_correctness` remains `None` for every runtime result that no caller
 has explicitly calibrated.

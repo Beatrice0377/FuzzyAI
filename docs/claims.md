@@ -1380,6 +1380,46 @@ them generalises to other models, revisions, prompts, or tasks.
   `tests/test_profile_serialization.py::TestStrictParser`,
   `tests/test_calibration_store.py::TestIntegrity`.
 
+### Exact catalog snapshot store and retrieval (Phase 4C.10)
+
+- [V] `DirectoryCalibrationProfileCatalogStore` persists catalog snapshots under
+  a deterministic content-addressed path derived only from the catalog store
+  layout version, the catalog fingerprint schema version, and the exact catalog
+  fingerprint; retrieval requires the exact fingerprint and version and performs
+  no lifecycle, latest, default, or semantic matching. Evidence:
+  `tests/test_calibration_catalog_store.py::TestLayoutAndIdentity`,
+  `...::TestKeyValidation`, `...::TestScopeBoundaries`.
+- [V] Catalog-store writes are exactly the canonical JSON emitted by
+  `serialize_calibration_profile_catalog`, while reads restore snapshots only
+  through `load_calibration_profile_catalog` with the requested catalog
+  fingerprint and version supplied as the independent expected-identity pin.
+  Evidence: `tests/test_calibration_catalog_store.py::TestPutSemantics`,
+  `...::TestRoundTrip`.
+- [V] Replacing the artifact at catalog snapshot A's exact path with a different
+  fully self-consistent catalog snapshot B is rejected, because exact retrieval
+  pins A independently of the document's embedded identity. Evidence:
+  `tests/test_calibration_catalog_store.py::TestTamperMatrix`,
+  `...::TestBoundedErrorMessages`.
+- [V] Exact catalog-store retrieval validates only the requested catalog snapshot
+  artifact; it does not attest that referenced profiles exist or that catalog
+  discovery metadata matches those profiles, so exact profile retrieval and
+  Phase 4C.7 selection remain mandatory downstream boundaries. Evidence:
+  `tests/test_calibration_catalog_store.py::TestTrustBoundary`,
+  `...::TestDiscoveryEquivalence`, `...::TestSharedRootCoexistence`.
+- [V] Store error messages stay bounded on hostile or corrupted input: the shared
+  strict parser abbreviates every value it echoes, including a duplicated object
+  key and a non-finite number literal of a million characters, and the shared
+  storage layer and both stores render a caller-supplied version through the same
+  bounded helper, so no error escapes with an unbounded attacker-controlled echo
+  and no raw `ValueError` from integer string conversion escapes either. Evidence:
+  `tests/test_calibration_catalog_store.py::TestBoundedErrorMessages`.
+- [V] A managed path that cannot be inspected because of a filesystem access
+  failure is reported through the store's own operational error, never as absence
+  and never as a raw `PermissionError`; absence is recognized only for the errnos
+  that genuinely mean the path does not exist. Evidence:
+  `tests/test_calibration_catalog_store.py::TestErrorClassification`,
+  `tests/test_calibration_store.py::TestLayoutCorruptionClassification`.
+
 ## Current hypotheses
 
 - `[H]` An explicit scoring doctrine may improve cross-model semantic

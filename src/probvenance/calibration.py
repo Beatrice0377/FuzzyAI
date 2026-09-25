@@ -44,7 +44,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any, Final
 
-from probvenance._strict_json import parse_strict_json_object
+from probvenance._strict_json import abbreviate_untrusted, parse_strict_json_object
 from probvenance.errors import InvalidDecisionError
 from probvenance.fingerprint import JSONValue, canonical_json, fingerprint
 from probvenance.results import BoolResult, ChoiceResult
@@ -1810,13 +1810,11 @@ def _abbreviate(value: Any, max_chars: int = 200) -> str:
 
     Corrupted stored artifacts can contain arbitrarily large strings, so an
     error message must never echo them in full. The value is rendered with
-    ``repr`` and truncated with a count of the omitted characters.
+    ``repr`` and truncated with a count of the omitted characters. The bound,
+    and the handling of an integer too large for the interpreter to convert to
+    text, are shared with the strict-parsing layer so both stay in one place.
     """
-    text = repr(value)
-    if len(text) <= max_chars:
-        return text
-    omitted = len(text) - max_chars
-    return f"{text[:max_chars]} ...<{omitted} more chars>"
+    return abbreviate_untrusted(value, max_chars)
 
 
 def _require_profile_fingerprint_identity(

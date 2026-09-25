@@ -10,7 +10,10 @@ Every persisted artifact in this project is fingerprint-bearing, so plain
 * a float literal such as ``1e9999`` is valid JSON text but parses to ``inf``;
 * an enormous integer literal or a deeply nested document raises a low-level
   ``ValueError`` / ``RecursionError`` that must not escape as a raw parser
-  exception.
+  exception;
+* a corrupted artifact can carry an arbitrarily large field, or an integer with
+  more digits than the interpreter will convert to text, so every value echoed
+  into an error message is abbreviated to a bounded length.
 
 This module is deliberately calibration-domain-neutral: only the noun used in
 the error message varies between callers. That keeps a single implementation of
@@ -37,6 +40,25 @@ from probvenance.errors import InvalidDecisionError
 _MAX_ARTIFACT_NESTING_DEPTH = 64
 
 
+def abbreviate_untrusted(value: Any, max_chars: int = 200) -> str:
+    """Return a bounded repr of an untrusted value for an error message.
+
+    A corrupted artifact can contain an arbitrarily large string, and it can
+    contain an integer with more digits than the interpreter will convert to
+    text (Python 3.11 raises a plain ``ValueError`` for that, which is exactly
+    the low-level exception this module exists to keep out of public errors).
+    Rendering must therefore never echo the value in full and must never raise.
+    """
+    try:
+        text = repr(value)
+    except ValueError:
+        return f"<{type(value).__name__} with too many digits to display>"
+    if len(text) <= max_chars:
+        return text
+    omitted = len(text) - max_chars
+    return f"{text[:max_chars]} ...<{omitted} more chars>"
+
+
 def parse_strict_json_object(serialized: str, *, subject: str) -> dict[str, Any]:
     """Parse ``serialized`` as a strict JSON object or raise a controlled error.
 
@@ -52,21 +74,24 @@ def parse_strict_json_object(serialized: str, *, subject: str) -> dict[str, Any]
         for key, value in pairs:
             if key in result:
                 raise InvalidDecisionError(
-                    f"the serialized {subject} contains a duplicate object key {key!r}"
+                    f"the serialized {subject} contains a duplicate object key "
+                    f"{abbreviate_untrusted(key)}"
                 )
             result[key] = value
         return result
 
     def reject_constant(name: str) -> Any:
         raise InvalidDecisionError(
-            f"the serialized {subject} contains a non-finite JSON number {name!r}"
+            f"the serialized {subject} contains a non-finite JSON number "
+            f"{abbreviate_untrusted(name)}"
         )
 
     def strict_float(text: str) -> float:
         value = float(text)
         if not math.isfinite(value):
             raise InvalidDecisionError(
-                f"the serialized {subject} contains a non-finite JSON number {text!r}"
+                f"the serialized {subject} contains a non-finite JSON number "
+                f"{abbreviate_untrusted(text)}"
             )
         return value
 

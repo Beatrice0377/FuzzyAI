@@ -133,7 +133,20 @@ serialization:             deterministic canonical JSON serialization and
                            fingerprint, and an optional independently supplied
                            expected catalog fingerprint pin; no filesystem I/O
                            and no profile is loaded
-predicted_correctness:     None unless an explicit compatible
+ Profile catalog store:     exact content-addressed directory store and
+                           retrieval implemented
+                           (DirectoryCalibrationProfileCatalogStore): a catalog
+                           snapshot is persisted under a path derived only from
+                           the catalog store layout version, the catalog
+                           fingerprint schema version, and the exact catalog
+                           fingerprint, and retrieval requires both values and
+                           restores the snapshot through the identity-verified
+                           catalog loader with the requested identity supplied as
+                           an independent expected pin; no lifecycle, latest,
+                           default, or active catalog, no alias, no
+                           enumeration, no manifest or pointer, and no
+                           automatic store synchronization
+ predicted_correctness:     None unless an explicit compatible
                            CalibrationProfile is applied through
                            apply_profile_to_runtime_evaluation
 ```
@@ -2129,8 +2142,10 @@ entry's full Binding projection, unlike a profile identity which commits its
 binding by fingerprint only. A catalog stores discovery metadata and exact
 profile references; it never serializes a profile, fitted parameters, method
 state, or training observations. The API performs no filesystem, database, or
-store I/O: the caller persists the text wherever it wants, and there is no
-catalog store, directory, manifest, or registry this round.
+store I/O: the caller persists the text wherever it wants. Phase 4C.10 adds an
+exact content-addressed directory store for these snapshots, described in
+section 18.6. The serialization API itself still performs no I/O, and there is
+still no manifest, index, pointer, or registry.
 
 Loading is deterministic and identity-verified. It parses strictly, enforces the
 exact v1 schema at every object level, reconstructs typed references and typed
@@ -2181,7 +2196,80 @@ identity. That is the intended failure mode: the reference is an opaque
 identity claim, and the store and selector remain the boundaries that decide
 resolution and authorization.
 
-### 18.6 What `calibrated = True` means
+### 18.6 Exact catalog snapshot store and retrieval
+
+Phase 4C.10 adds the first supported persistent store for exact catalog
+snapshots: `DirectoryCalibrationProfileCatalogStore` in
+`src/probvenance/calibration_catalog_store.py`. It answers exactly one question,
+which is whether a given exact catalog snapshot fingerprint and fingerprint
+schema version can be retrieved, and it answers no lifecycle question.
+
+The layout is content addressed and namespaced away from the profile store:
+
+```text
+<root>/catalog-store-v1/catalog-fingerprint-v<N>/<64-lowercase-hex>.json
+```
+
+Path identity depends only on the catalog store layout version, the catalog
+fingerprint schema version, and the exact catalog fingerprint. It never depends
+on entry count, a profile model, a task, a domain, a taxonomy, a modification
+time, or a human name. The store has its own layout version constant
+(`CALIBRATION_PROFILE_CATALOG_DIRECTORY_STORE_VERSION`), which is independent of
+the catalog fingerprint version, the catalog serialization version, the profile
+fingerprint version, and the profile store layout version. Because the two
+namespaces differ, a profile store and a catalog store may share one root
+without either interpreting the other's files, and neither store synchronizes
+with or verifies the other.
+
+The caller key is validated before any filesystem path is constructed: the
+fingerprint must be exactly 64 lowercase hexadecimal characters and the version
+must be exactly an integer greater than or equal to one. A malformed,
+traversing, or oversized key therefore never reaches the filesystem. An
+unsupported fingerprint schema version fails explicitly rather than being
+treated as an absent snapshot, and the store never consults an alternate version
+directory.
+
+Writes are exactly the bytes produced by
+`serialize_calibration_profile_catalog`, so the catalog serializer remains the
+single wire-format truth source and the store never rebuilds the envelope.
+`put` is idempotent and refuses to overwrite an existing target that is invalid
+or describes a different snapshot, because existing corruption is evidence that
+the content-addressed invariant was violated; a failed write leaves no partial
+final artifact.
+
+Reads restore the snapshot only through `load_calibration_profile_catalog` with
+the requested fingerprint and version supplied as the independent expected
+identity pin, and then additionally require that the stored text is exactly the
+canonical serialization of the restored catalog. The pin is what makes
+substitution detectable: if a different but fully self-consistent snapshot B is
+placed at snapshot A's exact path, `get(A)` fails even though loading B on its
+own would succeed. The store deliberately performs no directory scan, no
+fallback, and no semantic matching. A managed layout component that exists as a
+regular file is corruption and not absence; an absent root, layout directory, or
+exact artifact is ordinary absence.
+
+Every value the store echoes into an error message is bounded. A corrupted
+artifact can carry an arbitrarily large field, so the shared strict parser
+abbreviates what it echoes, and a caller-supplied version is rendered through the
+same bounded helper, so a message never grows with hostile input and an integer
+too large for the interpreter to convert to text fails as an ordinary validation
+error instead of a raw conversion error. A managed path that cannot be inspected
+because of a filesystem access failure is reported as the store's own operational
+error; only the errnos that genuinely mean the path does not exist are treated as
+absence, so an unreadable directory is never mistaken for a missing snapshot.
+
+What exact catalog-store retrieval proves is narrow: the bytes stored at the
+requested catalog identity restore exactly that catalog snapshot. It does NOT
+prove that the snapshot's entry metadata matches the real profiles, that the
+referenced profiles exist in a profile store, that selection will be unique, or
+that application will succeed. Those remain the responsibilities of exact
+profile retrieval and the Phase 4C.7 selector. Embedded SHA-256 self-consistency
+is not a signature, not an authorship proof, and not a trusted-publisher proof.
+The store also does not claim resistance to a malicious operating system, a root
+administrator, or adversarial filesystem TOCTOU, and it offers no locking,
+database, or transaction coordinator.
+
+### 18.7 What `calibrated = True` means
 
 `calibrated = True` records that a supported `CalibrationProfile` was applied
 through the declared application contract and `predicted_correctness` was
@@ -2199,7 +2287,7 @@ training data was independent. Applying a profile does not change
 outcome distribution stays the uncalibrated one, and `predicted_correctness` is
 a separate calibrated correctness estimate.
 
-### 18.7 Abstention boundary
+### 18.8 Abstention boundary
 
 Calibrated predicted correctness is an input to a future policy, not the policy.
 This document does not implement or define `accept`, `abstain`, `review`, or

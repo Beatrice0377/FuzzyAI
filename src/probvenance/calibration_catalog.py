@@ -96,6 +96,39 @@ _CATALOG_ENTRY_KEYS = frozenset(
 )
 
 
+def _require_catalog_fingerprint_identity(
+    catalog_fingerprint: object,
+    catalog_fingerprint_version: object,
+) -> None:
+    """Validate an exact catalog snapshot identity key shape or raise.
+
+    This is the single shape validator for an exact catalog identity
+    (fingerprint plus fingerprint schema version). It validates shape only;
+    whether a concrete schema version is supported is decided by each consumer.
+    It is deliberately the counterpart of the exact profile identity validator
+    rather than a generalization of it, because the two validate two different
+    identity kinds and the messages must name the offending key.
+    """
+    if (
+        not isinstance(catalog_fingerprint, str)
+        or len(catalog_fingerprint) != 64
+        or any(character not in "0123456789abcdef" for character in catalog_fingerprint)
+    ):
+        raise InvalidDecisionError(
+            "catalog_fingerprint must be exactly 64 lowercase hexadecimal "
+            f"characters, got {_abbreviate(catalog_fingerprint)}"
+        )
+    if (
+        isinstance(catalog_fingerprint_version, bool)
+        or not isinstance(catalog_fingerprint_version, int)
+        or catalog_fingerprint_version < 1
+    ):
+        raise InvalidDecisionError(
+            "catalog_fingerprint_version must be an integer greater than or equal "
+            f"to 1, got {_abbreviate(catalog_fingerprint_version)}"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class CalibrationProfileReference:
     """An exact reference to one calibration profile artifact.

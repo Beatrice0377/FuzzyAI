@@ -477,6 +477,20 @@ class TestLayoutCorruptionClassification:
         with pytest.raises(CalibrationProfileNotFoundError):
             store.get(profile_fingerprint="0" * 64, profile_fingerprint_version=1)
 
+    @pytest.mark.skipif(os.getuid() == 0, reason="root bypasses directory permissions")
+    def test_unreadable_managed_directory_is_an_operational_error(self, tmp_path: Path) -> None:
+        store = store_at(tmp_path)
+        profile = fitted_profile()
+        store.put(profile)
+        version_directory = stored_path(store, profile).parent
+        version_directory.chmod(0o000)
+        try:
+            with pytest.raises(CalibrationProfileStoreError) as error:
+                store.get(**key_of(profile))
+        finally:
+            version_directory.chmod(0o755)
+        assert not isinstance(error.value, CalibrationProfileNotFoundError)
+
 
 # ---------------------------------------------------------------------------
 # Semantic equivalence (PART 39, PART 40, PART 41, PART 42, PART 43)
