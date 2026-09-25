@@ -7,11 +7,14 @@ Probability identity semantics:            design contract frozen
 Runtime ProbabilityFormulationFingerprint: implemented
 Runtime FormulationFamilyFingerprint:      implemented
 Comparability policy:                      not implemented
-Calibration:                               partially implemented (one offline
-                                           L2-regularized logistic method, plus
-                                           offline profile application and a
-                                           post-calibration evaluation
-                                           foundation; no runtime application)
+Calibration:                               implemented as an explicit offline fit
+                                           (one L2-regularized logistic method),
+                                           offline profile application, a
+                                           post-calibration evaluation foundation,
+                                           exact profile/catalog identity,
+                                           serialization and stores, explicit
+                                           selection, and explicit runtime
+                                           application; no automatic application
 ```
 
 Both runtime identities are derived from an `InferencePlan` alone and are exposed

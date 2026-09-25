@@ -4,6 +4,8 @@
 
 **状态：早期开发阶段（Status: early development）。** 确定性内核（deterministic core）、Bool 垂直切片（vertical slice，真实本地 Hugging Face 后端），以及 direct categorical Choice 推理（仅限 closed-set、single-label、single-token 打分标签路径）均已实现。Phase 4B winner-correctness 评估基础（evaluation cohort / dataset、Brier、exact log loss、companion diagnostics、等宽可靠性分箱、ECE-form binned absolute-gap aggregate）已实现。`CalibrationProfile` 身份基座（identity foundation）同样已实现：档案 artifact 会提交其 binding、ground-truth 语义、target、input-score、method、fitted parameters 与训练数据集来源；遇到具体的 taxonomy 矛盾或 binding 不完全匹配时一律 fail closed。已实现一个受支持的标量拟合方法：`fit_l2_logistic_selected_probability`，它把选中概率经 L2 正则化逻辑映射拟合成 winner correctness。离线档案应用（offline profile application）与校准后评估基座（post-calibration evaluation foundation）已实现：可以把一个精确匹配的 profile 应用到一份兼容的 evaluation dataset，产出一个不可变的 predicted-winner-correctness artifact，该 artifact 逐行同时记录推导出的 winner-correctness 目标标签与 profile 产出的分数；随后由校准后 Brier、exact log loss、companion diagnostics、等宽可靠性（equal-width reliability）以及 binned absolute-gap aggregate 消费该 artifact。已实现显式运行时链接档案应用（explicit runtime-linked profile application）：调用者可以把一个精确匹配的 profile 应用到一份未校准的运行时 `Evaluation`，得到携带 `predicted_correctness` 的校准结果，以及镜像同一 profile 身份的 trace。`CalibrationProfile` 还具有带版本号的规范化 JSON 序列化（serialization）与经过身份校验的加载器（identity-verified loader）：加载器会重建嵌套的 binding 与 ground-truth 语义身份，并逐一重新校验每个 fingerprint，而不是信任文档中的声明。已实现精确内容寻址的目录存储（exact content-addressed directory store）：它把 profile 持久化到仅由其 fingerprint schema 版本与精确 fingerprint 推导出的路径下，检索时要求同时提供这两个值，并通过身份校验加载器恢复工件、把请求的身份作为独立的 expected pin，且不做任何匹配或回退。已实现显式运行时档案选择（explicit runtime profile selection）：`select_calibration_profile_for_runtime` 接收一份未校准的 evaluation 与一个由调用者显式提供的候选 profile 元组，返回唯一合格的 profile；没有任何合格者时抛出显式的 no-eligible 错误，多于一个互不相同的合格 profile 时抛出歧义错误，且不做任何 tie-break。选择是授权（authorization），不是推荐（recommendation）：它与存储无关、不做应用，也不以质量指标或方法支持度作为偏好。已实现显式内存档案目录（explicit in-memory profile catalog）与非权威的运行时发现（non-authoritative runtime discovery）：`CalibrationProfileCatalog` 由调用者显式提供的 profile 元组构建，`discover_calibration_profile_references_for_runtime` 返回确定性的精确 profile 引用（reference），其发现元数据与选择阶段使用同一套运行时合格性投影，但发现本身不做授权、不加载、不选择、也不应用任何 profile。目录还具有精确的快照身份（snapshot identity，`canonical_payload` / `fingerprint`）以及确定性的、经身份校验的序列化与加载（`serialize_calibration_profile_catalog` / `load_calibration_profile_catalog`）：快照提交有序的引用集合以及 Binding 与 target/input 发现投影，加载时重新计算规范化 payload 与目录 fingerprint，而不是信任文档中嵌入的哈希。已实现精确内容寻址的目录快照存储（exact content-addressed catalog snapshot store）：`DirectoryCalibrationProfileCatalogStore` 把快照持久化到仅由目录存储布局版本、目录 fingerprint schema 版本与精确目录 fingerprint 推导出的路径下；检索必须同时提供 fingerprint 与版本，并通过经身份校验的目录加载器恢复快照、把请求的身份作为独立的 expected pin，不做任何生命周期、latest/default、别名、枚举或回退匹配。目录快照是非权威的发现元数据：其 fingerprint 证明的是快照自身的身份，而不是被引用 profile 仍然存在、存储工件完整，或快照元数据仍与真实 profile 一致。自动运行时档案选择（automatic profile selection）、档案注册表（registry）、基于 binding 的查找（lookup）、目录生命周期（catalog lifecycle：latest、active、default 或 production 通道）、存储枚举（store enumeration）、质量排序（quality ranking）与签名分发（signed distribution）均不存在；任何未经调用者显式校准的运行时结果，其 `predicted_correctness` 仍为 `None`。弃权（abstention）与其他所有 Choice 策略尚未实现。
 
+**Phase 4C 已完成。** 校准层现已覆盖完整的、经过身份校验的链路：从运行时评估与 ground-truth 观测，到拟合数据集契约、精确 profile 拟合、离线应用与校准后评估，再到 profile 身份、序列化与精确 profile 存储、显式 unique-or-fail 选择、非权威目录发现、目录快照身份、目录序列化，以及精确目录快照存储。该链路上每一处边界都是精确的、显式 gated 的，并且一律 fail closed。目录生命周期（latest、active、default 或 production 通道及其替代）、注册表、存储/目录自动同步、存储枚举、质量排序、签名分发、自动选择与自动校准属于后续阶段的方向，而不是尚未完成的 Phase 4C 工作；不存在为生命周期便利而设的 Phase 4C.12。
+
 Probvenance 是一个 provider-agnostic（供应商无关）的概率决策运行时（probabilistic decision runtime）。它把语言模型变成可评估（evaluable）、可校准（calibratable）、可追踪（trackable）的语义概率决策组件。
 
 要解决的问题：LLM 被接入程序逻辑时，人们常把一坨原始文本或一个未经审视的分数当作可信的概率。结果是：系统说不清一个分数意味着什么，无法复现过去的决策，也无法区分"模型不确定"与"程序应当拒绝行动"。Probvenance 为这一领域提供一个狭窄而确定性的内核。
@@ -58,7 +60,7 @@ print(evaluation.trace.execution_fingerprint)
 
 `ai.evaluate_with_trace(decision)` 返回一个 `Evaluation`（结果加上它的 `DecisionTrace`）。trace 记录了 decision 与 plan 的指纹（fingerprint）、scoring strategy、doctrine id、解析出的 verbalizer token id、原始证据（raw evidence）、input fingerprint、backend 类型、延迟（latency）、`ScoringDiagnostics` 与 execution fingerprint。该 trace 是 replay-oriented provenance（面向回放的溯源）：它记录了未来回放所需的信息，但并不快照 backend 或 tokenizer 的代码，因此严格可回放性（strict replayability）仍是未决问题。
 
-`probability_true` 是什么：一个有条件的、受限（restricted）的概率，`P(True | next token is one of the two scored verbalizer tokens)`，在恰好两个 verbalizer-token logit 上以数值稳定的 two-way softmax 计算，等于 `sigmoid(l_true - l_false)`。它无法告诉你模型是否本来就打算在这些候选项之间做出选择。它不是什么：不是全词表（full-vocabulary）概率，不是现实世界事件概率，不是预测准确率，也不是校准后的数值。`calibrated` 恒为 `False`，`predicted_correctness` 恒为 `None`。
+`probability_true` 是什么：一个有条件的、受限（restricted）的概率，`P(True | next token is one of the two scored verbalizer tokens)`，在恰好两个 verbalizer-token logit 上以数值稳定的 two-way softmax 计算，等于 `sigmoid(l_true - l_false)`。它无法告诉你模型是否本来就打算在这些候选项之间做出选择。它不是什么：不是全词表（full-vocabulary）概率，不是现实世界事件概率，不是预测准确率，也不是校准后的数值。它的默认状态是未校准（`calibrated` 为 `False`，`predicted_correctness` 为 `None`，除非调用方显式应用一个 profile）。
 
 由于受限数值本身无法显示模型是否处在决策点，每条 trace 还携带一个独立的词表级量 `trace.scoring_diagnostics.verbalizer_mass`：`P(next token is one of the two scored verbalizer tokens)`，其稳定对数形式为 `log_verbalizer_mass = logsumexp([l_true, l_false]) - logsumexp(all_vocab_logits)`。解读规则：`probability_true = 0.75` 且 `verbalizer_mass = 0.000001` 意味着模型在内部更偏好 `yes` 而非 `no`，但它几乎肯定不会输出两者中的任何一个；因此除非同时说明其受限性质，`0.75` 不得被读作「有 75% 的倾向回答 yes」。诊断不携带任何裁决：Phase 2A.1 不施加任何阈值，也不做自动拒绝。
 
@@ -137,7 +139,7 @@ Phase 2A.1 的 scoring-validity 增量：
 ```
 BoolDecision --(BoolCompiler)--> InferencePlan --(TransformersBackend)--> RawEvidence
                                                                              |
-                              assemble_bool_probability     (calibration: still future)
+                              assemble_bool_probability     (calibration: explicit only; see below)
                                                                              v
                                                 BoolResult + DecisionTrace (via Probvenance)
 ```
@@ -153,14 +155,14 @@ Phase 2B direct categorical Choice 路径：
 ```
 ChoiceDecision --(ChoiceCompiler)--> InferencePlan --(TransformersBackend)--> RawEvidence
                                                                                  |
-                        assemble_choice_probability    (calibration: still future)
+                        assemble_choice_probability    (calibration: explicit only; see below)
                                                                                  v
                                              ChoiceResult + DecisionTrace (via Probvenance)
 ```
 
 该路径是实验性的。它是 closed-set 的，假定调用方提供互斥候选，只支持 single-label 决策，要求每个打分标签恰好是一个 token，仅在较小 N 上做过研究，并且是**未校准**的（`predicted_correctness` 始终为 `None`）。它没有任何 open-set 保证：当候选集遗漏了真实主题时，模型仍会在集合内作答，而 `scoring_label_mass` 检测不到这一点。
 
-其他 Choice 策略（one-vs-rest、sampling、multi-token 打分标签）、校准与弃权仍是未来工作。
+其他 Choice 策略（one-vs-rest、sampling、multi-token 打分标签）、自动校准与弃权仍是未来工作。
 
 ## 证据与主张（Evidence and claims）
 
@@ -187,7 +189,7 @@ uv run mypy src
 
 ## 非目标（Non-goals）
 
-仍然没有 HTTP，没有 OpenAI/Anthropic/vLLM/SGLang 集成，没有云端后端，没有自动路由，没有 decision graph，没有校准算法，没有弃权策略，也没有 dashboard、server、agent、RAG、数据库、telemetry 或 web UI。本项目不做任何 benchmark 或性能声明，也不声称任何模型质量或模型支持。
+仍然没有 HTTP，没有 OpenAI/Anthropic/vLLM/SGLang 集成，没有云端后端，没有自动路由，没有 decision graph，没有自动校准，没有弃权策略，也没有 dashboard、server、agent、RAG、数据库、telemetry 或 web UI。本项目不做任何 benchmark 或性能声明，也不声称任何模型质量或模型支持。
 
 ## 许可证
 

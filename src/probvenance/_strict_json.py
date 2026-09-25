@@ -30,6 +30,12 @@ from probvenance.errors import InvalidDecisionError
 
 #: Deepest nesting accepted in a persisted artifact.
 #:
+#: Counting convention, stated exactly because "64 nested levels" is ambiguous:
+#: the document root is level 1, every containment adds one level, and no node
+#: may sit deeper than this level. So an object holding a leaf is accepted at
+#: level 2, and a leaf wrapped in 63 objects sits at level 64 and is accepted
+#: while a leaf wrapped in 64 objects sits at level 65 and is rejected.
+#:
 #: ``json.loads`` converts its own ``RecursionError``, but a document can be
 #: nested just deeply enough to parse and still overflow the recursive
 #: canonicalization and freezing that every identity-bearing artifact performs
@@ -133,8 +139,10 @@ def require_bounded_nesting(
 ) -> None:
     """Raise if ``document`` nests deeper than ``limit``.
 
-    The walk is iterative so that checking the bound cannot itself overflow the
-    interpreter stack on the hostile input it exists to reject.
+    The root is level 1 and each containment adds one level, so the limit is the
+    deepest level any node may occupy. The walk is iterative so that checking
+    the bound cannot itself overflow the interpreter stack on the hostile input
+    it exists to reject.
     """
 
     pending: list[tuple[Any, int]] = [(document, 1)]

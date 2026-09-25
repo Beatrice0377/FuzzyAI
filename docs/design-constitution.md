@@ -1,7 +1,9 @@
 # Probvenance Design Constitution
 
-Status: **early development**. The Bool vertical slice and an experimental
-direct categorical Choice slice are implemented; calibration is still future.
+Status: **early development**. The Bool vertical slice and the direct
+categorical Choice slice are implemented. Calibration is implemented as an
+explicit, offline fit plus an explicit runtime application; automatic
+calibration and automatic profile selection are not implemented.
 
 This is the highest-level, longest-lived document in the repository. It is the
 binding design constraint for all future work in Probvenance. Code, tests, docs, and
@@ -479,8 +481,9 @@ under the `Probvenance` facade. Assembler selection is execution-truthful: the
 facade runs only the implementation named by the plan's
 `(strategy, assembler_id, assembler_version)` declaration and rejects a plan
 that names no known implementation, so a recorded `assembler_id` cannot
-describe a transformation the runtime did not perform. Calibration and all
-other backends remain future work.
+describe a transformation the runtime did not perform. Calibration is
+implemented as an explicit offline fit plus an explicit runtime application;
+automatic calibration and the remaining backends remain future work.
 
 ```
 DecisionSpec
@@ -490,7 +493,7 @@ DecisionSpec
     -> RawEvidence
     -> ProbabilityAssembler     (Bool binary and Choice categorical restricted softmax)
     -> DecisionResult
-    -> Calibration              (future)
+    -> Calibration              (explicit application implemented; automatic application future)
     -> Policy                   (out of scope by design)
 ```
 
@@ -529,8 +532,10 @@ uncalibrated probability/evidence
 ```
 
 Calibration is the only layer permitted to attach empirical correctness meaning
-(INV-04), and it stays future work: it needs ground-truth data that Phase 1 does
-not have. `Probability != predicted correctness` holds at every layer.
+(INV-04). It is implemented for an explicit caller-driven fit and an explicit
+caller-driven runtime application, and it still requires a caller to supply the
+profile: nothing selects or applies one automatically. `Probability != predicted
+correctness` holds at every layer.
 
 | Layer | Phase 1 status | Responsibility | Must not know about |
 |---|---|---|---|
@@ -540,7 +545,7 @@ not have. `Probability != predicted correctness` holds at every layer.
 | `Backend` (Protocol) | protocol; one local implementation | Declare `capabilities` explicitly; `execute(plan)` and return raw output. | Decisions, results, certainty (INV-16). |
 | `RawEvidence` | abstraction only | Carry raw model output (`EvidenceKind`) before any conversion; optional `dict[str, JSONValue]` metadata. | Probability semantics (INV-18). |
 | `ProbabilityAssembler` | implemented (Bool and Choice) | Turn `RawEvidence` into an uncalibrated decision probability distribution. | Model inference, business policy, empirical calibration, and any claim that probability is a correctness probability. |
-| Calibration | future | Map uncalibrated probability/evidence plus a ground-truth-derived calibration profile onto empirically meaningful calibrated information (INV-04). | Model inference, business policy. |
+| Calibration | implemented (explicit only) | Map uncalibrated probability/evidence plus a caller-supplied ground-truth-derived calibration profile onto empirically meaningful calibrated information (INV-04). | Model inference, business policy, and any automatic selection or application. |
 | `DecisionResult` (`BoolResult`, `ChoiceResult`, `Certainty`) | implemented | Report the probability distribution, certainty, `predicted_correctness=None`, `calibrated=False`. | What to do about the answer. |
 | Policy | out of scope by design | Map a result plus risk tolerance onto `accept` / `abstain` / `review` / `escalate`. | (Consumes results; owns abstention.) |
 
@@ -564,8 +569,13 @@ provenance to plans and traces. The error taxonomy gains
 `UnsupportedDecisionError`, `ScoringLabelError`, and `VerbalizerError` as
 further `ProbvenanceError` subclasses. Abstention remains unimplemented;
 calibration is partially implemented (one offline L2-regularized logistic
-method, plus offline profile application and a post-calibration evaluation
-foundation), while runtime calibration application remains unimplemented.
+method, offline profile application, a post-calibration evaluation foundation,
+exact profile identity, serialization and store, explicit profile eligibility
+and selection, a non-authoritative profile catalog with snapshot identity,
+serialization and an exact catalog store, and an explicit runtime application
+that requires a caller-declared unique profile). What remains unimplemented is
+automatic selection and automatic application; no runtime path picks or applies
+a profile on its own.
 
 Public API (Phase 1 core):
 
@@ -625,8 +635,10 @@ Choice scoring is implemented (Phase 2B direct categorical Choice, refined in
 Phases 2B.1 and 2C).
 
 Phase 1 non-goals (binding): no HTTP, no OpenAI/Anthropic/vLLM/SGLang, no
-automatic routing, no decision graph, no calibration algorithm, no dashboard,
-server, agent, RAG, database, telemetry, or web UI. Local model loading left
+automatic routing, no decision graph, no dashboard, server, agent, RAG,
+database, telemetry, or web UI. Phase 1 also had no calibration algorithm, which
+Phase 4C later supplied as an explicit L2-regularized logistic fit; what stays
+out of scope is automatic calibration. Local model loading left
 the non-goals list with Phase 2A: it exists only as the logits-only
 `TransformersBackend` behind the optional `transformers` extra, and the base
 package still has zero runtime dependencies.
@@ -691,8 +703,11 @@ smuggle one in.
   strictly replayable. Phase 2A and 2A.1 define a replay-oriented trace (section
   5); what a stricter snapshot-based replay would additionally require is still
   open.
-- The calibration algorithm(s) and the serialized shape/versioning of a
-  calibration profile (Phase 4).
+- ~~The calibration algorithm(s) and the serialized shape/versioning of a
+  calibration profile (Phase 4).~~ Settled by Phase 4C: one explicit
+  L2-regularized logistic method, a versioned canonical JSON serialization, and
+  an exact identity-verified store. Which additional methods to add, and how to
+  choose among them, remains open.
 - How temperature scaling interacts with fingerprinting: does a calibrated
   result inherit the plan fingerprint, gain a profile fingerprint, or both?
 - Whether normalized entropy and margin should be recomputed on calibrated

@@ -1420,6 +1420,46 @@ them generalises to other models, revisions, prompts, or tasks.
   `tests/test_calibration_catalog_store.py::TestErrorClassification`,
   `tests/test_calibration_store.py::TestLayoutCorruptionClassification`.
 
+### Phase 4C closure audit and unified failure contracts (Phase 4C.11)
+
+- [V] Every supported Phase 4C loader, identity validator, serializer, store entry
+  point, fitter, and scorer bounds the untrusted values it echoes into error
+  messages, including a caller-supplied argument of the wrong type, a valid
+  artifact that carries a megabyte-long legal string field, and an integer too
+  large for the interpreter to convert, so no supported entry point can be made to
+  emit an unbounded error and no raw conversion error escapes. Evidence:
+  `tests/test_phase4c_closure.py::TestProfileLoaderBoundedErrors`,
+  `...::TestProfileLoaderFieldFuzz`, `...::TestCatalogLoaderFieldFuzz`,
+  `...::TestCallerArgumentBoundedErrors`.
+- [V] The Profile loader and the catalog loader reject the same strict-JSON attack
+  classes with the same public error class, and no raw `JSONDecodeError`,
+  `ValueError`, `RecursionError`, or `OverflowError` escapes either. Evidence:
+  `tests/test_phase4c_closure.py::TestSharedStrictJsonMatrix`.
+- [V] The Profile store and the catalog store classify missing, corrupt,
+  substituted, noncanonical, undecodable, deeply nested, oversized-integer, and
+  unreadable artifacts consistently, with absence never becoming corruption and
+  corruption never becoming absence. Evidence:
+  `tests/test_phase4c_closure.py::TestStoreErrorSymmetry`.
+- [V] A publication failure closes the temporary file descriptor and leaves no
+  partial artifact at the final path. Evidence:
+  `tests/test_phase4c_closure.py::TestPublicationClosesTemporaryResources`.
+- [V] The full Phase 4C chain closes authorization end to end: one exact profile
+  applies unchanged, ambiguity fails at selection, forged catalog metadata cannot
+  authorize a mismatched profile, a referenced profile that is missing or corrupt
+  fails in the profile store, and a missing or corrupt catalog fails in the
+  catalog store. Evidence:
+  `tests/test_phase4c_closure.py::TestEndToEndChains`.
+- [V] A profile whose method the runtime cannot apply remains eligible and visible
+  through catalog discovery, both stores, and selection, and is rejected only at
+  the application boundary, so no earlier layer learns a method preference.
+  Evidence: `tests/test_phase4c_closure.py::TestEndToEndChains`.
+- [V] Every Phase 4C identity, schema, store-layout, method, and solver version is
+  pinned to its frozen value, the runtime, calibration, and store layers do not
+  import their own consumers, the shared filesystem helper stays domain-neutral,
+  and the Profile and catalog store namespaces stay independent while sharing one
+  root. Evidence: `tests/test_phase4c_closure.py::TestPhase4CVersionMatrix`,
+  `...::TestDependencyDirection`.
+
 ## Current hypotheses
 
 - `[H]` An explicit scoring doctrine may improve cross-model semantic

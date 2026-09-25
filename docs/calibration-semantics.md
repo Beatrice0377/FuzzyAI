@@ -111,9 +111,10 @@ Profile catalog:           explicit immutable in-memory discovery index
                            returns deterministic exact profile references whose
                            discovery metadata matches the runtime eligibility
                            projection, and authorizes, loads, selects, and
-                           applies nothing; catalog filesystem/database store,
-                           store enumeration, and automatic store/catalog
-                           synchronization are NOT implemented
+                            applies nothing; store enumeration and automatic
+                            store/catalog synchronization are NOT implemented,
+                            and no lifecycle pointer (latest, active, default)
+                            exists
 Profile catalog snapshot:  exact fingerprinted snapshot identity implemented
                            (CalibrationProfileCatalog.canonical_payload and
                            .fingerprint): commits the deterministic ordered set
@@ -146,10 +147,28 @@ serialization:             deterministic canonical JSON serialization and
                            default, or active catalog, no alias, no
                            enumeration, no manifest or pointer, and no
                            automatic store synchronization
- predicted_correctness:     None unless an explicit compatible
-                           CalibrationProfile is applied through
-                           apply_profile_to_runtime_evaluation
-```
+  predicted_correctness:     None unless an explicit compatible
+                            CalibrationProfile is applied through
+                            apply_profile_to_runtime_evaluation
+ ```
+
+Phase 4C is complete. The implemented layer set is: the calibration
+population and ground-truth identity, the fitting dataset contracts, the
+offline evaluation foundation, the L2 logistic calibration fitter, exact
+profile artifact identity, offline profile application, runtime-linked explicit
+profile application, profile serialization and loading, the exact profile
+store, explicit runtime profile eligibility and selection, non-authoritative
+profile catalog discovery, catalog snapshot identity, catalog
+serialization and loading, and the exact catalog snapshot store. Every boundary
+between those layers is exact, explicitly gated, and fails closed.
+
+Deliberately not part of Phase 4C, and therefore not Phase 4C defects: automatic
+calibration, automatic profile discovery, a profile registry, profile-store
+enumeration, catalog lifecycle (latest, active, default, or production channels
+and supersession), automatic store or catalog synchronization, quality ranking,
+cryptographic signatures, and result or trace content attestation. These are
+later-phase directions, not unfinished work in this layer.
+
 
 This document originated as a design document. The Phase 4A data foundation
 portions it specified (ground truth, binding, observation, dataset, and their
@@ -2248,15 +2267,20 @@ fallback, and no semantic matching. A managed layout component that exists as a
 regular file is corruption and not absence; an absent root, layout directory, or
 exact artifact is ordinary absence.
 
-Every value the store echoes into an error message is bounded. A corrupted
-artifact can carry an arbitrarily large field, so the shared strict parser
-abbreviates what it echoes, and a caller-supplied version is rendered through the
-same bounded helper, so a message never grows with hostile input and an integer
-too large for the interpreter to convert to text fails as an ordinary validation
-error instead of a raw conversion error. A managed path that cannot be inspected
-because of a filesystem access failure is reported as the store's own operational
-error; only the errnos that genuinely mean the path does not exist are treated as
-absence, so an unreadable directory is never mistaken for a missing snapshot.
+Every value the calibration layer echoes into an error message is bounded, not only
+the store's. A corrupted artifact can carry an arbitrarily large field, a caller can
+pass a megabyte-long string where an artifact is expected, and a valid artifact can
+legitimately carry a very long string field, so the shared strict parser, the
+identity validators, the serializers, the fitter, the scorer, and both stores render
+every echoed value through the same bounded helper. For any short value that
+renderer is exactly `repr`, so ordinary messages are unchanged and only a hostile
+megabyte-scale echo is truncated. A caller-supplied version also goes through it, so
+an integer too large for the interpreter to convert to text fails as an ordinary
+validation error instead of a raw conversion error. A managed path that cannot be
+inspected because of a filesystem access failure is reported as the store's own
+operational error; only the errnos that genuinely mean the path does not exist are
+treated as absence, so an unreadable directory is never mistaken for a missing
+snapshot.
 
 What exact catalog-store retrieval proves is narrow: the bytes stored at the
 requested catalog identity restore exactly that catalog snapshot. It does NOT
@@ -2490,14 +2514,16 @@ implement, and does not decide the eventual API for:
 ```text
 temperature scaling, isotonic regression, and binning calibrators
 any calibration fitting library
-runtime calibration application or runtime log loss / ECE / reliability code
 profile matching runtime
-a calibration store
 abstention, review, escalate, or any policy
 risk-coverage or selective accuracy
 multi-label ground truth
 open-set detection
 ```
+
+Automatic runtime calibration, the remaining metrics beyond the delivered
+winner-correctness family, and profile matching remain unimplemented, and the
+delivered profile store is exact retrieval only.
 
 Scoring-position and semantic validity (section 16) also remain design
 statements without runtime enforcement.

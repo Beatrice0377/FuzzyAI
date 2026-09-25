@@ -185,7 +185,7 @@ class _CalibrationProfileCatalogEntry:
             if isinstance(version, bool) or not isinstance(version, int) or version < 1:
                 raise InvalidDecisionError(
                     f"a catalog entry {name} must be an integer greater than or equal "
-                    f"to 1, got {version!r}"
+                    f"to 1, got {_abbreviate(version)}"
                 )
 
 
@@ -427,7 +427,7 @@ def load_calibration_profile_catalog(
     """
     if not isinstance(serialized, str):
         raise InvalidDecisionError(
-            f"serialized must be a str, got {type(serialized).__name__} ({serialized!r})"
+            f"serialized must be a str, got {type(serialized).__name__} ({_abbreviate(serialized)})"
         )
     if (expected_catalog_fingerprint is None) != (expected_catalog_fingerprint_version is None):
         raise InvalidDecisionError(
@@ -486,7 +486,7 @@ def load_calibration_profile_catalog(
         if identity_key in seen:
             raise InvalidDecisionError(
                 "the serialized calibration profile catalog contains the same exact "
-                f"profile identity more than once: {reference.profile_fingerprint!r}"
+                f"profile identity more than once: {_abbreviate(reference.profile_fingerprint)}"
             )
         seen.add(identity_key)
         entries.append(
@@ -519,13 +519,13 @@ def load_calibration_profile_catalog(
         ):
             raise InvalidDecisionError(
                 "the expected catalog fingerprint version must be an integer, got "
-                f"{expected_catalog_fingerprint_version!r}"
+                f"{_abbreviate(expected_catalog_fingerprint_version)}"
             )
         if expected_catalog_fingerprint_version != CALIBRATION_PROFILE_CATALOG_FINGERPRINT_VERSION:
             raise InvalidDecisionError(
                 "the expected catalog fingerprint version is not supported: expected "
                 f"{CALIBRATION_PROFILE_CATALOG_FINGERPRINT_VERSION}, got "
-                f"{expected_catalog_fingerprint_version!r}"
+                f"{_abbreviate(expected_catalog_fingerprint_version)}"
             )
         if restored.fingerprint != expected_catalog_fingerprint:
             raise InvalidDecisionError(

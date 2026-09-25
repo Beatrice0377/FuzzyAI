@@ -109,7 +109,8 @@ class DirectoryCalibrationProfileStore:
         """
         if not isinstance(root, (str, os.PathLike)):
             raise InvalidDecisionError(
-                f"root must be a str or os.PathLike, got {type(root).__name__} ({root!r})"
+                f"root must be a str or os.PathLike, got {type(root).__name__} "
+                f"({abbreviate_untrusted(root)})"
             )
         self._root = Path(root)
 
@@ -131,7 +132,8 @@ class DirectoryCalibrationProfileStore:
         """
         if not isinstance(profile, CalibrationProfile):
             raise InvalidDecisionError(
-                f"profile must be a CalibrationProfile, got {type(profile).__name__} ({profile!r})"
+                f"profile must be a CalibrationProfile, got {type(profile).__name__} "
+                f"({abbreviate_untrusted(profile)})"
             )
         fingerprint = profile.fingerprint
         version = CALIBRATION_PROFILE_FINGERPRINT_VERSION

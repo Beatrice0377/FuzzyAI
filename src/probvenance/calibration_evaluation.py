@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from fractions import Fraction
 
+from probvenance._strict_json import abbreviate_untrusted
 from probvenance.calibration import (
     CALIBRATION_BINDING_FINGERPRINT_VERSION,
     CALIBRATION_PROFILE_FINGERPRINT_VERSION,
@@ -1025,7 +1026,7 @@ class LogLossEvaluationResult:
         if math.isnan(value) or value == -math.inf or (math.isfinite(value) and value < 0.0):
             raise InvalidDecisionError(
                 "the computed log loss value is not a valid log loss "
-                f"(got {value!r}); a log loss is never NaN, never negative "
+                f"(got {abbreviate_untrusted(value)}); a log loss is never NaN, never negative "
                 "infinity, and never a negative finite number"
             )
         object.__setattr__(self, "metric_id", LOG_LOSS_METRIC_ID)
@@ -1436,11 +1437,13 @@ class ReliabilityBinSummary:
     def __post_init__(self) -> None:
         if isinstance(self.index, bool) or not isinstance(self.index, int) or self.index < 0:
             raise InvalidDecisionError(
-                f"ReliabilityBinSummary index must be a non-negative real int, got {self.index!r}"
+                f"ReliabilityBinSummary index must be a non-negative real int, "
+                f"got {abbreviate_untrusted(self.index)}"
             )
         if isinstance(self.count, bool) or not isinstance(self.count, int) or self.count < 0:
             raise InvalidDecisionError(
-                f"ReliabilityBinSummary count must be a non-negative real int, got {self.count!r}"
+                f"ReliabilityBinSummary count must be a non-negative real int, "
+                f"got {abbreviate_untrusted(self.count)}"
             )
         if (
             isinstance(self.correct_count, bool)
@@ -1477,13 +1480,14 @@ class ReliabilityBinSummary:
         ):
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise InvalidDecisionError(
-                    f"a non-empty ReliabilityBinSummary requires a finite {name}, got {value!r}"
+                    f"a non-empty ReliabilityBinSummary requires a finite {name}, "
+                    f"got {abbreviate_untrusted(value)}"
                 )
             number = float(value)
             if not math.isfinite(number) or number < 0.0 or number > 1.0:
                 raise InvalidDecisionError(
                     f"a non-empty ReliabilityBinSummary requires a finite "
-                    f"{name} in [0, 1], got {number!r}"
+                    f"{name} in [0, 1], got {abbreviate_untrusted(number)}"
                 )
 
 
@@ -1577,10 +1581,13 @@ class WinnerReliabilityResult:
             )
         if isinstance(bin_count, bool) or not isinstance(bin_count, int):
             raise InvalidDecisionError(
-                f"bin_count must be a real int (a bool is not acceptable), got {bin_count!r}"
+                f"bin_count must be a real int (a bool is not acceptable), "
+                f"got {abbreviate_untrusted(bin_count)}"
             )
         if bin_count < 1:
-            raise InvalidDecisionError(f"bin_count must be at least 1, got {bin_count!r}")
+            raise InvalidDecisionError(
+                f"bin_count must be at least 1, got {abbreviate_untrusted(bin_count)}"
+            )
         members: list[list[tuple[float, str, bool]]] = [[] for _ in range(bin_count)]
         for observation in dataset.observations:
             probability = _selected_probability(observation)
@@ -1867,7 +1874,7 @@ class WinnerBinnedAbsoluteGapResult:
         if not math.isfinite(value) or not 0.0 <= value <= 1.0:
             raise InvalidDecisionError(
                 "the binned absolute-gap aggregate is not a finite value in "
-                f"[0, 1] (got {value!r}); the upstream reliability invariant "
+                f"[0, 1] (got {abbreviate_untrusted(value)}); the upstream reliability invariant "
                 "is broken and the aggregate cannot be computed"
             )
         object.__setattr__(self, "aggregate_id", WINNER_BINNED_ABSOLUTE_GAP_ID)
@@ -2077,18 +2084,20 @@ class ProfileAppliedEvaluationRow:
         if not isinstance(correct, bool):
             raise InvalidDecisionError(
                 f"correct must be a real bool (a bool is required, not an int or None), "
-                f"got {type(correct).__name__} ({correct!r})"
+                f"got {type(correct).__name__} ({abbreviate_untrusted(correct)})"
             )
         if isinstance(predicted_correctness, bool) or not isinstance(
             predicted_correctness, (int, float)
         ):
             raise InvalidDecisionError(
-                f"predicted_correctness must be a real number, got {predicted_correctness!r}"
+                f"predicted_correctness must be a real number, "
+                f"got {abbreviate_untrusted(predicted_correctness)}"
             )
         number = float(predicted_correctness)
         if not math.isfinite(number) or number < 0.0 or number > 1.0:
             raise InvalidDecisionError(
-                f"predicted_correctness must be a finite float in [0, 1], got {number!r}"
+                f"predicted_correctness must be a finite float in [0, 1], "
+                f"got {abbreviate_untrusted(number)}"
             )
         object.__setattr__(self, "observation_fingerprint", observation_fingerprint)
         object.__setattr__(self, "correct", correct)
@@ -2281,11 +2290,12 @@ def apply_profile_to_evaluation_dataset(
     if not isinstance(dataset, CalibrationEvaluationDataset):
         raise InvalidDecisionError(
             "dataset must be a CalibrationEvaluationDataset, got "
-            f"{type(dataset).__name__} ({dataset!r})"
+            f"{type(dataset).__name__} ({abbreviate_untrusted(dataset)})"
         )
     if not isinstance(profile, CalibrationProfile):
         raise InvalidDecisionError(
-            f"profile must be a CalibrationProfile, got {type(profile).__name__} ({profile!r})"
+            f"profile must be a CalibrationProfile, got {type(profile).__name__} "
+            f"({abbreviate_untrusted(profile)})"
         )
     profile.require_binding_match(dataset.binding)
     profile_semantics_json = canonical_json(profile.ground_truth_semantics.canonical_payload())
@@ -2304,8 +2314,8 @@ def apply_profile_to_evaluation_dataset(
             raise InvalidDecisionError(
                 "the source evaluation dataset contains a metric-eligible "
                 "observation with no derived winner-correctness label "
-                f"(correct={correct!r}); the application artifact cannot record a "
-                "target label it did not derive"
+                f"(correct={abbreviate_untrusted(correct)}); the application "
+                "artifact cannot record a target label it did not derive"
             )
         score = predicted_winner_correctness(profile, observation)
         built.append(
@@ -2862,13 +2872,13 @@ class PostCalibrationReliabilityBinSummary:
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise InvalidDecisionError(
                     f"a non-empty PostCalibrationReliabilityBinSummary requires a finite "
-                    f"{name}, got {value!r}"
+                    f"{name}, got {abbreviate_untrusted(value)}"
                 )
             number = float(value)
             if not math.isfinite(number) or number < 0.0 or number > 1.0:
                 raise InvalidDecisionError(
                     f"a non-empty PostCalibrationReliabilityBinSummary requires a finite "
-                    f"{name} in [0, 1], got {number!r}"
+                    f"{name} in [0, 1], got {abbreviate_untrusted(number)}"
                 )
 
 
@@ -2932,10 +2942,13 @@ class PostCalibrationWinnerReliabilityResult:
             )
         if isinstance(bin_count, bool) or not isinstance(bin_count, int):
             raise InvalidDecisionError(
-                f"bin_count must be a real int (a bool is not acceptable), got {bin_count!r}"
+                f"bin_count must be a real int (a bool is not acceptable), "
+                f"got {abbreviate_untrusted(bin_count)}"
             )
         if bin_count < 1:
-            raise InvalidDecisionError(f"bin_count must be at least 1, got {bin_count!r}")
+            raise InvalidDecisionError(
+                f"bin_count must be at least 1, got {abbreviate_untrusted(bin_count)}"
+            )
         labels = _applied_correctness_labels(applied)
         members: list[list[tuple[float, str, bool]]] = [[] for _ in range(bin_count)]
         for row, label in zip(applied.rows, labels, strict=True):

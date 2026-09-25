@@ -216,7 +216,7 @@ def canonical_rendering_semantics(
     else:
         raise InvalidDecisionError(
             "rendering_config['enable_thinking'] must be None or bool, got "
-            f"{type(raw_thinking).__name__} ({raw_thinking!r})"
+            f"{type(raw_thinking).__name__} ({_abbreviate(raw_thinking)})"
         )
     return {"v": RENDERING_SEMANTICS_VERSION, "enable_thinking": enable_thinking}
 
@@ -240,7 +240,7 @@ def _require_json_value(name: str, value: Any) -> None:
         return
     if isinstance(value, float):
         if not math.isfinite(value):
-            raise InvalidDecisionError(f"{name} must be a finite float, got {value!r}")
+            raise InvalidDecisionError(f"{name} must be a finite float, got {_abbreviate(value)}")
         return
     if isinstance(value, list):
         for item in value:
@@ -250,25 +250,27 @@ def _require_json_value(name: str, value: Any) -> None:
         for key, item in value.items():
             if not isinstance(key, str):
                 raise InvalidDecisionError(
-                    f"{name} keys must be str, got {type(key).__name__} ({key!r})"
+                    f"{name} keys must be str, got {type(key).__name__} ({_abbreviate(key)})"
                 )
-            _require_json_value(f"{name}[{key!r}]", item)
+            _require_json_value(f"{name}[{_abbreviate(key)}]", item)
         return
     raise InvalidDecisionError(
-        f"{name} must be a JSON-compatible value, got {type(value).__name__} ({value!r})"
+        f"{name} must be a JSON-compatible value, got {type(value).__name__} ({_abbreviate(value)})"
     )
 
 
 def _require_non_empty_str(name: str, value: Any) -> None:
     if not isinstance(value, str) or not value.strip():
         raise InvalidDecisionError(
-            f"{name} must be a non-empty string, got {type(value).__name__} ({value!r})"
+            f"{name} must be a non-empty string, got {type(value).__name__} ({_abbreviate(value)})"
         )
 
 
 def _require_real_bool(name: str, value: Any) -> None:
     if not isinstance(value, bool):
-        raise InvalidDecisionError(f"{name} must be a bool, got {type(value).__name__} ({value!r})")
+        raise InvalidDecisionError(
+            f"{name} must be a bool, got {type(value).__name__} ({_abbreviate(value)})"
+        )
 
 
 def _freeze_json_value(value: Any) -> Any:
@@ -326,7 +328,7 @@ class GroundTruthProvenance:
             raise InvalidDecisionError(
                 "taxonomy_version must be an int >= 1, got "
                 f"{type(self.taxonomy_version).__name__} "
-                f"({self.taxonomy_version!r})"
+                f"({_abbreviate(self.taxonomy_version)})"
             )
 
     def canonical_payload(self) -> dict[str, JSONValue]:
@@ -403,7 +405,7 @@ class GroundTruthSemanticsIdentity:
             raise InvalidDecisionError(
                 "taxonomy_version must be an int >= 1, got "
                 f"{type(self.taxonomy_version).__name__} "
-                f"({self.taxonomy_version!r})"
+                f"({_abbreviate(self.taxonomy_version)})"
             )
 
     @classmethod
@@ -492,7 +494,7 @@ class GroundTruthRecord:
         elif self.value is not None:
             raise InvalidDecisionError(
                 "value must be None when resolution_status is UNRESOLVED, got "
-                f"{type(self.value).__name__} ({self.value!r})"
+                f"{type(self.value).__name__} ({_abbreviate(self.value)})"
             )
 
     def canonical_payload(self) -> dict[str, JSONValue]:
@@ -557,7 +559,7 @@ class CalibrationBinding:
                 "probability_formulation_fingerprint_version must be an int >= 1, "
                 "got "
                 f"{type(self.probability_formulation_fingerprint_version).__name__} "
-                f"({self.probability_formulation_fingerprint_version!r})"
+                f"({_abbreviate(self.probability_formulation_fingerprint_version)})"
             )
         for name in ("model", "model_revision", "tokenizer", "tokenizer_revision"):
             value = getattr(self, name)
@@ -567,14 +569,15 @@ class CalibrationBinding:
             raise InvalidDecisionError(
                 "rendering_semantics must be a Mapping, got "
                 f"{type(self.rendering_semantics).__name__} "
-                f"({self.rendering_semantics!r})"
+                f"({_abbreviate(self.rendering_semantics)})"
             )
         for key, value in self.rendering_semantics.items():
             if not isinstance(key, str):
                 raise InvalidDecisionError(
-                    f"rendering_semantics keys must be str, got {type(key).__name__} ({key!r})"
+                    f"rendering_semantics keys must be str, got "
+                    f"{type(key).__name__} ({_abbreviate(key)})"
                 )
-            _require_json_value(f"rendering_semantics[{key!r}]", value)
+            _require_json_value(f"rendering_semantics[{_abbreviate(key)}]", value)
         if "enable_thinking" in self.rendering_semantics:
             # Mirrors canonical_rendering_semantics: an int like 1 must not
             # masquerade as True under Python equality or canonical JSON.
@@ -582,14 +585,14 @@ class CalibrationBinding:
             if enable_thinking is not None and not isinstance(enable_thinking, bool):
                 raise InvalidDecisionError(
                     "rendering_semantics['enable_thinking'] must be None or a bool, got "
-                    f"{type(enable_thinking).__name__} ({enable_thinking!r})"
+                    f"{type(enable_thinking).__name__} ({_abbreviate(enable_thinking)})"
                 )
         if "v" in self.rendering_semantics:
             version = self.rendering_semantics["v"]
             if isinstance(version, bool) or not isinstance(version, int) or version < 1:
                 raise InvalidDecisionError(
                     "rendering_semantics['v'] must be an int >= 1, got "
-                    f"{type(version).__name__} ({version!r})"
+                    f"{type(version).__name__} ({_abbreviate(version)})"
                 )
         for name in ("task_id", "domain_id", "taxonomy_id"):
             value = getattr(self, name)
@@ -603,7 +606,7 @@ class CalibrationBinding:
             raise InvalidDecisionError(
                 "taxonomy_version must be an int >= 1, got "
                 f"{type(self.taxonomy_version).__name__} "
-                f"({self.taxonomy_version!r})"
+                f"({_abbreviate(self.taxonomy_version)})"
             )
         object.__setattr__(
             self,
@@ -725,13 +728,13 @@ def _require_coherent_linkage(
         raise InvalidDecisionError(
             "CalibrationObservation requires a result with execution linkage: "
             "result.trace_id is None while the trace linkage identity is "
-            f"{trace.trace_id!r}, so the pair cannot be verified"
+            f"{_abbreviate(trace.trace_id)}, so the pair cannot be verified"
         )
     if result_linkage != trace.trace_id:
         raise InvalidDecisionError(
             "CalibrationObservation requires matching runtime linkage "
-            f"identities: result linkage identity {result_linkage!r} does not "
-            f"match trace linkage identity {trace.trace_id!r}"
+            f"identities: result linkage identity {_abbreviate(result_linkage)} does not "
+            f"match trace linkage identity {_abbreviate(trace.trace_id)}"
         )
 
 
@@ -819,32 +822,33 @@ class CalibrationObservation:
         _require_non_empty_str("decision_family", self.decision_family)
         if self.decision_family not in ("bool", "choice"):
             raise InvalidDecisionError(
-                f"decision_family must be 'bool' or 'choice', got {self.decision_family!r}"
+                f"decision_family must be 'bool' or 'choice', "
+                f"got {_abbreviate(self.decision_family)}"
             )
         _require_non_empty_str("decision_fingerprint", self.decision_fingerprint)
         if not self.outcome_order:
             raise InvalidDecisionError("outcome_order must be non-empty")
         if len(set(self.outcome_order)) != len(self.outcome_order):
             raise InvalidDecisionError(
-                f"outcome_order entries must be unique, got {self.outcome_order!r}"
+                f"outcome_order entries must be unique, got {_abbreviate(self.outcome_order)}"
             )
         for name, probability in self.probabilities:
             _require_non_empty_str("probability name", name)
             if isinstance(probability, bool) or not isinstance(probability, (int, float)):
                 raise InvalidDecisionError(
-                    f"probability for {name!r} must be a float, got "
-                    f"{type(probability).__name__} ({probability!r})"
+                    f"probability for {_abbreviate(name)} must be a float, got "
+                    f"{type(probability).__name__} ({_abbreviate(probability)})"
                 )
         if tuple(name for name, _ in self.probabilities) != self.outcome_order:
             raise InvalidDecisionError(
                 "probability names must match outcome_order exactly and in order, "
-                f"got probabilities {tuple(n for n, _ in self.probabilities)!r} "
-                f"against outcome_order {self.outcome_order!r}"
+                f"got probabilities {_abbreviate(tuple(n for n, _ in self.probabilities))} "
+                f"against outcome_order {_abbreviate(self.outcome_order)}"
             )
         if not isinstance(self.binding, CalibrationBinding):
             raise InvalidDecisionError(
                 "binding must be a CalibrationBinding, got "
-                f"{type(self.binding).__name__} ({self.binding!r})"
+                f"{type(self.binding).__name__} ({_abbreviate(self.binding)})"
             )
         if self.execution_fingerprint is not None:
             _require_non_empty_str("execution_fingerprint", self.execution_fingerprint)
@@ -852,7 +856,7 @@ class CalibrationObservation:
             if not isinstance(self.selected_value, bool):
                 raise InvalidDecisionError(
                     "a Bool observation's selected_value must be a real bool, got "
-                    f"{type(self.selected_value).__name__} ({self.selected_value!r})"
+                    f"{type(self.selected_value).__name__} ({_abbreviate(self.selected_value)})"
                 )
             _validate_bool_ground_truth(self.ground_truth)
         else:
@@ -862,7 +866,7 @@ class CalibrationObservation:
             ):
                 raise InvalidDecisionError(
                     "a Choice observation's selected_value must be a semantic "
-                    f"candidate name in the outcome space, got {self.selected_value!r}"
+                    f"candidate name in the outcome space, got {_abbreviate(self.selected_value)}"
                 )
             _validate_choice_ground_truth(self.ground_truth)
         status = _derive_status(self.decision_family, self.ground_truth, self.outcome_order)
@@ -899,7 +903,7 @@ class CalibrationObservation:
         else:
             raise InvalidDecisionError(
                 "evaluation must be an Evaluation or a (result, trace) pair, got "
-                f"{type(evaluation).__name__} ({evaluation!r})"
+                f"{type(evaluation).__name__} ({_abbreviate(evaluation)})"
             )
         if not isinstance(trace, DecisionTrace):
             raise InvalidDecisionError(f"trace must be a DecisionTrace, got {type(trace).__name__}")
@@ -939,7 +943,9 @@ class CalibrationObservation:
             selected_value = result.value
             _validate_choice_ground_truth(ground_truth)
         else:
-            raise InvalidDecisionError(f"unsupported decision_family {trace.decision_family!r}")
+            raise InvalidDecisionError(
+                f"unsupported decision_family {_abbreviate(trace.decision_family)}"
+            )
 
         return cls(
             decision_family=trace.decision_family,
@@ -1042,14 +1048,14 @@ def _selected_probability(observation: CalibrationObservation) -> float:
         else:
             raise InvalidDecisionError(
                 "cannot map the recorded selected_value "
-                f"{selected_value!r} of a bool observation to an outcome name; "
+                f"{_abbreviate(selected_value)} of a bool observation to an outcome name; "
                 "the recorded selected_value must be a real bool"
             )
     else:
         if not isinstance(selected_value, str):
             raise InvalidDecisionError(
                 "cannot map the recorded selected_value "
-                f"{selected_value!r} of a choice observation to a semantic "
+                f"{_abbreviate(selected_value)} of a choice observation to a semantic "
                 "candidate name; the recorded selected_value must be a "
                 "candidate name string"
             )
@@ -1058,9 +1064,9 @@ def _selected_probability(observation: CalibrationObservation) -> float:
         if candidate_name == name:
             return probability
     raise InvalidDecisionError(
-        f"the recorded selected_value {selected_value!r} of observation "
+        f"the recorded selected_value {_abbreviate(selected_value)} of observation "
         f"{observation.fingerprint} has no recorded probability under outcome "
-        f"order {observation.outcome_order!r}; the uncalibrated selected "
+        f"order {_abbreviate(observation.outcome_order)}; the uncalibrated selected "
         "semantic probability cannot be extracted"
     )
 
@@ -1072,7 +1078,7 @@ def _validate_bool_ground_truth(ground_truth: GroundTruthRecord) -> None:
     if not isinstance(ground_truth.value, bool):
         raise InvalidDecisionError(
             "a resolved Bool ground truth must be a real bool, got "
-            f"{type(ground_truth.value).__name__} ({ground_truth.value!r})"
+            f"{type(ground_truth.value).__name__} ({_abbreviate(ground_truth.value)})"
         )
 
 
@@ -1185,8 +1191,8 @@ class CalibrationDataset:
             if canonical_json(observation_binding_payload) != binding_payload_json:
                 rejected.append(
                     f"observation {index}: binding canonical payload "
-                    f"{observation_binding_payload!r} does not match the "
-                    f"dataset binding canonical payload {binding_payload!r} "
+                    f"{_abbreviate(observation_binding_payload)} does not match the "
+                    f"dataset binding canonical payload {_abbreviate(binding_payload)} "
                     f"(dataset binding fingerprint {self.binding.fingerprint!r}, "
                     f"observation binding fingerprint "
                     f"{observation.binding.fingerprint!r})"
@@ -1198,10 +1204,10 @@ class CalibrationDataset:
             if canonical_json(observation_semantics_payload) != dataset_semantics_payload_json:
                 rejected.append(
                     f"observation {index}: ground-truth semantics identity "
-                    f"{observation_semantics_payload!r} (fingerprint "
+                    f"{_abbreviate(observation_semantics_payload)} (fingerprint "
                     f"{observation_semantics.fingerprint!r}) does not match the "
                     f"dataset ground-truth semantics identity "
-                    f"{dataset_semantics_payload!r} (fingerprint "
+                    f"{_abbreviate(dataset_semantics_payload)} (fingerprint "
                     f"{dataset_semantics.fingerprint!r})"
                 )
         if rejected:
@@ -1293,14 +1299,14 @@ def _require_method_state_mapping(
         return {}
     if not isinstance(value, Mapping):
         raise InvalidDecisionError(
-            f"{name} must be a Mapping or None, got {type(value).__name__} ({value!r})"
+            f"{name} must be a Mapping or None, got {type(value).__name__} ({_abbreviate(value)})"
         )
     for key, item in value.items():
         if not isinstance(key, str):
             raise InvalidDecisionError(
-                f"{name} keys must be str, got {type(key).__name__} ({key!r})"
+                f"{name} keys must be str, got {type(key).__name__} ({_abbreviate(key)})"
             )
-        _require_json_value(f"{name}[{key!r}]", item)
+        _require_json_value(f"{name}[{_abbreviate(key)}]", item)
     return dict(value)
 
 
@@ -1330,8 +1336,8 @@ def _require_coherent_taxonomy_identity(
     if binding_taxonomy_id != semantics_taxonomy_id:
         raise InvalidDecisionError(
             "the binding taxonomy and the ground-truth taxonomy are different: "
-            f"binding taxonomy_id {binding_taxonomy_id!r} vs ground-truth "
-            f"taxonomy_id {semantics_taxonomy_id!r}. Cross-taxonomy calibration "
+            f"binding taxonomy_id {_abbreviate(binding_taxonomy_id)} vs ground-truth "
+            f"taxonomy_id {_abbreviate(semantics_taxonomy_id)}. Cross-taxonomy calibration "
             "requires an explicit taxonomy mapping identity, which does not exist"
         )
     binding_taxonomy_version = binding.taxonomy_version
@@ -1341,9 +1347,9 @@ def _require_coherent_taxonomy_identity(
     if binding_taxonomy_version != semantics_taxonomy_version:
         raise InvalidDecisionError(
             "the binding taxonomy version and the ground-truth taxonomy version "
-            f"are different for taxonomy_id {binding_taxonomy_id!r}: binding "
-            f"taxonomy_version {binding_taxonomy_version!r} vs ground-truth "
-            f"taxonomy_version {semantics_taxonomy_version!r}"
+            f"are different for taxonomy_id {_abbreviate(binding_taxonomy_id)}: binding "
+            f"taxonomy_version {_abbreviate(binding_taxonomy_version)} vs ground-truth "
+            f"taxonomy_version {_abbreviate(semantics_taxonomy_version)}"
         )
 
 
@@ -1506,13 +1512,13 @@ class CalibrationProfile:
         if not isinstance(self.binding, CalibrationBinding):
             raise InvalidDecisionError(
                 "binding must be a CalibrationBinding, got "
-                f"{type(self.binding).__name__} ({self.binding!r})"
+                f"{type(self.binding).__name__} ({_abbreviate(self.binding)})"
             )
         if not isinstance(self.ground_truth_semantics, GroundTruthSemanticsIdentity):
             raise InvalidDecisionError(
                 "ground_truth_semantics must be a GroundTruthSemanticsIdentity, got "
                 f"{type(self.ground_truth_semantics).__name__} "
-                f"({self.ground_truth_semantics!r})"
+                f"({_abbreviate(self.ground_truth_semantics)})"
             )
         _require_non_empty_str("target_id", self.target_id)
         if (
@@ -1522,7 +1528,7 @@ class CalibrationProfile:
         ):
             raise InvalidDecisionError(
                 "target_version must be an int >= 1, got "
-                f"{type(self.target_version).__name__} ({self.target_version!r})"
+                f"{type(self.target_version).__name__} ({_abbreviate(self.target_version)})"
             )
         _require_non_empty_str("input_score_id", self.input_score_id)
         if (
@@ -1533,7 +1539,7 @@ class CalibrationProfile:
             raise InvalidDecisionError(
                 "input_score_version must be an int >= 1, got "
                 f"{type(self.input_score_version).__name__} "
-                f"({self.input_score_version!r})"
+                f"({_abbreviate(self.input_score_version)})"
             )
         _require_non_empty_str("method_id", self.method_id)
         if (
@@ -1543,18 +1549,18 @@ class CalibrationProfile:
         ):
             raise InvalidDecisionError(
                 "method_version must be an int >= 1, got "
-                f"{type(self.method_version).__name__} ({self.method_version!r})"
+                f"{type(self.method_version).__name__} ({_abbreviate(self.method_version)})"
             )
         if not isinstance(self.method_configuration, Mapping):
             raise InvalidDecisionError(
                 "method_configuration must be a Mapping, got "
                 f"{type(self.method_configuration).__name__} "
-                f"({self.method_configuration!r})"
+                f"({_abbreviate(self.method_configuration)})"
             )
         if not isinstance(self.fitted_parameters, Mapping):
             raise InvalidDecisionError(
                 "fitted_parameters must be a Mapping, got "
-                f"{type(self.fitted_parameters).__name__} ({self.fitted_parameters!r})"
+                f"{type(self.fitted_parameters).__name__} ({_abbreviate(self.fitted_parameters)})"
             )
         _require_non_empty_str("training_dataset_fingerprint", self.training_dataset_fingerprint)
         if (
@@ -1565,7 +1571,7 @@ class CalibrationProfile:
             raise InvalidDecisionError(
                 "training_dataset_fingerprint_version must be an int >= 1, got "
                 f"{type(self.training_dataset_fingerprint_version).__name__} "
-                f"({self.training_dataset_fingerprint_version!r})"
+                f"({_abbreviate(self.training_dataset_fingerprint_version)})"
             )
 
     @classmethod
@@ -1588,7 +1594,8 @@ class CalibrationProfile:
         """
         if not isinstance(dataset, CalibrationDataset):
             raise InvalidDecisionError(
-                f"dataset must be a CalibrationDataset, got {type(dataset).__name__} ({dataset!r})"
+                f"dataset must be a CalibrationDataset, got {type(dataset).__name__} "
+                f"({_abbreviate(dataset)})"
             )
         _require_non_empty_str("method_id", method_id)
         if (
@@ -1598,7 +1605,7 @@ class CalibrationProfile:
         ):
             raise InvalidDecisionError(
                 "method_version must be an int >= 1, got "
-                f"{type(method_version).__name__} ({method_version!r})"
+                f"{type(method_version).__name__} ({_abbreviate(method_version)})"
             )
         configuration = _freeze_method_state(
             _require_method_state_mapping("method_configuration", method_configuration)
@@ -1685,7 +1692,8 @@ class CalibrationProfile:
         """
         if not isinstance(binding, CalibrationBinding):
             raise InvalidDecisionError(
-                f"binding must be a CalibrationBinding, got {type(binding).__name__} ({binding!r})"
+                f"binding must be a CalibrationBinding, got {type(binding).__name__} "
+                f"({_abbreviate(binding)})"
             )
         if not _binding_payloads_equal(self.binding, binding):
             raise InvalidDecisionError(
@@ -1845,7 +1853,7 @@ def _require_profile_fingerprint_identity(
     ):
         raise InvalidDecisionError(
             "profile_fingerprint_version must be an integer greater than or equal "
-            f"to 1, got {profile_fingerprint_version!r}"
+            f"to 1, got {_abbreviate(profile_fingerprint_version)}"
         )
 
 
@@ -1939,7 +1947,8 @@ def serialize_calibration_profile(profile: CalibrationProfile) -> str:
     """
     if not isinstance(profile, CalibrationProfile):
         raise InvalidDecisionError(
-            f"profile must be a CalibrationProfile, got {type(profile).__name__} ({profile!r})"
+            f"profile must be a CalibrationProfile, got {type(profile).__name__} "
+            f"({_abbreviate(profile)})"
         )
     envelope: dict[str, JSONValue] = {
         "artifact_type": CALIBRATION_PROFILE_SERIALIZATION_TYPE,
@@ -1978,7 +1987,7 @@ def load_calibration_profile(
     """
     if not isinstance(serialized, str):
         raise InvalidDecisionError(
-            f"serialized must be a str, got {type(serialized).__name__} ({serialized!r})"
+            f"serialized must be a str, got {type(serialized).__name__} ({_abbreviate(serialized)})"
         )
     if (expected_profile_fingerprint is None) != (expected_profile_fingerprint_version is None):
         raise InvalidDecisionError(
@@ -2004,7 +2013,7 @@ def load_calibration_profile(
         raise InvalidDecisionError(
             "the serialized calibration profile has an unsupported serialization "
             f"version: expected {CALIBRATION_PROFILE_SERIALIZATION_VERSION}, got "
-            f"{serialization_version!r}"
+            f"{_abbreviate(serialization_version)}"
         )
 
     identity = _require_exact_keys(
@@ -2014,7 +2023,7 @@ def load_calibration_profile(
         raise InvalidDecisionError(
             "the serialized calibration profile has an unsupported profile identity "
             f"version: expected {CALIBRATION_PROFILE_FINGERPRINT_VERSION}, got "
-            f"{identity['v']!r}"
+            f"{_abbreviate(identity['v'])}"
         )
     binding_identity = _require_exact_keys(
         "profile_identity['binding']",
@@ -2033,14 +2042,14 @@ def load_calibration_profile(
             "the serialized calibration profile declares an unsupported binding "
             "fingerprint version: expected "
             f"{CALIBRATION_BINDING_FINGERPRINT_VERSION}, got "
-            f"{binding_identity['binding_fingerprint_version']!r}"
+            f"{_abbreviate(binding_identity['binding_fingerprint_version'])}"
         )
     if binding.fingerprint != binding_identity["binding_fingerprint"]:
         raise InvalidDecisionError(
             "the materialized calibration binding does not match the binding identity "
             "committed by the profile: reconstructed binding fingerprint "
             f"{binding.fingerprint!r} vs committed "
-            f"{binding_identity['binding_fingerprint']!r}"
+            f"{_abbreviate(binding_identity['binding_fingerprint'])}"
         )
 
     ground_truth_semantics = _restore_ground_truth_semantics_identity(
@@ -2054,7 +2063,7 @@ def load_calibration_profile(
             "the serialized calibration profile declares an unsupported ground-truth "
             "semantics fingerprint version: expected "
             f"{GROUND_TRUTH_SEMANTICS_FINGERPRINT_VERSION}, got "
-            f"{ground_truth_identity['ground_truth_semantics_fingerprint_version']!r}"
+            f"{_abbreviate(ground_truth_identity['ground_truth_semantics_fingerprint_version'])}"
         )
     if (
         ground_truth_semantics.fingerprint
@@ -2064,7 +2073,7 @@ def load_calibration_profile(
             "the materialized ground-truth semantics do not match the semantics "
             "identity committed by the profile: reconstructed fingerprint "
             f"{ground_truth_semantics.fingerprint!r} vs committed "
-            f"{ground_truth_identity['ground_truth_semantics_fingerprint']!r}"
+            f"{_abbreviate(ground_truth_identity['ground_truth_semantics_fingerprint'])}"
         )
 
     restored = CalibrationProfile._from_serialized_state(
@@ -2092,7 +2101,7 @@ def load_calibration_profile(
             "the restored calibration profile fingerprint does not match the "
             "serialized profile fingerprint: restored "
             f"{restored.fingerprint!r} vs serialized "
-            f"{document['profile_fingerprint']!r}"
+            f"{_abbreviate(document['profile_fingerprint'])}"
         )
 
     if expected_profile_fingerprint is not None:
@@ -2101,19 +2110,19 @@ def load_calibration_profile(
         ):
             raise InvalidDecisionError(
                 "the expected profile fingerprint version must be an integer, got "
-                f"{expected_profile_fingerprint_version!r}"
+                f"{_abbreviate(expected_profile_fingerprint_version)}"
             )
         if expected_profile_fingerprint_version != CALIBRATION_PROFILE_FINGERPRINT_VERSION:
             raise InvalidDecisionError(
                 "the expected profile fingerprint version is not supported: expected "
                 f"{CALIBRATION_PROFILE_FINGERPRINT_VERSION}, got "
-                f"{expected_profile_fingerprint_version!r}"
+                f"{_abbreviate(expected_profile_fingerprint_version)}"
             )
         if restored.fingerprint != expected_profile_fingerprint:
             raise InvalidDecisionError(
                 "the restored calibration profile does not match the expected profile "
                 f"fingerprint: restored {restored.fingerprint!r} vs expected "
-                f"{expected_profile_fingerprint!r}"
+                f"{_abbreviate(expected_profile_fingerprint)}"
             )
 
     return restored
@@ -2359,23 +2368,23 @@ def _require_l2_strength(l2_strength: Any) -> float:
     if isinstance(l2_strength, bool) or not isinstance(l2_strength, (int, float)):
         raise InvalidDecisionError(
             "l2_strength must be a finite real number > 0, got "
-            f"{type(l2_strength).__name__} ({l2_strength!r})"
+            f"{type(l2_strength).__name__} ({_abbreviate(l2_strength)})"
         )
     try:
         value = float(l2_strength)
     except OverflowError:
         raise InvalidDecisionError(
-            f"l2_strength must be a finite real number > 0, got {l2_strength!r}"
+            f"l2_strength must be a finite real number > 0, got {_abbreviate(l2_strength)}"
         ) from None
     if not math.isfinite(value) or value <= 0.0:
         raise InvalidDecisionError(
-            f"l2_strength must be a finite real number > 0, got {l2_strength!r}"
+            f"l2_strength must be a finite real number > 0, got {_abbreviate(l2_strength)}"
         )
     if value / 2.0 == 0.0:
         raise InvalidDecisionError(
             "l2_strength is positive and finite, but too small to preserve a "
             "nonzero (l2_strength / 2) coefficient under the fitter's float "
-            f"numerical contract, got {value!r}"
+            f"numerical contract, got {_abbreviate(value)}"
         )
     return value
 
@@ -2403,13 +2412,13 @@ def _ordered_fitting_rows(dataset: CalibrationDataset) -> list[tuple[float, floa
         if not isinstance(correct, bool):
             raise InvalidDecisionError(
                 "a fitting row requires a real bool winner-correctness label, got "
-                f"{type(correct).__name__} ({correct!r}); the fitter never coerces "
+                f"{type(correct).__name__} ({_abbreviate(correct)}); the fitter never coerces "
                 "an unknown or non-bool correctness into a label"
             )
         probability = _selected_probability(observation)
         if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
             raise InvalidDecisionError(
-                f"the selected probability {probability!r} of observation "
+                f"the selected probability {_abbreviate(probability)} of observation "
                 f"{observation.fingerprint} is not a finite value in [0, 1]"
             )
         rows.append((probability, 1.0 if correct else 0.0))
@@ -2562,13 +2571,13 @@ def _solve_l2_logistic(
                 f"decrease within {_L2_LOGISTIC_MAX_BACKTRACKING_STEPS} reductions, "
                 "so the solver cannot certify an objective gap within "
                 f"{_L2_LOGISTIC_OBJECTIVE_SUBOPTIMALITY_TOLERANCE!r} for "
-                f"l2_strength {l2_strength!r}; no calibration profile is produced "
+                f"l2_strength {_abbreviate(l2_strength)}; no calibration profile is produced "
                 "from an uncertified fit"
             )
     raise InvalidDecisionError(
         "the fitting solver could not certify an objective gap within "
         f"{_L2_LOGISTIC_OBJECTIVE_SUBOPTIMALITY_TOLERANCE!r} for l2_strength "
-        f"{l2_strength!r} within {_L2_LOGISTIC_MAX_ITERATIONS} iterations; no "
+        f"{_abbreviate(l2_strength)} within {_L2_LOGISTIC_MAX_ITERATIONS} iterations; no "
         "calibration profile is produced from an uncertified fit"
     )
 
@@ -2603,7 +2612,8 @@ def fit_l2_logistic_selected_probability(
     """
     if not isinstance(dataset, CalibrationDataset):
         raise InvalidDecisionError(
-            f"dataset must be a CalibrationDataset, got {type(dataset).__name__} ({dataset!r})"
+            f"dataset must be a CalibrationDataset, got {type(dataset).__name__} "
+            f"({_abbreviate(dataset)})"
         )
     strength = _require_l2_strength(l2_strength)
     rows = _ordered_fitting_rows(dataset)
@@ -2678,7 +2688,8 @@ def _apply_profile_to_selected_probability(
     """
     if not isinstance(profile, CalibrationProfile):
         raise InvalidDecisionError(
-            f"profile must be a CalibrationProfile, got {type(profile).__name__} ({profile!r})"
+            f"profile must be a CalibrationProfile, got {type(profile).__name__} "
+            f"({_abbreviate(profile)})"
         )
     if profile.target_id != WINNER_CORRECTNESS_TARGET_ID or (
         profile.target_version != WINNER_CORRECTNESS_TARGET_VERSION
@@ -2686,21 +2697,21 @@ def _apply_profile_to_selected_probability(
         raise InvalidDecisionError(
             "the profile does not declare the winner-correctness target "
             f"{WINNER_CORRECTNESS_TARGET_ID!r} v{WINNER_CORRECTNESS_TARGET_VERSION}; got "
-            f"{profile.target_id!r} v{profile.target_version}"
+            f"{_abbreviate(profile.target_id)} v{profile.target_version}"
         )
     if profile.input_score_id != UNCALIBRATED_SELECTED_PROBABILITY_ID or (
         profile.input_score_version != UNCALIBRATED_SELECTED_PROBABILITY_VERSION
     ):
         raise InvalidDecisionError(
             "the profile does not declare the uncalibrated selected probability as its "
-            f"input score; got {profile.input_score_id!r} v{profile.input_score_version}"
+            f"input score; got {_abbreviate(profile.input_score_id)} v{profile.input_score_version}"
         )
     if profile.method_id != L2_LOGISTIC_SELECTED_PROBABILITY_METHOD_ID or (
         profile.method_version != L2_LOGISTIC_SELECTED_PROBABILITY_METHOD_VERSION
     ):
         raise InvalidDecisionError(
             "the profile method is not supported by profile application: "
-            f"got {profile.method_id!r} v{profile.method_version}, supported "
+            f"got {_abbreviate(profile.method_id)} v{profile.method_version}, supported "
             f"{L2_LOGISTIC_SELECTED_PROBABILITY_METHOD_ID!r} "
             f"v{L2_LOGISTIC_SELECTED_PROBABILITY_METHOD_VERSION}"
         )
@@ -2708,11 +2719,12 @@ def _apply_profile_to_selected_probability(
     if isinstance(selected_probability, bool) or not isinstance(selected_probability, (int, float)):
         raise InvalidDecisionError(
             "selected_probability must be a real number, got "
-            f"{type(selected_probability).__name__} ({selected_probability!r})"
+            f"{type(selected_probability).__name__} ({_abbreviate(selected_probability)})"
         )
     if not math.isfinite(selected_probability) or not (0.0 <= selected_probability <= 1.0):
         raise InvalidDecisionError(
-            f"selected_probability must be a finite float in [0, 1], got {selected_probability!r}"
+            f"selected_probability must be a finite float in [0, 1], "
+            f"got {_abbreviate(selected_probability)}"
         )
     return _stable_sigmoid(slope * float(selected_probability) + intercept)
 
@@ -2760,12 +2772,13 @@ def predicted_winner_correctness(
     """
     if not isinstance(profile, CalibrationProfile):
         raise InvalidDecisionError(
-            f"profile must be a CalibrationProfile, got {type(profile).__name__} ({profile!r})"
+            f"profile must be a CalibrationProfile, got {type(profile).__name__} "
+            f"({_abbreviate(profile)})"
         )
     if not isinstance(observation, CalibrationObservation):
         raise InvalidDecisionError(
             "observation must be a CalibrationObservation, got "
-            f"{type(observation).__name__} ({observation!r})"
+            f"{type(observation).__name__} ({_abbreviate(observation)})"
         )
     profile.require_binding_match(observation.binding)
     return _apply_profile_to_selected_probability(profile, _selected_probability(observation))
@@ -2810,7 +2823,8 @@ def _require_uncalibrated_runtime_evaluation(
     """
     if not isinstance(evaluation, Evaluation):
         raise InvalidDecisionError(
-            f"evaluation must be an Evaluation, got {type(evaluation).__name__} ({evaluation!r})"
+            f"evaluation must be an Evaluation, got {type(evaluation).__name__} "
+            f"({_abbreviate(evaluation)})"
         )
     result = evaluation.result
     trace = evaluation.trace
@@ -2836,8 +2850,8 @@ def _require_uncalibrated_runtime_evaluation(
     if result.trace_id is None or result.trace_id != trace.trace_id:
         raise InvalidDecisionError(
             "the result and trace must share one non-null trace id before a calibration "
-            f"profile can be used, got result.trace_id={result.trace_id!r} and "
-            f"trace.trace_id={trace.trace_id!r}"
+            f"profile can be used, got result.trace_id={_abbreviate(result.trace_id)} and "
+            f"trace.trace_id={_abbreviate(trace.trace_id)}"
         )
     if trace.decision_family == "bool":
         if not isinstance(result, BoolResult):
@@ -2850,7 +2864,9 @@ def _require_uncalibrated_runtime_evaluation(
                 f"a choice decision_family requires a ChoiceResult, got {type(result).__name__}"
             )
     else:
-        raise InvalidDecisionError(f"unsupported decision_family {trace.decision_family!r}")
+        raise InvalidDecisionError(
+            f"unsupported decision_family {_abbreviate(trace.decision_family)}"
+        )
     return result, trace
 
 
@@ -2916,7 +2932,8 @@ def apply_profile_to_runtime_evaluation(
     """
     if not isinstance(profile, CalibrationProfile):
         raise InvalidDecisionError(
-            f"profile must be a CalibrationProfile, got {type(profile).__name__} ({profile!r})"
+            f"profile must be a CalibrationProfile, got {type(profile).__name__} "
+            f"({_abbreviate(profile)})"
         )
     result, trace = _require_uncalibrated_runtime_evaluation(
         evaluation, operation="runtime-linked calibration application"

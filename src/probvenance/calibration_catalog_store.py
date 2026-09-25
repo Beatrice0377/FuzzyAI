@@ -127,7 +127,8 @@ class DirectoryCalibrationProfileCatalogStore:
         """
         if not isinstance(root, (str, os.PathLike)):
             raise InvalidDecisionError(
-                f"root must be a str or os.PathLike, got {type(root).__name__} ({root!r})"
+                f"root must be a str or os.PathLike, got {type(root).__name__} "
+                f"({abbreviate_untrusted(root)})"
             )
         self._root = Path(root)
 
@@ -155,7 +156,7 @@ class DirectoryCalibrationProfileCatalogStore:
         if not isinstance(catalog, CalibrationProfileCatalog):
             raise InvalidDecisionError(
                 f"catalog must be a CalibrationProfileCatalog, got "
-                f"{type(catalog).__name__} ({catalog!r})"
+                f"{type(catalog).__name__} ({abbreviate_untrusted(catalog)})"
             )
         fingerprint_value = catalog.fingerprint
         version = CALIBRATION_PROFILE_CATALOG_FINGERPRINT_VERSION

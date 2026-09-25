@@ -65,6 +65,20 @@ enumeration, quality ranking, and a signed distribution do not exist, and
 has explicitly calibrated. Abstention and every other Choice strategy are not
 implemented.
 
+**Phase 4C is complete.** The calibration layer now spans the whole
+identity-verified chain, from runtime evaluation and ground-truth observation
+through fitting dataset contracts, exact profile fitting, offline application
+and post-calibration evaluation, profile identity, serialization, and exact
+profile storage, explicit unique-or-fail selection, non-authoritative catalog
+discovery, catalog snapshot identity, catalog serialization, and exact catalog
+snapshot storage. Every boundary in that chain is exact, explicitly gated, and
+fails closed. Catalog lifecycle (latest, active, default, or production
+channels and supersession), registries, automatic store or catalog
+synchronization, store enumeration, quality ranking, a signed distribution,
+automatic selection, and automatic calibration are later-phase directions
+rather than unfinished Phase 4C work; there is no Phase 4C.12 for lifecycle
+convenience.
+
 Probvenance is a provider-agnostic probabilistic decision runtime. It turns language
 models into evaluable, calibratable, trackable semantic-probability decision
 components.
@@ -298,7 +312,7 @@ The Phase 2A.1 scoring-validity increment:
 ```
 BoolDecision --(BoolCompiler)--> InferencePlan --(TransformersBackend)--> RawEvidence
                                                                              |
-                              assemble_bool_probability     (calibration: still future)
+                              assemble_bool_probability     (calibration: explicit only; see below)
                                                                              v
                                                 BoolResult + DecisionTrace (via Probvenance)
 ```
@@ -319,7 +333,7 @@ The Phase 2B direct categorical Choice path:
 ```
 ChoiceDecision --(ChoiceCompiler)--> InferencePlan --(TransformersBackend)--> RawEvidence
                                                                                  |
-                        assemble_choice_probability    (calibration: still future)
+                        assemble_choice_probability    (calibration: explicit only; see below)
                                                                                  v
                                              ChoiceResult + DecisionTrace (via Probvenance)
 ```
@@ -327,12 +341,13 @@ ChoiceDecision --(ChoiceCompiler)--> InferencePlan --(TransformersBackend)--> Ra
 This path is experimental. It is closed-set, assumes the caller supplies
 mutually exclusive candidates, supports single-label decisions only, requires
 every scoring label to be exactly one token, has been studied only at small N,
-and is **uncalibrated** (`predicted_correctness` is always `None`). It has no
+and is **uncalibrated** by default (`predicted_correctness` is `None` unless a
+caller explicitly applies a profile). It has no
 open-set guarantee: when the candidate set omits the true topic, the model still
 answers in-set and `scoring_label_mass` does not detect it.
 
 Other Choice strategies (one-vs-rest, sampling, multi-token scoring labels),
-calibration, and abstention remain future work.
+automatic calibration, and abstention remain future work.
 
 ## Evidence and claims
 
@@ -381,7 +396,7 @@ never need a GPU.
 ## Non-goals
 
 There is still no HTTP, no OpenAI/Anthropic/vLLM/SGLang integration, no cloud
-backend, no automatic routing, no decision graph, no calibration algorithm, no
+backend, no automatic routing, no decision graph, no automatic calibration, no
 abstention policy, and no dashboard, server, agent, RAG, database, telemetry,
 or web UI. This project makes no benchmark or performance claims, and claims no
 model quality or support.

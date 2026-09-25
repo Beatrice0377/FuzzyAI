@@ -176,6 +176,22 @@ profile selection, the remaining metrics, and automatic runtime calibration
 `predicted_correctness` remains `None` for every runtime result that no caller
 has explicitly calibrated.
 
+**Phase 4C is complete.** The calibration layer now spans the full
+identity-verified chain: runtime evaluation, ground-truth observation creation
+and fitting-dataset contracts, exact profile fitting, offline profile
+application and post-calibration evaluation, profile identity, profile
+serialization and exact content-addressed profile storage, explicit
+unique-or-fail runtime selection, non-authoritative catalog discovery, catalog
+snapshot identity, catalog serialization, and exact content-addressed catalog
+snapshot storage. Every boundary in that chain is exact, explicitly gated, and
+fails closed. The capabilities listed above as absent are not unfinished Phase
+4C work: catalog lifecycle (latest, active, default, production channels,
+supersession), registries, automatic store or catalog synchronization, store
+enumeration, quality ranking, signed profile distribution, automatic runtime
+selection, automatic runtime calibration, and the remaining statistical metrics
+belong to a later phase and are recorded here as future direction only. There is
+no Phase 4C.12 for lifecycle convenience.
+
 - Evaluation harness (started: declared evaluation source cohort, metric-eligible
   dataset projection, Brier, log loss; delivered: winner-correctness companion
   diagnostics artifact with the empirical correctness rate, the mean selected
@@ -198,11 +214,11 @@ has explicitly calibrated.
 - Equal-mass (quantile) reliability binning (needs its own tie,
   duplicate-score, and deterministic-partition contract).
 - Reliability plotting (structured summary only; no chart artifacts).
-- Temperature scaling.
-- Calibration profile.
+- Temperature scaling. (The `CalibrationProfile` artifact and one scalar fitting
+  method are delivered; see the Phase 4C paragraph above.)
 
 Constraint recorded by Phase 2B and replicated by Phase 2B.1 (do not implement it
-here): a future `CalibrationProfile` must bind to probability-semantics-relevant
+here): a `CalibrationProfile` must bind to probability-semantics-relevant
 scoring representation identity, not merely to task or model identity. Two
 executions that hold the `ChoiceDecision` fixed but use a different scoring
 representation produce different uncalibrated distributions (measured: up to 0.31
@@ -214,7 +230,9 @@ plan family. It should NOT be bound to a single plan fingerprint, which would be
 too fine-grained and would break on any irrelevant plan change. The formulation
 identity and family definitions are designed in
 `docs/probability-semantics-identity.md` (Phase 2C-Design) and materialized as
-runtime fingerprints in Phase 2D. Calibration itself remains future work.
+runtime fingerprints in Phase 2D. Calibration was later delivered as an explicit
+offline fit plus an explicit runtime application (Phase 4C); automatic
+calibration remains future work.
 
 ## Phase 5: policy layer
 
