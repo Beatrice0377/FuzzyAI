@@ -37,7 +37,6 @@ imported into ``probvenance/__init__.py``; the module is importable as
 
 from __future__ import annotations
 
-import json
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -45,6 +44,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any, Final
 
+from probvenance._strict_json import parse_strict_json_object
 from probvenance.errors import InvalidDecisionError
 from probvenance.fingerprint import JSONValue, canonical_json, fingerprint
 from probvenance.results import BoolResult, ChoiceResult
@@ -1805,44 +1805,6 @@ _MATERIALIZED_GROUND_TRUTH_KEYS = frozenset(
 )
 
 
-def _reject_duplicate_object_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    """Reject a JSON object with a duplicated key.
-
-    Python's default parser silently keeps the last value, which is too
-    permissive for an identity-bearing artifact: ``{"method_id": "A",
-    "method_id": "B"}`` would otherwise load as ``"B"``.
-    """
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise InvalidDecisionError(
-                f"the serialized calibration profile contains a duplicate object key {key!r}"
-            )
-        result[key] = value
-    return result
-
-
-def _reject_json_constant(name: str) -> Any:
-    """Reject the non-standard ``NaN`` / ``Infinity`` / ``-Infinity`` literals."""
-    raise InvalidDecisionError(
-        f"the serialized calibration profile contains a non-finite JSON number {name!r}"
-    )
-
-
-def _strict_json_float(text: str) -> float:
-    """Parse a JSON float, rejecting a value that overflows to a non-finite one.
-
-    ``1e9999`` is valid JSON text but parses to ``inf``, which must never
-    enter an identity-bearing artifact.
-    """
-    value = float(text)
-    if not math.isfinite(value):
-        raise InvalidDecisionError(
-            f"the serialized calibration profile contains a non-finite JSON number {text!r}"
-        )
-    return value
-
-
 def _abbreviate(value: Any, max_chars: int = 200) -> str:
     """Return a bounded repr of an untrusted value for an error message.
 
@@ -1909,17 +1871,19 @@ def _require_exact_keys(name: str, mapping: Any, expected: frozenset[str]) -> di
     return mapping
 
 
-def _restore_calibration_binding(payload: Any) -> CalibrationBinding:
+def _restore_calibration_binding(
+    payload: Any, *, name: str = "materialized_binding"
+) -> CalibrationBinding:
     """Reconstruct a :class:`CalibrationBinding` from its materialized payload.
 
     The binding is materialized in full so a restored profile can still
     enforce exact runtime binding checks; nothing is reconstructed from
     other profile fields. The reconstructed object's fingerprint is verified
     against the profile identity claim by the caller, never trusted here.
+    ``name`` labels the payload in error messages so the profile loader and
+    the catalog loader can each report their own field path.
     """
-    binding_payload = _require_exact_keys(
-        "materialized_binding", payload, _MATERIALIZED_BINDING_KEYS
-    )
+    binding_payload = _require_exact_keys(name, payload, _MATERIALIZED_BINDING_KEYS)
     return CalibrationBinding(
         probability_formulation_fingerprint=binding_payload["probability_formulation_fingerprint"],
         probability_formulation_fingerprint_version=binding_payload[
@@ -2024,31 +1988,7 @@ def load_calibration_profile(
             "must be supplied together or not at all"
         )
 
-    try:
-        document = json.loads(
-            serialized,
-            object_pairs_hook=_reject_duplicate_object_keys,
-            parse_constant=_reject_json_constant,
-            parse_float=_strict_json_float,
-        )
-    except json.JSONDecodeError as error:
-        raise InvalidDecisionError(
-            f"the serialized calibration profile is not valid JSON: {error}"
-        ) from error
-    except ValueError as error:
-        raise InvalidDecisionError(
-            f"the serialized calibration profile is not valid JSON: {error}"
-        ) from error
-    except RecursionError as error:
-        raise InvalidDecisionError(
-            "the serialized calibration profile is nested too deeply to parse as JSON"
-        ) from error
-
-    if not isinstance(document, dict):
-        raise InvalidDecisionError(
-            "the serialized calibration profile must be a JSON object, got "
-            f"{type(document).__name__}"
-        )
+    document = parse_strict_json_object(serialized, subject="calibration profile")
     _require_exact_keys("serialized calibration profile", document, _ENVELOPE_KEYS)
 
     artifact_type = document["artifact_type"]

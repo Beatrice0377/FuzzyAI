@@ -376,6 +376,14 @@ class TestStrictParser:
         with pytest.raises(InvalidDecisionError):
             load_calibration_profile(deeply_nested)
 
+    def test_document_that_parses_but_nests_too_deeply_is_rejected(self) -> None:
+        document = document_of(fitted_profile())
+        nested: Any = "x"
+        for _ in range(495):
+            nested = {"n": nested}
+        document["materialized_binding"]["rendering_semantics"] = nested
+        assert_document_rejected(document)
+
     @pytest.mark.parametrize("text", ["[]", '"string"', "123", "null"])
     def test_non_object_top_level_rejected(self, text: str) -> None:
         with pytest.raises(InvalidDecisionError, match="must be a JSON object"):

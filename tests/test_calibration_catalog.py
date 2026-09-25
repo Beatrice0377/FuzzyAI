@@ -609,21 +609,27 @@ class TestEndToEnd:
 
 
 class TestScopeBoundaries:
-    def test_no_catalog_serialization_exists(self) -> None:
+    def test_no_filesystem_catalog_store_exists(self) -> None:
         import probvenance.calibration_catalog as catalog_module
 
         for absent in (
-            "serialize_calibration_profile_catalog",
-            "load_calibration_profile_catalog",
             "save_calibration_profile_catalog",
+            "load_calibration_profile_catalog_from_path",
+            "DirectoryCalibrationProfileCatalogStore",
+            "CalibrationProfileCatalogStore",
         ):
             assert not hasattr(catalog_module, absent), absent
 
-    def test_no_catalog_fingerprint_or_version_constant_exists(self) -> None:
+    def test_serialization_names_exist_but_no_store_or_registry_does(self) -> None:
         import probvenance.calibration_catalog as catalog_module
 
-        for name in dir(catalog_module):
-            assert "CATALOG" not in name or "FINGERPRINT" not in name, name
+        for present in (
+            "serialize_calibration_profile_catalog",
+            "load_calibration_profile_catalog",
+            "CALIBRATION_PROFILE_CATALOG_FINGERPRINT_VERSION",
+            "CALIBRATION_PROFILE_CATALOG_SERIALIZATION_VERSION",
+        ):
+            assert hasattr(catalog_module, present), present
 
     def test_no_registry_or_environment_discovery_in_source(self) -> None:
         import probvenance.calibration_catalog as catalog_module

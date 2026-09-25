@@ -42,9 +42,18 @@ catalog and non-authoritative runtime discovery are implemented: a
 and `discover_calibration_profile_references_for_runtime` returns deterministic
 exact profile references whose discovery metadata matches the same runtime
 eligibility projection as selection, while authorizing, loading, selecting, and
-applying nothing. Automatic runtime profile selection, profile registries,
-binding-based lookup, catalog serialization/persistence, store enumeration,
-quality ranking, and a signed distribution do not exist, and `predicted_correctness`
+applying nothing. A catalog also has an exact fingerprinted snapshot identity
+(`canonical_payload` / `fingerprint`) and deterministic, identity-verified
+serialization and loading (`serialize_calibration_profile_catalog` /
+`load_calibration_profile_catalog`): the snapshot commits the ordered references
+plus the Binding and target/input discovery projection, and loading recomputes
+the canonical payload and catalog fingerprint rather than trusting the embedded
+hash. A catalog snapshot is non-authoritative discovery metadata: its fingerprint
+proves the snapshot identity, not that referenced profiles exist, that store
+artifacts are intact, or that the snapshot metadata still matches the real
+profiles. Automatic runtime profile selection, profile registries, binding-based
+lookup, a catalog filesystem or database store, store enumeration, quality
+ranking, and a signed distribution do not exist, and `predicted_correctness`
 remains `None` for every runtime result that no caller has explicitly
 calibrated. Abstention and every other Choice strategy are not implemented.
 

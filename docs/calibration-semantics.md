@@ -111,9 +111,28 @@ Profile catalog:           explicit immutable in-memory discovery index
                            returns deterministic exact profile references whose
                            discovery metadata matches the runtime eligibility
                            projection, and authorizes, loads, selects, and
-                           applies nothing; catalog serialization/persistence,
+                           applies nothing; catalog filesystem/database store,
                            store enumeration, and automatic store/catalog
                            synchronization are NOT implemented
+Profile catalog snapshot:  exact fingerprinted snapshot identity implemented
+                           (CalibrationProfileCatalog.canonical_payload and
+                           .fingerprint): commits the deterministic ordered set
+                           of profile references and the Binding plus
+                           target/input discovery projection, excludes
+                           ground-truth semantics, method state, training
+                           provenance and every source- or execution-identity
+                           field, and never alters a referenced profile
+                           identity
+Profile catalog
+serialization:             deterministic canonical JSON serialization and
+                           identity-verified loading implemented
+                           (serialize_calibration_profile_catalog,
+                           load_calibration_profile_catalog): strict parsing, an
+                           exact v1 schema, typed reference and Binding
+                           restoration, recomputed canonical payload and catalog
+                           fingerprint, and an optional independently supplied
+                           expected catalog fingerprint pin; no filesystem I/O
+                           and no profile is loaded
 predicted_correctness:     None unless an explicit compatible
                            CalibrationProfile is applied through
                            apply_profile_to_runtime_evaluation
@@ -1113,8 +1132,13 @@ restored profile fingerprint before returning it. Malformed or
 identity-inconsistent documents fail closed with
 `InvalidDecisionError`; there is no best-effort load. Strict parsing rejects
 duplicate object keys at every level, non-finite numbers, a non-object top
-level, unknown or missing keys, and input nested too deeply to parse, so no
-low-level parser exception escapes the supported loader.
+level, unknown or missing keys, and input nested more than 64 levels deep, so no
+low-level parser exception escapes the supported loader. The depth bound exists
+because a document can nest just deeply enough to parse and still overflow the
+recursive canonicalization and freezing that identity restoration performs
+afterwards, which would otherwise surface a raw `RecursionError`; the bound is
+applied at the strict parser, so it protects the catalog loader, the profile
+loader, and the profile store's `get` path alike.
 
 Embedded self-consistency is NOT authenticity. A document whose payload and
 fingerprints are consistently rewritten by a malicious party passes embedded
@@ -2062,12 +2086,102 @@ N matching references -> tuple of N references
 
 Discovery never raises a selection no-eligible or ambiguity error merely because
 of cardinality; those are selection-policy outcomes owned by Phase 4C.7 after the
-referenced profiles are loaded by exact identity. A catalog contains no
-fingerprint, version, or serialization schema: catalog persistence is a separate
-future phase. Catalog membership is not part of profile identity, so building a
-catalog never changes a profile fingerprint, canonical payload, or serialization.
+referenced profiles are loaded by exact identity. Catalog membership is not part
+of profile identity, so building a catalog never changes a profile fingerprint,
+canonical payload, or serialization.
 
-### 18.5 What `calibrated = True` means
+### 18.5 Catalog snapshot identity, serialization, and verified loading
+
+A catalog has an exact fingerprinted snapshot identity so a caller can state
+which discovery snapshot was loaded:
+
+```python
+catalog.canonical_payload()
+catalog.fingerprint
+```
+
+The identity commits the deterministic ordered set of profile references and,
+per entry, the full Binding discovery projection plus the target and input-score
+identities. Committing the discovery projection, not only the references, is
+deliberate: two catalogs that referenced the same profile identities with
+different discovery metadata must not share one catalog identity. Ground-truth
+semantics, method identity and configuration, fitted parameters, training
+dataset provenance, quality metrics, timestamps, filesystem paths, store layout,
+and source input order are deliberately excluded, because discovery does not use
+them. Construction already orders entries deterministically, so the identity has
+set semantics rather than input-order semantics.
+
+Serialization is text only:
+
+```python
+text = serialize_calibration_profile_catalog(catalog)
+loaded = load_calibration_profile_catalog(
+    text,
+    expected_catalog_fingerprint=trusted_fingerprint,
+    expected_catalog_fingerprint_version=1,
+)
+```
+
+The envelope carries the artifact type, the catalog serialization version, the
+catalog fingerprint, and the catalog identity payload. No separate
+materialization block is needed because the identity payload already embeds each
+entry's full Binding projection, unlike a profile identity which commits its
+binding by fingerprint only. A catalog stores discovery metadata and exact
+profile references; it never serializes a profile, fitted parameters, method
+state, or training observations. The API performs no filesystem, database, or
+store I/O: the caller persists the text wherever it wants, and there is no
+catalog store, directory, manifest, or registry this round.
+
+Loading is deterministic and identity-verified. It parses strictly, enforces the
+exact v1 schema at every object level, reconstructs typed references and typed
+bindings, rejects a duplicate exact profile identity rather than silently
+deduplicating, sorts entries into canonical order, and finally requires BOTH the
+restored canonical identity payload and the restored catalog fingerprint to match
+the document. A serialized identity whose entries are permuted therefore fails
+the canonical-payload comparison instead of forming a second accepted encoding.
+The optional expected fingerprint pin must be supplied together with its version
+or not at all.
+
+The trust boundary is explicit. A catalog fingerprint identifies the exact
+catalog discovery snapshot and proves that the snapshot is internally
+self-consistent. It does NOT prove that a referenced profile still exists, that a
+store artifact is intact, that the snapshot metadata still matches the actual
+profile, that one profile is uniquely selectable, or that any profile is
+applicable. A loaded catalog is a set of snapshot CLAIMS: its Binding and
+target/input metadata were committed when the snapshot was written, not freshly
+re-derived from live profiles, so discovery remains non-authoritative. A profile
+fingerprint is one-way, so the loader cannot reconstruct a profile from a
+fingerprint plus catalog metadata and prove the metadata correct; it does not
+claim to. As with profile serialization, embedded SHA-256 self-consistency is NOT
+cryptographic authenticity: there is no HMAC, no signing, and no key store.
+Consequently, the supported paths that produce a catalog have different trust
+semantics:
+
+```text
+CalibrationProfileCatalog.from_profiles(...)   derives metadata from real profiles
+load_calibration_profile_catalog(...)          restores a persisted snapshot
+```
+
+Stale or malicious catalog metadata cannot authorize a mismatched profile,
+because a discovered reference still has to be retrieved by exact identity and
+passed as a real profile to the Phase 4C.7 selector, which revalidates that
+profile's binding, target, and input. Omission of a legitimate profile is a
+completeness or availability failure, not an authorization bypass: a catalog
+snapshot is not guaranteed complete unless an external process guarantees how it
+was produced.
+
+Discovery output is also not guaranteed to be resolvable. An entry reference
+carries a profile fingerprint plus a fingerprint version, and the loader
+validates that pair only by shape (a 64-character lowercase hex digest and a
+positive version), because the catalog deliberately does not track which profile
+fingerprint versions the project currently supports. A self-consistent entry
+that names a version the store does not understand therefore loads and is
+discovered, and the store then rejects it when it is retrieved by exact
+identity. That is the intended failure mode: the reference is an opaque
+identity claim, and the store and selector remain the boundaries that decide
+resolution and authorization.
+
+### 18.6 What `calibrated = True` means
 
 `calibrated = True` records that a supported `CalibrationProfile` was applied
 through the declared application contract and `predicted_correctness` was
@@ -2085,7 +2199,7 @@ training data was independent. Applying a profile does not change
 outcome distribution stays the uncalibrated one, and `predicted_correctness` is
 a separate calibrated correctness estimate.
 
-### 18.6 Abstention boundary
+### 18.7 Abstention boundary
 
 Calibrated predicted correctness is an input to a future policy, not the policy.
 This document does not implement or define `accept`, `abstain`, `review`, or

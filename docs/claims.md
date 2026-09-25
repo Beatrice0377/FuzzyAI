@@ -1342,6 +1342,44 @@ them generalises to other models, revisions, prompts, or tasks.
   `tests/test_calibration_catalog.py::TestEndToEnd`,
   `...::TestLayerSeparation`.
 
+### Catalog snapshot identity, serialization, and verified loading (Phase 4C.9)
+
+- [V] `CalibrationProfileCatalog` has an exact fingerprinted snapshot identity
+  that commits the deterministic ordered set of profile references and the
+  Binding plus target/input discovery projection used by runtime discovery;
+  catalog identity does not alter or participate in any referenced profile
+  identity. Evidence:
+  `tests/test_calibration_catalog_serialization.py::TestCatalogIdentity`,
+  `...::TestPermutationIdentity`.
+- [V] Catalog serialization and loading are deterministic and identity-verified:
+  loading reconstructs typed catalog entries, recomputes the canonical catalog
+  payload and fingerprint, and optionally checks an independently supplied
+  expected catalog fingerprint and version. Evidence:
+  `tests/test_calibration_catalog_serialization.py::TestDeterminismAndRoundTrip`,
+  `...::TestStrictParsing`, `...::TestSchemaEnforcement`, `...::TestExpectedPin`.
+- [V] A catalog snapshot is non-authoritative discovery metadata: its fingerprint
+  proves the identity of that catalog snapshot, not that its profile metadata
+  matches external profile artifacts, that referenced profiles are present, or
+  that any profile is authorized for application. Evidence:
+  `tests/test_calibration_catalog_serialization.py::TestTrustBoundary`,
+  `...::TestTamperDetection`.
+- [V] After discovery from a loaded catalog, exact profile retrieval and the
+  existing Phase 4C.7 selector remain mandatory authorization boundaries, so
+  stale or malicious catalog metadata cannot cause a mismatched real profile to
+  pass selection merely because its reference was discovered. Evidence:
+  `tests/test_calibration_catalog_serialization.py::TestTrustBoundary`,
+  `...::TestDiscoveryEquivalence`.
+- [V] Malformed or hostile catalog input fails closed with a controlled error: no
+  raw parser or recursion exception escapes the supported loader, including a
+  document nested deeply enough to parse but too deep for the recursive identity
+  restoration that follows, which is rejected by a bounded nesting depth. The
+  same bound protects the profile loader and the profile store's `get` path,
+  which maps such an artifact to an integrity error rather than a raw
+  `RecursionError`. Evidence:
+  `tests/test_calibration_catalog_serialization.py::TestStrictParsing`,
+  `tests/test_profile_serialization.py::TestStrictParser`,
+  `tests/test_calibration_store.py::TestIntegrity`.
+
 ## Current hypotheses
 
 - `[H]` An explicit scoring doctrine may improve cross-model semantic

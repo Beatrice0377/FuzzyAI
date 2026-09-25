@@ -370,6 +370,20 @@ class TestIntegrity:
         with pytest.raises(CalibrationProfileStoreIntegrityError):
             store.get(**key_of(profile))
 
+    def test_deeply_nested_artifact_is_integrity_not_recursion_error(self, tmp_path: Path) -> None:
+        store = store_at(tmp_path)
+        profile = fitted_profile()
+        store.put(profile)
+        path = stored_path(store, profile)
+        document = json.loads(path.read_text(encoding="utf-8"))
+        nested: Any = "x"
+        for _ in range(495):
+            nested = {"n": nested}
+        document["materialized_binding"]["rendering_semantics"] = nested
+        path.write_text(json.dumps(document), encoding="utf-8")
+        with pytest.raises(CalibrationProfileStoreIntegrityError):
+            store.get(**key_of(profile))
+
     def test_invalid_utf8_is_integrity_not_not_found(self, tmp_path: Path) -> None:
         store = store_at(tmp_path)
         profile = fitted_profile()

@@ -149,11 +149,22 @@ non-authoritative runtime discovery are implemented (Phase 4C.8,
 a catalog is built from a caller-supplied tuple of profiles and discovery returns
 deterministic exact profile references whose discovery metadata matches the same
 runtime eligibility projection as selection, while authorizing, loading,
-selecting, and applying nothing. Profile registries, binding-based lookup,
-profile matching policy beyond exact binding match, catalog
-serialization/persistence, store enumeration, quality ranking,
-latest/best/default policy, a signed profile distribution, automatic runtime
-profile selection, the remaining metrics, and automatic runtime calibration
+selecting, and applying nothing. An exact catalog snapshot identity and
+deterministic, identity-verified catalog serialization/loading exist (Phase 4C.9,
+`CalibrationProfileCatalog.canonical_payload` / `.fingerprint`,
+`serialize_calibration_profile_catalog` / `load_calibration_profile_catalog`):
+the snapshot commits the ordered references plus the Binding and target/input
+discovery projection, excludes ground-truth semantics, method state, training
+provenance, and source order, and loading recomputes the canonical payload and
+catalog fingerprint rather than trusting the embedded hash. A catalog snapshot
+remains non-authoritative discovery metadata: it proves the snapshot identity,
+not that referenced profiles exist, that store artifacts are intact, or that the
+snapshot metadata still matches the real profiles. Profile registries,
+binding-based lookup, profile matching policy beyond exact binding match, a
+catalog filesystem/database store, automatic store/catalog synchronization, store
+enumeration, quality ranking, latest/best/default policy, a signed profile
+distribution, automatic runtime profile selection, the remaining metrics, and
+automatic runtime calibration
 (deriving scores without an explicit caller-supplied profile) do not exist, and
 `predicted_correctness` remains `None` for every runtime result that no caller
 has explicitly calibrated.
