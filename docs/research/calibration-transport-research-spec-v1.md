@@ -218,17 +218,86 @@ condition, so its construction requirements are strict.
 
 `D_i` must be:
 
-- **pre-frozen**: chosen before scoring, not derived from the compared scores;
+- **pre-frozen**: selected and recorded before any scoring, not derived from the
+  compared scores;
 - **protocol-independent relative to the compared A/B measurements**: its
-  production mechanism must not depend on the scores of measurement A or
-  measurement B;
+  selection mechanism must not observe or use the scores, winner decisions,
+  confidence outputs, calibration outputs, or any other measurement outcomes
+  produced by measurement A or measurement B. It must not depend on any
+  measurement outcome that only becomes observable after A or B has run;
 - **immutable during scoring**: scoring protocol A and protocol B must observe
   exactly the same `D_i`.
 
-In particular, `D_i` may not be the CAT winner when CAT is one of the compared
-measurements, and it may not be the OVR winner when OVR is one of the compared
-measurements. Choosing the anchor from one of the compared measurements would
-bias the experiment toward that measurement.
+`protocol-independent` here has a precise, non-mystical meaning: the
+anchor-generation mechanism must not depend on `A` scores, `B` scores, `A`
+winner, `B` winner, `A` confidence, `B` confidence, `A`/`B` calibration output,
+or any other outcome of the compared measurements. The anchor must be selected,
+recorded, and frozen before those outcomes are observed.
+
+#### 4.1.1 Anchor independence is about the selection mechanism, not the value
+
+Anchor independence is a property of the anchor-**selection procedure**, not a
+requirement that the realized anchor value differ from the winners produced by
+the compared measurement protocols. It is **not** required that `D_i` differ
+from A's winner or B's winner.
+
+After `D_i` has been frozen, it may coincidentally equal:
+
+- the winner selected by A;
+- the winner selected by B;
+- the winners selected by both A and B; or
+- neither protocol's winner.
+
+Any such coincidence is valid and MUST NOT cause anchor reassignment,
+resampling, item exclusion, eligibility changes, weighting changes, or
+split-membership changes. What is forbidden is a measurement-**dependent**
+selection, not realized equality.
+
+The forbidden dependency is:
+
+```
+A/B measurement outcome
+    -> anchor choice or sample inclusion
+```
+
+The allowed ordering is:
+
+```
+protocol-independent anchor mechanism
+    -> frozen D_i
+    -> A/B measurement
+    -> possible post-hoc agreement or disagreement
+```
+
+#### 4.1.2 Forbidden anchor mechanisms
+
+The following are explicitly prohibited:
+
+```
+D_i := winner_A
+D_i := winner_B
+```
+
+- running A and then choosing its winner as `D_i`;
+- running B and then choosing its winner as `D_i`;
+- inspecting A/B scores and then choosing whichever candidate is convenient;
+- resampling `D_i` until `D_i != winner_A`;
+- resampling `D_i` until `D_i != winner_B`;
+- excluding items where `D_i == winner_A`;
+- excluding items where `D_i == winner_B`;
+- keeping only items where `D_i` differs from both winners.
+
+Agreement conditioning remains prohibited as well (section 5).
+
+#### 4.1.3 Canonical examples
+
+| Case | Sequence | Verdict | Reason |
+| --- | --- | --- | --- |
+| 1 | anchor frozen first: `shipping`; A winner later `shipping`; B winner later `returns` | VALID | anchor generation did not depend on A/B outcomes |
+| 2 | anchor frozen first: `shipping`; A winner later `shipping`; B winner later `shipping` | VALID | agreement is post-hoc coincidence |
+| 3 | run A first; A winner `shipping`; then set anchor := `shipping` | INVALID | anchor selection depends on A |
+| 4 | anchor frozen first: `shipping`; A winner later `shipping`; then drop the item because anchor == A winner | INVALID | sample inclusion depends on A outcome |
+| 5 | anchor frozen first: `shipping`; A winner `returns`; B winner `billing` | VALID | A and B must still score `shipping` if their measurement semantics support a valid score for that anchor |
 
 ### 4.2 What must be shared between A and B
 
@@ -290,26 +359,39 @@ Doing so introduces agreement conditioning and selection bias. The entire point
 of the frozen-decision condition is that even when A and B would choose
 different winners, both are still asked to score the same frozen anchor `D_i`.
 
+A post-hoc equality between the frozen anchor and a protocol's winner
+(`D_i == winner_CAT`, `D_i == winner_OVR`, or `D_i == winner_CAT ==
+winner_OVR`) is not agreement conditioning and is not by itself an exclusion
+reason. Excluding or resampling items because of such equality is forbidden
+(section 4.1.2). The concern is measurement dependence, not realized equality.
+
 If a measurement protocol cannot produce a legitimately defined score for an
 anchor candidate, a future harness must record an explicit missing or
 ineligible reason. It must not quietly substitute the protocol's own winner
 score, and it must not drop the item merely because the two protocols disagree.
 The concrete missingness policy is deferred to R1/R2 design, but the principle
-is frozen here.
+is frozen here. For the primary estimand these rules operate within the
+explicitly defined eligible paired population (section 6).
 
 ---
 
 ## 6. Paired fitting and paired evaluation discipline
 
-For a frozen-decision transport comparison, the calibrators `g_A` and `g_B` are
-fitted separately, but they must preferentially use the same paired items:
+For the primary Frozen-decision estimand, the calibrators `g_A` and `g_B` are
+fitted separately, but they MUST be fitted on scores from the same paired
+training item IDs, within the explicitly defined eligible paired population:
 
 ```
 training item i
+    |- fixed anchor D_i
+    |- same Y_i
     |- S_i^A -> fit g_A
     |- S_i^B -> fit g_B
 ```
 
+so `g_A` is fitted on `{(S_i^A, Y_i)}` and `g_B` on `{(S_i^B, Y_i)}` for the
+same item IDs. They are separately fitted calibrators over different
+measurement scores, not calibrators trained on independently sampled item sets.
 They must not be fitted on unrelated random samples:
 
 ```
@@ -320,13 +402,21 @@ g_B trained on unrelated random sample Z
 The purpose is to isolate measurement shift as far as possible, instead of
 mixing calibration training-sample variation into the measured transport gap.
 
-The same pairing discipline applies to evaluation:
+For the same reason, evaluation MUST use the same paired held-out target item
+IDs:
 
 ```
 same held-out item IDs
-same anchor Y
-paired A/B scores
+same anchor D_i
+same Y_i
+paired S_i^A / S_i^B
 ```
+
+The paired same-ID requirement (for both fitting and evaluation) is scoped to
+the explicitly defined eligible paired Frozen-decision population. The
+eligibility and missingness rules for that population must be fixed before
+confirmatory analysis and must not depend on post-hoc agreement between A and B
+or on the observed transport outcome.
 
 Split membership must be disjoint at the observation / item level:
 
@@ -337,6 +427,21 @@ audit ∩ test = ∅
 ```
 
 A future R1 must verify this mechanically, not infer it from split names.
+
+The same item IDs are shared across A and B within each split, while the splits
+themselves are disjoint. The correct structure is:
+
+```
+TRAIN: item IDs T   { A scores, B scores }
+AUDIT: item IDs U   { A scores, B scores }
+TEST:  item IDs V   { A scores, B scores }
+
+T ∩ U = ∅    T ∩ V = ∅    U ∩ V = ∅
+```
+
+Pairing across measurements and disjointness across splits are not in tension:
+pairing is about which items receive both A and B scores, disjointness is about
+which items belong to train, audit, and test.
 
 ---
 
@@ -386,6 +491,12 @@ evaluation = the same untouched held-out B target scores and items
 It must be stated explicitly that `g_B` is a finite-data estimator and is not
 the oracle `q_B`. For this reason the quantity above is named **empirical
 transport excess risk** and must not be called "oracle regret".
+
+Within the explicitly defined eligible paired population (section 6), `g_A` and
+`g_B` MUST be fitted on scores from the same paired training item IDs, and they
+MUST be evaluated on the same paired held-out target item IDs. They are
+separately fitted calibrators over different measurement scores, not
+calibrators trained or tested on independently sampled item sets.
 
 ---
 
