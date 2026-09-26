@@ -281,6 +281,23 @@ These are directions under consideration, not current commitments. None of them
 is guaranteed to reach 1.0, and whether each is pursued must be decided by
 actual experimental results rather than by design intuition.
 
+### Calibration Transportability (research specification v1 frozen, not implemented)
+
+`docs/research/calibration-transport-research-spec-v1.md` freezes the problem
+definition, measurement semantics, experimental separation, estimands, metrics,
+evidence discipline, research questions, pilot gate, and scope boundaries for a
+future cross-measurement calibration-transport research track. It is a research
+specification only: no part of it is implemented, and the frozen Phase 4C
+runtime is unchanged by it. Its object is deliberately distinct from the frozen
+Phase 4C object (a measurement chooses its own winner, scores it, and is labeled
+by winner correctness): the research frozen-decision condition fixes an external
+anchor decision and scores that same anchor under each compared measurement.
+R1 (a paired experiment-integrity harness) and R2 (a tiny frozen-decision
+CAT<->OVR pilot) must precede any investment in R3/R4 (transport benchmark,
+evidence-aware transport audit). Declared measurement identity remains the
+default fail-closed authorization boundary; empirical compatibility is a
+research result, not a runtime entitlement.
+
 ### Scoring Doctrine
 
 A versioned specification of HOW the model should conduct semantic judgment,
