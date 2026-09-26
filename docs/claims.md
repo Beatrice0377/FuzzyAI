@@ -718,9 +718,11 @@ These claims are deterministic implementation claims about the evaluation
 foundation only. They are NOT claims that any model is calibrated, that any
 calibration improves anything, or that any pre-calibration baseline is
 calibration-quality evidence: one supported scalar fitting method exists
-(`fit_l2_logistic_selected_probability`), but no runtime application and no
-post-calibration evaluation exist, so no result carries a calibrated score. The
-profile identity/artifact foundation also exists in
+(`fit_l2_logistic_selected_probability`), and explicit offline application,
+post-calibration evaluation, and explicit runtime-linked application exist in
+Phase 4C, but there is no automatic calibration, so no result carries a
+calibrated score unless a caller explicitly applies one exact compatible
+profile. The profile identity/artifact foundation also exists in
 `src/probvenance/calibration.py`.
 
 ### Calibration profile identity foundation (Phase 4C.1)
@@ -1465,10 +1467,10 @@ them generalises to other models, revisions, prompts, or tasks.
 - `[H]` An explicit scoring doctrine may improve cross-model semantic
   stability of the same decision. The doctrine itself now exists as
   `BINARY_SEMANTIC_JUDGMENT_V1`; confirming or refuting the stability claim
-  requires evaluation work that does not exist yet.
+  requires cross-model evaluation evidence that does not exist yet.
 - `[H]` Small local models combined with task-specific calibration may be
   sufficient for useful narrow semantic decisions. Confirming or refuting
-  this requires calibration and evaluation work that does not exist yet.
+  this requires held-out calibration-quality evidence that does not exist yet.
 - `[H]` Cache-preserving compilation may materially reduce local inference
   cost when many decisions share a long context. Confirming or refuting this
   requires benchmark work on real backends that does not exist yet.

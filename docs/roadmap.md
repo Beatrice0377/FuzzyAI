@@ -93,8 +93,13 @@ the winner-correctness Brier and exact log-loss metrics) are implemented. The
 Phase 4C.0 target and compatibility identity preparation is also implemented:
 `winner_correctness` is one shared, explicit, versioned calibration target
 identity that every winner-correctness evaluation artifact commits, and the
-taxonomy-compatibility precondition for a future profile is frozen in
-`docs/calibration-semantics.md` as design only.
+taxonomy-coherence boundary a profile must respect is implemented and enforced
+by `CalibrationProfile` (see `docs/calibration-semantics.md`). The binding
+taxonomy and the ground-truth-semantics taxonomy are two separate axes: dataset
+admission allows a cross-axis mismatch, and profile identity fails closed only
+on a concrete taxonomy contradiction (two different known taxonomies, or two
+different known versions of one taxonomy). Taxonomy mapping, automatic
+compatibility inference, and cross-taxonomy profile reuse do not exist.
 `CalibrationProfile` identity foundation is implemented: the profile artifact
 commits its exact binding, ground-truth semantics identity, winner-correctness
 target identity, selected-probability input-score identity, method
@@ -176,7 +181,7 @@ profile selection, the remaining metrics, and automatic runtime calibration
 `predicted_correctness` remains `None` for every runtime result that no caller
 has explicitly calibrated.
 
-**Phase 4C is complete.** The calibration layer now spans the full
+**Phase 4C is complete and frozen.** The calibration layer now spans the full
 identity-verified chain: runtime evaluation, ground-truth observation creation
 and fitting-dataset contracts, exact profile fitting, offline profile
 application and post-calibration evaluation, profile identity, profile
@@ -191,6 +196,11 @@ enumeration, quality ranking, signed profile distribution, automatic runtime
 selection, automatic runtime calibration, and the remaining statistical metrics
 belong to a later phase and are recorded here as future direction only. There is
 no Phase 4C.12 for lifecycle convenience.
+
+Frozen means Phase 4C only accepts a bug fix that repairs a violation of an
+already frozen contract. It does not accept new capability. Introducing any of
+the absent capabilities above would require a new, explicitly named major phase
+or a deployment-lifecycle phase, not a further Phase 4C point release.
 
 - Evaluation harness (started: declared evaluation source cohort, metric-eligible
   dataset projection, Brier, log loss; delivered: winner-correctness companion

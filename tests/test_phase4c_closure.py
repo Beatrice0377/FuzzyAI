@@ -29,7 +29,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from test_calibration import choice_observation
+from test_calibration import choice_observation, resolved_truth
 from test_calibration_catalog_serialization import (
     catalog_of,
     deep_value,
@@ -58,6 +58,7 @@ from probvenance.calibration import (
     UNCALIBRATED_SELECTED_PROBABILITY_VERSION,
     WINNER_CORRECTNESS_TARGET_VERSION,
     CalibrationDataset,
+    CalibrationObservation,
     CalibrationProfile,
     _apply_profile_to_selected_probability,
     apply_profile_to_runtime_evaluation,
@@ -835,6 +836,115 @@ class TestEndToEndChains:
 
         with pytest.raises(InvalidDecisionError):
             apply_profile_to_runtime_evaluation(evaluation, selected)
+
+
+# ---------------------------------------------------------------------------
+# Calibrated evaluation projection (frozen raw-measurement semantics)
+# ---------------------------------------------------------------------------
+
+
+class TestCalibratedEvaluationProjection:
+    """A calibrated Evaluation projects to the SAME raw CalibrationObservation.
+
+    ``CalibrationObservation.from_evaluation`` observes the underlying raw
+    semantic measurement. An explicit calibration overlay is deliberately
+    projected through and excluded from observation identity, so a raw
+    evaluation and its explicitly calibrated copy must produce one identical
+    observation. These tests pin that frozen contract AND prove the overlay
+    really existed before it was excluded, so the projection assertion cannot
+    pass vacuously on an uncalibrated wrapper.
+    """
+
+    def _pair(self) -> tuple[Any, Any, CalibrationObservation, CalibrationObservation]:
+        evaluation = runtime_evaluation()
+        profile = eligible_profile()
+        calibrated = apply_profile_to_runtime_evaluation(evaluation, profile)
+        truth = resolved_truth("shipping")
+        raw_observation = CalibrationObservation.from_evaluation(evaluation, truth)
+        projected = CalibrationObservation.from_evaluation(calibrated, truth)
+        return evaluation, calibrated, raw_observation, projected
+
+    def test_calibration_overlay_really_happened(self) -> None:
+        _evaluation, calibrated, _raw, _projected = self._pair()
+        assert calibrated.result.calibrated is True
+        assert calibrated.result.predicted_correctness is not None
+        assert calibrated.result.calibration_profile_fingerprint is not None
+        assert (
+            calibrated.result.calibration_profile_fingerprint_version
+            == CALIBRATION_PROFILE_FINGERPRINT_VERSION
+        )
+        # The overlay is on both the result and the trace, so a later reader
+        # cannot claim the projection test merely observed an uncalibrated
+        # wrapper.
+        assert (
+            calibrated.trace.calibration_profile_fingerprint
+            == calibrated.result.calibration_profile_fingerprint
+        )
+
+    def test_projected_observation_is_identical(self) -> None:
+        _evaluation, _calibrated, raw_observation, projected = self._pair()
+        assert projected == raw_observation
+        assert projected.fingerprint == raw_observation.fingerprint
+        assert projected.canonical_payload() == raw_observation.canonical_payload()
+
+    def test_every_identity_component_is_equal(self) -> None:
+        _evaluation, _calibrated, raw_observation, projected = self._pair()
+        assert projected.decision_family == raw_observation.decision_family
+        assert projected.outcome_order == raw_observation.outcome_order
+        assert projected.probabilities == raw_observation.probabilities
+        assert projected.selected_value == raw_observation.selected_value
+        assert projected.status == raw_observation.status
+        assert projected.correct == raw_observation.correct
+        assert projected.binding == raw_observation.binding
+        assert projected.binding.fingerprint == raw_observation.binding.fingerprint
+        assert projected.binding.canonical_payload() == raw_observation.binding.canonical_payload()
+        assert projected.decision_fingerprint == raw_observation.decision_fingerprint
+        assert projected.execution_fingerprint == raw_observation.execution_fingerprint
+
+    def test_calibrated_wrapper_hides_no_selected_probability_change(self) -> None:
+        # The raw measurement the observation consumes is unchanged: the
+        # calibrated overlay sits ON TOP of it, not inside it.
+        evaluation, calibrated, raw_observation, projected = self._pair()
+        assert (
+            calibrated.result.probabilities[calibrated.result.value]
+            == evaluation.result.probabilities[evaluation.result.value]
+        )
+        raw_selected_value = raw_observation.selected_value
+        projected_selected_value = projected.selected_value
+        assert isinstance(raw_selected_value, str)
+        assert isinstance(projected_selected_value, str)
+        raw_selected = dict(raw_observation.probabilities)[raw_selected_value]
+        projected_selected = dict(projected.probabilities)[projected_selected_value]
+        assert projected_selected == raw_selected
+
+    def test_ground_truth_semantics_are_unchanged(self) -> None:
+        _evaluation, _calibrated, raw_observation, projected = self._pair()
+        assert (
+            projected.ground_truth.canonical_payload()
+            == raw_observation.ground_truth.canonical_payload()
+        )
+        assert projected.ground_truth.value == raw_observation.ground_truth.value
+        assert projected.correct is raw_observation.correct
+
+    def test_overlay_provenance_is_absent_from_the_payload(self) -> None:
+        _evaluation, _calibrated, _raw, projected = self._pair()
+        payload = projected.canonical_payload()
+        assert "predicted_correctness" not in payload
+        assert "calibrated" not in payload
+        serialized = json.dumps(payload)
+        assert "calibration_profile_fingerprint" not in serialized
+
+    def test_projection_does_not_weaken_structural_linkage(self) -> None:
+        # Projection excludes the overlay; it does NOT exclude the required
+        # non-null, matching trace id. A calibrated result paired with an
+        # unrelated trace must still be rejected.
+        first = runtime_evaluation()
+        calibrated = apply_profile_to_runtime_evaluation(first, eligible_profile())
+        unrelated = runtime_evaluation()
+        with pytest.raises(InvalidDecisionError):
+            CalibrationObservation.from_evaluation(
+                (calibrated.result, unrelated.trace), resolved_truth("shipping")
+            )
 
 
 # ---------------------------------------------------------------------------

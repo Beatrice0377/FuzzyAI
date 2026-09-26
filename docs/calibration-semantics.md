@@ -227,8 +227,9 @@ The question it answers:
 > a model to correctness information supported by empirical data, without
 > confusing different formulations, sources, tasks, or ground-truth semantics?
 
-It does not answer which fitting algorithm to use. Algorithm choice is future
-work (section 13).
+It does not answer which fitting algorithm to choose in general. One scalar
+method is implemented and method selection beyond it remains future work
+(section 13).
 
 ## 1. Motivation
 
@@ -999,7 +1000,7 @@ When no profile applies:
 predicted_correctness = None
 ```
 
-and, once the runtime has the field, an explicit uncalibrated status. It must
+and an explicit uncalibrated status (`calibrated = False`). It must
 never be replaced by:
 
 ```text

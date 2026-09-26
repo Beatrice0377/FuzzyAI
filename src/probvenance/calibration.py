@@ -740,7 +740,20 @@ def _require_coherent_linkage(
 
 @dataclass(frozen=True, slots=True)
 class CalibrationObservation:
-    """One uncalibrated semantic decision paired with ground truth.
+    """One underlying raw semantic measurement paired with ground truth.
+
+    The measurement this observation carries is the UNDERLYING RAW semantic
+    measurement, independent of any calibration overlay. When the supplied
+    evaluation already carries an explicit calibration overlay -- a result with
+    ``calibrated=True`` and a populated ``predicted_correctness`` -- this
+    observation deliberately projects THROUGH that overlay and observes the
+    underlying uncalibrated measurement. The calibration overlay is not part of
+    :class:`CalibrationObservation` identity: ``predicted_correctness``, the
+    calibrated state, and the calibration profile fingerprint and its version
+    never enter the payload. Equivalently, a raw evaluation and its explicitly
+    calibrated copy, sharing the same underlying execution and semantic
+    measurement, produce the same observation. The wrapper's calibrated state
+    is a separate downstream artifact, not a property of this observation.
 
     Status and correctness are deterministically DERIVED from the semantic
     result and the ground-truth record; the constructor accepts no
@@ -894,6 +907,28 @@ class CalibrationObservation:
         caller never hand-supplies ``selected_value``, the probability
         formulation fingerprint, ``model_revision``, or ``correct``: the
         runtime already knows them.
+
+        Projection contract: this observes the UNDERLYING RAW semantic
+        measurement. If the supplied evaluation already carries an explicit
+        calibration overlay -- a result with ``calibrated=True`` and a
+        populated ``predicted_correctness`` -- the overlay is deliberately
+        projected through and excluded, because it is not part of
+        :class:`CalibrationObservation` identity. ``predicted_correctness``,
+        the calibrated state, and the calibration profile fingerprint and its
+        version therefore never enter the observation this returns. A raw
+        evaluation and an explicitly calibrated evaluation built from the same
+        underlying execution and semantic measurement yield the same
+        observation.
+
+        This projection does NOT relax validation. The result and trace are
+        still required to share one non-null ``trace_id``; that is structural
+        linkage only, not a content attestation, cryptographic proof, or
+        execution attestation. The evaluation's own construction-time
+        coherent-state validation is not bypassed: a result with
+        ``calibrated=True`` was already required by its constructor to carry a
+        populated ``predicted_correctness`` and a complete calibration profile
+        fingerprint pair. Excluding the overlay from the observation is not the
+        same as skipping the checks that the overlay's own artifact enforced.
         """
         if isinstance(evaluation, Evaluation):
             result = evaluation.result
@@ -2324,7 +2359,7 @@ def _l2_logistic_hessian(
 
 
 def _l2_logistic_certificate_threshold(l2_strength: float) -> float:
-    """Gradient norm bound equivalent to the declared objective-gap certificate.
+    """Gradient norm sufficient to certify the declared objective-gap bound.
 
     The declared objective is ``l2_strength``-strongly convex because both
     parameters carry a positive L2 penalty, so for the unique minimizer
@@ -2332,8 +2367,13 @@ def _l2_logistic_certificate_threshold(l2_strength: float) -> float:
 
         J(theta) - J(theta*) <= ||grad J(theta)||^2 / (2 * l2_strength)
 
-    Therefore ``J - J* <= objective_suboptimality_tolerance`` is exactly
-    ``||grad J|| <= sqrt(2 * l2_strength * tolerance)``. The bound is
+    Therefore the gradient threshold
+    ``||grad J|| <= sqrt(2 * l2_strength * tolerance)`` is SUFFICIENT to
+    establish the declared bound
+    ``J - J* <= objective_suboptimality_tolerance``. It is a one-directional
+    certificate, not an equivalent or exact characterization of the objective
+    gap: a gradient above the threshold does not by itself prove the gap
+    exceeds the tolerance. The bound is
     assembled as ``sqrt(2) * sqrt(l2_strength) * sqrt(tolerance)`` because
     forming ``2 * l2_strength * tolerance`` underflows to ``0.0`` for tiny
     subnormal strengths, which would make the certificate demand an exact zero

@@ -158,8 +158,9 @@ a numerically stable two-way softmax over exactly two verbalizer-token logits,
 equal to `sigmoid(l_true - l_false)`. It cannot tell you whether the model
 intended to choose among those candidates at all. What it is not: a
 full-vocabulary probability, a real-world event probability, a
-prediction-accuracy figure, or a calibrated number. `calibrated` stays `False`
-and `predicted_correctness` stays `None`.
+prediction-accuracy figure, or a calibrated number. For an ordinary evaluation,
+`calibrated` is `False` and `predicted_correctness` is `None`; both change only
+when a caller explicitly applies one exact compatible calibration profile.
 
 Because the restricted number alone cannot show whether the model was at a
 decision point, every trace also carries an independent full-vocabulary
@@ -273,9 +274,10 @@ route = ai.choice(
   mathematical property, not a correctness probability. We never call it
   "confidence".
 - **Predicted correctness**: only expressible after valid calibration. Every
-  result produced today has `predicted_correctness = None` and
-  `calibrated = False`. A max softmax, a logit, an entropy, or an LLM saying
-  "I'm 95% sure" is none of these things.
+  ordinary result is uncalibrated (`predicted_correctness = None` and
+  `calibrated = False`); the field is populated only when a caller explicitly
+  applies one exact compatible calibration profile. A max softmax, a logit, an
+  entropy, or an LLM saying "I'm 95% sure" is none of these things.
 
 The full normative definitions live in the
 [design constitution](docs/design-constitution.md).

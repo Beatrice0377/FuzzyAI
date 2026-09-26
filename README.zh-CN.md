@@ -107,7 +107,7 @@ route = ai.choice(
 
 - **概率（Probability）**：由某种 scoring strategy（打分策略）产生的决策分布。它并不自动等于现实世界中的正确率。当前 Bool 概率是在两个 verbalizer-token logit 上的受限（条件）概率，不是全词表分布；trace 中的 `verbalizer_mass` 是与之独立的词表级伴随量。
 - **Certainty**：只描述该概率分布有多集中（熵 entropy、margin）。它是一个数学属性，不是正确性概率。我们从不把它称为 "confidence"。规范性约束：certainty 不得被称为 confidence（置信度）。
-- **Predicted correctness（预测正确性）**：只有在有效校准之后才可表达。当前产出的每个结果都是 `predicted_correctness = None` 且 `calibrated = False`。max softmax、logit、熵，或 LLM 自称"我有 95% 把握"，都不是 predicted correctness。
+- **Predicted correctness（预测正确性）**：只有在有效校准之后才可表达。普通结果都是未校准的（`predicted_correctness = None` 且 `calibrated = False`）；只有调用方显式应用一个精确匹配的校准 profile 时，该字段才会被填充。max softmax、logit、熵，或 LLM 自称"我有 95% 把握"，都不是 predicted correctness。
 
 完整的规范性定义见[设计宪法](docs/design-constitution.md)。
 
@@ -160,7 +160,7 @@ ChoiceDecision --(ChoiceCompiler)--> InferencePlan --(TransformersBackend)--> Ra
                                              ChoiceResult + DecisionTrace (via Probvenance)
 ```
 
-该路径是实验性的。它是 closed-set 的，假定调用方提供互斥候选，只支持 single-label 决策，要求每个打分标签恰好是一个 token，仅在较小 N 上做过研究，并且是**未校准**的（`predicted_correctness` 始终为 `None`）。它没有任何 open-set 保证：当候选集遗漏了真实主题时，模型仍会在集合内作答，而 `scoring_label_mass` 检测不到这一点。
+该路径是实验性的。它是 closed-set 的，假定调用方提供互斥候选，只支持 single-label 决策，要求每个打分标签恰好是一个 token，仅在较小 N 上做过研究，并且**默认是未校准**的（除非调用方显式应用一个 profile，否则 `predicted_correctness` 为 `None`）。它没有任何 open-set 保证：当候选集遗漏了真实主题时，模型仍会在集合内作答，而 `scoring_label_mass` 检测不到这一点。
 
 其他 Choice 策略（one-vs-rest、sampling、multi-token 打分标签）、自动校准与弃权仍是未来工作。
 
